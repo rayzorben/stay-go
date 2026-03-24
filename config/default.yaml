@@ -35,3 +35,6 @@ commands:
       - files: ["${lucida_font}"]
     rollback: |
       rm ${lucida_font_destination}
+      
+secrets:
+  

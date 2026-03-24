@@ -10,3 +10,15 @@ scripts:
     depends:
       - packages: [zoxide, fzf]
       
+commands:
+  - name: Git Config
+    command: |
+      git config --global user.name "Raymond Bennett"
+      git config --global user.email "raymond.bennett@gmail.com"
+    depends:
+      - packages: [git]
+    rollback: |
+      git config --global --unset user.name
+      git config --global --unset user.email
+
+ghostty: !include "./commands/ghostty.yaml"

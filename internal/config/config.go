@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 
@@ -198,16 +197,9 @@ func (s *ServiceEntry) DependsOnIDs() []string {
 }
 
 // Load reads and parses the YAML configuration file at path.
+// Top-level `key: !include "file"` directives are resolved and merged recursively.
 func Load(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("reading config %q: %w", path, err)
-	}
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parsing config %q: %w", path, err)
-	}
-	return &cfg, nil
+	return loadLayer(path, "", make(map[string]bool))
 }
 
 // LoadAll loads and merges config from all applicable layers:
@@ -217,7 +209,8 @@ func Load(path string) (*Config, error) {
 //   - <configDir>/users/<username>.yaml   (level: "user:<username>")
 //
 // Higher-specificity layers override common entries with the same name.
-// Missing files are silently skipped.
+// Missing files are silently skipped. Within each layer, top-level
+// `key: !include "file"` directives produce sub-levels like "user:rayben:ghostty".
 func LoadAll(configDir, username, hostname string) (*Config, error) {
 	type layer struct {
 		path  string
@@ -229,81 +222,17 @@ func LoadAll(configDir, username, hostname string) (*Config, error) {
 		{filepath.Join(configDir, "users", username+".yaml"), "user:" + username},
 	}
 
-	var merged Config
-	merged.Vars = make(map[string]string)
-	pkgIdx := make(map[string]int)
-	grpIdx := make(map[string]int)
-	userIdx := make(map[string]int)
-	svcIdx := make(map[string]int)
-	scriptIdx := make(map[string]int)
-	cmdIdx := make(map[string]int)
+	merged := Config{Vars: make(map[string]string)}
 
 	for _, l := range layers {
-		cfg, err := loadOptional(l.path)
+		cfg, err := loadLayerOptional(l.path, l.level, make(map[string]bool))
 		if err != nil {
 			return nil, fmt.Errorf("loading config layer %q: %w", l.path, err)
 		}
 		if cfg == nil {
 			continue
 		}
-		// Vars: higher-specificity layers override lower ones.
-		for k, v := range cfg.Vars {
-			merged.Vars[k] = v
-		}
-		for _, p := range cfg.Packages {
-			p.Level = l.level
-			if i, ok := pkgIdx[p.Name]; ok {
-				merged.Packages[i] = p
-			} else {
-				pkgIdx[p.Name] = len(merged.Packages)
-				merged.Packages = append(merged.Packages, p)
-			}
-		}
-		for _, g := range cfg.Groups {
-			g.Level = l.level
-			if i, ok := grpIdx[g.Name]; ok {
-				merged.Groups[i] = g
-			} else {
-				grpIdx[g.Name] = len(merged.Groups)
-				merged.Groups = append(merged.Groups, g)
-			}
-		}
-		for _, u := range cfg.Users {
-			u.Level = l.level
-			if i, ok := userIdx[u.Username]; ok {
-				merged.Users[i] = u
-			} else {
-				userIdx[u.Username] = len(merged.Users)
-				merged.Users = append(merged.Users, u)
-			}
-		}
-		for _, s := range cfg.Services {
-			s.Level = l.level
-			if i, ok := svcIdx[s.Service]; ok {
-				merged.Services[i] = s
-			} else {
-				svcIdx[s.Service] = len(merged.Services)
-				merged.Services = append(merged.Services, s)
-			}
-		}
-		for _, sc := range cfg.Scripts {
-			sc.Level = l.level
-			if i, ok := scriptIdx[sc.Script]; ok {
-				merged.Scripts[i] = sc
-			} else {
-				scriptIdx[sc.Script] = len(merged.Scripts)
-				merged.Scripts = append(merged.Scripts, sc)
-			}
-		}
-		for _, c := range cfg.Commands {
-			c.Level = l.level
-			if i, ok := cmdIdx[c.Name]; ok {
-				merged.Commands[i] = c
-			} else {
-				cmdIdx[c.Name] = len(merged.Commands)
-				merged.Commands = append(merged.Commands, c)
-			}
-		}
+		merged = *mergeConfigs(&merged, cfg)
 	}
 	// Inject implicit variables. config_root is always available; user-defined
 	// vars may reference it. ~ is expanded inline by ResolveString/resolveOne.
@@ -321,15 +250,6 @@ func LoadAll(configDir, username, hostname string) (*Config, error) {
 	merged.Vars = resolved
 
 	return &merged, nil
-}
-
-// loadOptional loads a config file, returning nil without error if the file
-// does not exist.
-func loadOptional(path string) (*Config, error) {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return nil, nil
-	}
-	return Load(path)
 }
 
 // NodeID returns the canonical resource node identifier used as a key in

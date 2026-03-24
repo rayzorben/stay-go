@@ -1,0 +1,11 @@
+commands:
+  - name: Ghostty Font
+    command: |
+      if grep -q "^font-family" ~/.config/ghostty/config 2>/dev/null; then
+        sed -i 's|^font-family.*|font-family = "LucidaProgrammer Nerd Font Mono"|' ~/.config/ghostty/config
+      else
+        echo 'font-family = "LucidaProgrammer Nerd Font Mono"' >> ~/.config/ghostty/config
+      fi
+    depends:
+        - packages: [ghostty]
+        - files: ["~/.config/ghostty/config", "${lucida_font_destination}"]
