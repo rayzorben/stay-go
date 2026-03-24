@@ -1,0 +1,12 @@
+scripts:
+  - script: ${config_root}/scripts/aerial-sddm-theme.sh
+    sudo: true
+    depends:
+      - packages: [git]
+      - services: [sddm]
+      - folders: ["!/usr/share/sddm/themes/aerial-sddm-theme"]
+  
+  - script: ${config_root}/scripts/configure-zoxide.sh
+    depends:
+      - packages: [zoxide, fzf]
+      

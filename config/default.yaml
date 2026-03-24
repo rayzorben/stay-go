@@ -1,0 +1,37 @@
+variables:
+  dropbox_folder: ~/Dropbox
+  lucida_font: ${dropbox_folder}/Ray/Configuration/Fonts/LucidaProgrammerNerdFontMono-Regular.ttf
+  lucida_font_destination: /usr/share/fonts/TTF/LucidaProgrammerNerdFontMono-Regular.ttf
+  
+packages:
+  - neovim
+  - git
+  - docker
+  - dropbox
+  
+groups:
+  - wheel
+  - docker
+  
+users:
+  - username: rayben
+    name: Ray Bennett
+    shell: /bin/fish
+    groups: ['wheel', 'docker']
+    
+services:
+  - service: docker
+    depends:
+      - packages: ['docker']
+      
+commands:
+  - name: Lucida Font
+    sudo: true
+    command: |
+      cp ${lucida_font} ${lucida_font_destination}
+      fc-cache -f
+    depends:
+      - packages: [dropbox]
+      - files: ["${lucida_font}"]
+    rollback: |
+      rm ${lucida_font_destination}

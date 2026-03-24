@@ -1,0 +1,164 @@
+package packages
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/rayben/stay-go/internal/executor"
+)
+
+// PackageManager defines all the commands needed to manage packages for a
+// specific package manager. The table is searched in order; the first entry
+// whose Binary is available in PATH is used.
+type PackageManager struct {
+	Name       string
+	Binary     string
+	NeedsSudo  bool
+	ListCmd    []string
+	InstallCmd []string
+	RemoveCmd  []string
+	// Env contains extra environment variables injected into every command
+	// (e.g. DEBIAN_FRONTEND=noninteractive for apt-get).
+	Env []string
+	// ParseOutput optionally post-processes the raw list output.
+	// nil means treat each non-empty line as a package name.
+	ParseOutput func(raw string) []string
+}
+
+// managers is the ordered preference table. Detection walks this list and
+// returns the first whose Binary exists in PATH.
+var managers = []PackageManager{
+	// ── Arch Linux (AUR helpers first) ──────────────────────────────────────
+	{
+		Name:       "paru",
+		Binary:     "paru",
+		NeedsSudo:  false, // paru escalates internally when needed
+		ListCmd:    []string{"pacman", "-Qq"},
+		InstallCmd: []string{"paru", "-S", "--noconfirm", "--needed"},
+		RemoveCmd:  []string{"paru", "-Rs", "--noconfirm"},
+	},
+	{
+		Name:       "yay",
+		Binary:     "yay",
+		NeedsSudo:  false,
+		ListCmd:    []string{"pacman", "-Qq"},
+		InstallCmd: []string{"yay", "-S", "--noconfirm", "--needed"},
+		RemoveCmd:  []string{"yay", "-Rs", "--noconfirm"},
+	},
+	{
+		Name:       "pacman",
+		Binary:     "pacman",
+		NeedsSudo:  true,
+		ListCmd:    []string{"pacman", "-Qq"},
+		InstallCmd: []string{"pacman", "-S", "--noconfirm", "--needed"},
+		RemoveCmd:  []string{"pacman", "-Rs", "--noconfirm"},
+	},
+	// ── Debian / Ubuntu ──────────────────────────────────────────────────────
+	{
+		Name:       "apt-get",
+		Binary:     "apt-get",
+		NeedsSudo:  true,
+		ListCmd:    []string{"dpkg-query", "-f", "${Package}\\n", "-W"},
+		InstallCmd: []string{"apt-get", "install", "-y"},
+		RemoveCmd:  []string{"apt-get", "remove", "-y", "--autoremove"},
+		Env:        []string{"DEBIAN_FRONTEND=noninteractive"},
+	},
+	// ── Fedora / RHEL ─────────────────────────────────────────────────────────
+	{
+		Name:       "dnf",
+		Binary:     "dnf",
+		NeedsSudo:  true,
+		ListCmd:    []string{"rpm", "-qa", "--queryformat", "%{NAME}\\n"},
+		InstallCmd: []string{"dnf", "install", "-y"},
+		RemoveCmd:  []string{"dnf", "remove", "-y"},
+	},
+	// ── CentOS / older RHEL ───────────────────────────────────────────────────
+	{
+		Name:       "yum",
+		Binary:     "yum",
+		NeedsSudo:  true,
+		ListCmd:    []string{"rpm", "-qa", "--queryformat", "%{NAME}\\n"},
+		InstallCmd: []string{"yum", "install", "-y"},
+		RemoveCmd:  []string{"yum", "remove", "-y"},
+	},
+	// ── openSUSE ──────────────────────────────────────────────────────────────
+	{
+		Name:       "zypper",
+		Binary:     "zypper",
+		NeedsSudo:  true,
+		ListCmd:    []string{"rpm", "-qa", "--queryformat", "%{NAME}\\n"},
+		InstallCmd: []string{"zypper", "install", "-y", "--no-confirm"},
+		RemoveCmd:  []string{"zypper", "remove", "-y"},
+	},
+	// ── Alpine Linux ──────────────────────────────────────────────────────────
+	{
+		Name:       "apk",
+		Binary:     "apk",
+		NeedsSudo:  true,
+		ListCmd:    []string{"apk", "info"},
+		InstallCmd: []string{"apk", "add"},
+		RemoveCmd:  []string{"apk", "del"},
+	},
+	// ── Void Linux ────────────────────────────────────────────────────────────
+	{
+		Name:       "xbps-install",
+		Binary:     "xbps-install",
+		NeedsSudo:  true,
+		ListCmd:    []string{"xbps-query", "-l"},
+		InstallCmd: []string{"xbps-install", "-y"},
+		RemoveCmd:  []string{"xbps-remove", "-y"},
+		ParseOutput: parseXBPS,
+	},
+}
+
+// Detect walks the managers table and returns the first whose Binary is found
+// in PATH. Returns an error listing supported managers if none is detected.
+func Detect(_ context.Context) (*PackageManager, error) {
+	for i := range managers {
+		if executor.Exists(managers[i].Binary) {
+			return &managers[i], nil
+		}
+	}
+	var names []string
+	for _, m := range managers {
+		names = append(names, m.Name)
+	}
+	return nil, fmt.Errorf("no supported package manager found (looked for: %s)", strings.Join(names, ", "))
+}
+
+// parseXBPS converts `xbps-query -l` output into plain package names.
+// Each line has the form: "ii pkgname-version description"
+// The version always starts with a digit, so we split on the last "-digit"
+// sequence to extract the name.
+func parseXBPS(raw string) []string {
+	var names []string
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Fields: state pkgver description...
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		pkgver := fields[1] // e.g. "bash-5.2.032_1"
+		names = append(names, xbpsPkgName(pkgver))
+	}
+	return names
+}
+
+// xbpsPkgName extracts the package name from a pkgver string like "bash-5.2_1".
+// Package names can contain hyphens; versions always start with a digit after
+// the last separating hyphen.
+func xbpsPkgName(pkgver string) string {
+	parts := strings.Split(pkgver, "-")
+	// Find the last part that starts with a digit — that's the version boundary.
+	for i := len(parts) - 1; i > 0; i-- {
+		if len(parts[i]) > 0 && parts[i][0] >= '0' && parts[i][0] <= '9' {
+			return strings.Join(parts[:i], "-")
+		}
+	}
+	return pkgver // fallback: return as-is
+}

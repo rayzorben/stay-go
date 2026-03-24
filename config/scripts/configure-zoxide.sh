@@ -1,0 +1,1 @@
+grep -qxF 'zoxide init fish | source' ~/.config/fish/config.fish || echo 'zoxide init fish | source' >> ~/.config/fish/config.fish

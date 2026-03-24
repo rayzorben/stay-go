@@ -1,0 +1,7 @@
+packages:
+  - sddm
+
+services:
+  - service: sddm
+    depends: 
+      - packages: ['sddm']

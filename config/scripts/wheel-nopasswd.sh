@@ -1,0 +1,1 @@
+sudo sed -i 's/%wheel ALL=(ALL) ALL/%wheel ALL=(ALL) NOPASSWD: ALL/' /etc/sudoers.d/10-installer
