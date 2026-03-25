@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/rayben/stay-go/internal/config"
 	"github.com/rayben/stay-go/internal/engine"
 	"github.com/rayben/stay-go/internal/executor"
 	"github.com/rayben/stay-go/internal/state"
@@ -23,7 +24,10 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 		// Prepend set -e so bash exits on the first failing statement.
 		// Without this, bash -c exits with the last command's code, masking
 		// earlier failures in multi-line commands.
-		result, err := r.exec.Run(ctx, executor.Options{Sudo: entry.Sudo}, "bash", "-c", "set -e\n"+entry.Command)
+		// Substitute ${secrets.*} tokens with decrypted values at the last
+		// moment before execution so plaintext never appears in plan output.
+		cmd := config.ApplySecrets(entry.Command, r.cfg.DecryptedSecrets)
+		result, err := r.exec.Run(ctx, executor.Options{Sudo: entry.Sudo}, "bash", "-c", "set -e\n"+cmd)
 		if err != nil {
 			return fmt.Errorf("running command %q: %w\nstderr: %s", node.DisplayName, err, result.Stderr)
 		}
@@ -44,6 +48,7 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 			if stateEntry, ok := st.Get(node.ID); ok && stateEntry.Data != nil {
 				sudo, _ = stateEntry.Data["sudo"].(bool)
 			}
+			rollback = config.ApplySecrets(rollback, r.cfg.DecryptedSecrets)
 			result, err := r.exec.Run(ctx, executor.Options{Sudo: sudo}, "bash", "-c", "set -e\n"+rollback)
 			if err != nil {
 				return fmt.Errorf("rollback for command %q: %w\nstderr: %s", node.DisplayName, err, result.Stderr)

@@ -92,12 +92,20 @@ func ApplyVars(cfg *Config, vars map[string]string) {
 }
 
 // resolveOne performs one substitution pass: expands ~ then replaces ${key}.
+// Tokens of the form ${secrets.*} are intentionally left untouched; they are
+// substituted at execute time by config.ApplySecrets so secrets are never
+// printed in plan output.
 func resolveOne(s string, vars map[string]string, home string) string {
 	s = strings.ReplaceAll(s, "~", home)
 	for k, v := range vars {
 		s = strings.ReplaceAll(s, "${"+k+"}", v)
 	}
 	return s
+}
+
+// hasSecretsRef reports whether s contains at least one ${secrets.*} token.
+func hasSecretsRef(s string) bool {
+	return strings.Contains(s, "${secrets.")
 }
 
 // countVarTokens counts unresolved ${...} and ~ tokens across all var values.

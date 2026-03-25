@@ -44,7 +44,15 @@ func loadLayer(path, level string, visited map[string]bool) (*Config, error) {
 		return nil, fmt.Errorf("extracting includes from %q: %w", path, err)
 	}
 
-	// Stamp direct entries with this layer's level.
+	// Stamp the source file on every secret entry so the Manager knows which
+	// file to rewrite when encrypting plaintext values in-place.
+	for k := range cfg.Secrets {
+		e := cfg.Secrets[k]
+		e.SourceFile = abs
+		cfg.Secrets[k] = e
+	}
+
+	// Stamp direct entries with this layer's level (includes secrets Level).
 	stampLevel(cfg, level)
 
 	// Load included files as base; this file's direct entries override.
@@ -142,15 +150,21 @@ func stampLevel(cfg *Config, level string) {
 	for i := range cfg.Commands {
 		cfg.Commands[i].Level = level
 	}
+	for k := range cfg.Secrets {
+		e := cfg.Secrets[k]
+		e.Level = level
+		cfg.Secrets[k] = e
+	}
 }
 
 // mergeConfigs merges override on top of base.
 // For each resource type, override entries with the same identity key replace
 // the corresponding base entry; new entries from both are preserved.
-// Variable maps are merged with the same precedence (override wins).
+// Variable maps and secrets maps are merged with the same precedence (override wins).
 func mergeConfigs(base, override *Config) *Config {
 	result := &Config{
-		Vars: make(map[string]string),
+		Vars:    make(map[string]string),
+		Secrets: make(SecretsMap),
 	}
 
 	for k, v := range base.Vars {
@@ -158,6 +172,13 @@ func mergeConfigs(base, override *Config) *Config {
 	}
 	for k, v := range override.Vars {
 		result.Vars[k] = v
+	}
+
+	for k, v := range base.Secrets {
+		result.Secrets[k] = v
+	}
+	for k, v := range override.Secrets {
+		result.Secrets[k] = v
 	}
 
 	result.Packages = mergeByKey(base.Packages, override.Packages,

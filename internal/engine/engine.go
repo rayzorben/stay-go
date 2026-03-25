@@ -213,7 +213,13 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 		case ActionTrack, ActionAdopt, ActionLevel:
 			// No system commands needed; update state to sync hash, level, and data.
 			st.Set(node.ID, node.ConfigHash, node.Level, node.StateData)
-			// Already marked succeeded above.
+			// Call Execute so resources can perform per-node work on TRACK/ADOPT
+			// (e.g. secrets resource decrypts values into cfg.DecryptedSecrets).
+			r := resourceByType[node.ResourceType]
+			if execErr := r.Execute(ctx, node, st); execErr != nil {
+				DisplayExecutionResult(os.Stdout, node, execErr)
+				succeeded[node.ID] = false
+			}
 
 		case ActionAdd, ActionUpdate, ActionRemove:
 			// Runtime dep check: all deps that are going to execute must have succeeded.

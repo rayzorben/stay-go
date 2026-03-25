@@ -23,6 +23,12 @@ type Config struct {
 	Services []ServiceEntry    `yaml:"services"`
 	Scripts  []ScriptEntry     `yaml:"scripts"`
 	Commands []CommandEntry    `yaml:"commands"`
+	Secrets  SecretsMap        `yaml:"secrets"`
+
+	// DecryptedSecrets holds the plaintext values of all secrets after the
+	// Manager has processed them. Populated by cmd/stay-go after LoadAll;
+	// not serialised to YAML. Keyed by the secret name (without "secrets." prefix).
+	DecryptedSecrets map[string]string `yaml:"-"`
 }
 
 // CommandEntry defines a named inline command managed by stay-go.
