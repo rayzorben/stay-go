@@ -147,6 +147,9 @@ func stampLevel(cfg *Config, level string) {
 	for i := range cfg.Scripts {
 		cfg.Scripts[i].Level = level
 	}
+	for i := range cfg.Files {
+		cfg.Files[i].Level = level
+	}
 	for i := range cfg.Commands {
 		cfg.Commands[i].Level = level
 	}
@@ -195,6 +198,9 @@ func mergeConfigs(base, override *Config) *Config {
 
 	result.Scripts = mergeByKey(base.Scripts, override.Scripts,
 		func(s ScriptEntry) string { return s.Script })
+
+	result.Files = mergeByKey(base.Files, override.Files,
+		func(f FileEntry) string { return f.Target })
 
 	result.Commands = mergeByKey(base.Commands, override.Commands,
 		func(c CommandEntry) string { return c.Name })

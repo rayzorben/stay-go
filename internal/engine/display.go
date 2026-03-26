@@ -74,6 +74,7 @@ var resourceLabel = map[string]string{
 	"users":    "user",
 	"services": "service",
 	"scripts":  "script",
+	"files":    "file",
 	"commands": "command",
 	"secrets":  "secret",
 }
@@ -330,7 +331,7 @@ func padCenter(s string, width int) string {
 // ─── Show command ─────────────────────────────────────────────────────────────
 
 // canonicalOrder defines the display order for resource types in --show output.
-var canonicalOrder = []string{"packages", "groups", "users", "services", "scripts", "commands", "secrets"}
+var canonicalOrder = []string{"packages", "groups", "users", "services", "scripts", "files", "commands", "secrets"}
 
 // DisplayShow writes a read-only table of all currently-tracked nodes to w.
 // scope controls what is printed:

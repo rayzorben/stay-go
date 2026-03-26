@@ -53,6 +53,10 @@ func (e *Executor) Run(ctx context.Context, opts Options, name string, args ...s
 		cmd.Env = append(os.Environ(), opts.Env...)
 	}
 
+	if e.Debug {
+		fmt.Fprintf(os.Stderr, "  $ %s\n", strings.Join(cmd.Args, " "))
+	}
+
 	// Stdin: use /dev/null unless the caller supplies a reader.
 	// This prevents package managers from blocking on interactive input.
 	if opts.Stdin != nil {

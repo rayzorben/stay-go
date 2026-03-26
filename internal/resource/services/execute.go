@@ -21,7 +21,7 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 	isUser := entry.User
 	// System services require sudo; user services run as the invoking user.
 	opts := executor.Options{Sudo: !isUser}
-	name := node.DisplayName
+	name := entry.Service // DisplayName includes "user/" or "system/" prefix — use raw name
 
 	switch node.Action {
 	case engine.ActionAdd:

@@ -89,6 +89,21 @@ func ApplyVars(cfg *Config, vars map[string]string) {
 			}
 		}
 	}
+	for i := range cfg.Files {
+		// Source: ${secrets.*} refs are intentionally left untouched by resolveOne.
+		cfg.Files[i].Source = r(cfg.Files[i].Source)
+		cfg.Files[i].Target = r(cfg.Files[i].Target)
+		for j := range cfg.Files[i].SSHKey {
+			cfg.Files[i].SSHKey[j] = r(cfg.Files[i].SSHKey[j])
+		}
+		for j, dep := range cfg.Files[i].Depends {
+			for k, vals := range dep {
+				for l, v := range vals {
+					cfg.Files[i].Depends[j][k][l] = r(v)
+				}
+			}
+		}
+	}
 }
 
 // resolveOne performs one substitution pass: expands ~ then replaces ${key}.

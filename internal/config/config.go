@@ -22,6 +22,7 @@ type Config struct {
 	Users    []UserEntry       `yaml:"users"`
 	Services []ServiceEntry    `yaml:"services"`
 	Scripts  []ScriptEntry     `yaml:"scripts"`
+	Files    []FileEntry       `yaml:"files"`
 	Commands []CommandEntry    `yaml:"commands"`
 	Secrets  SecretsMap        `yaml:"secrets"`
 
@@ -68,6 +69,38 @@ func (e *CommandEntry) FileConditions() []string {
 		}
 	}
 	return nil
+}
+
+// FileEntry defines a file, directory clone, or download to place on disk.
+type FileEntry struct {
+	Source  string                `yaml:"source"`            // path, ${secrets.*}, git URL, or http URL
+	Target  string                `yaml:"target"`            // destination path (~ expanded)
+	Mode    string                `yaml:"mode,omitempty"`    // e.g. "0600", "+x"
+	Symlink bool                  `yaml:"symlink,omitempty"` // create symlink instead of copy (local only)
+	SSHKey  []string              `yaml:"ssh_key,omitempty"` // SSH key paths for git SSH auth
+	Sudo    bool                  `yaml:"sudo,omitempty"`
+	Depends []map[string][]string `yaml:"depends,omitempty"`
+	Level   string                `yaml:"-"` // set by LoadAll, not parsed from YAML
+}
+
+// DependsOnIDs converts the raw depends field into canonical resource node IDs.
+// The special "file" key references other file entries by their target path.
+func (e *FileEntry) DependsOnIDs() []string {
+	var ids []string
+	for _, dep := range e.Depends {
+		for resourceType, names := range dep {
+			if resourceType == "file" {
+				for _, name := range names {
+					ids = append(ids, "files/"+name)
+				}
+				continue
+			}
+			for _, name := range names {
+				ids = append(ids, resourceType+"/"+name)
+			}
+		}
+	}
+	return ids
 }
 
 // ScriptEntry defines a shell script to run as part of the desired state.

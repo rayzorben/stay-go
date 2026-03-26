@@ -29,6 +29,7 @@ import (
 	"github.com/rayben/stay-go/internal/resource/commands"
 	"github.com/rayben/stay-go/internal/resource/groups"
 	"github.com/rayben/stay-go/internal/resource/packages"
+	rfiles "github.com/rayben/stay-go/internal/resource/files"
 	rsecrets "github.com/rayben/stay-go/internal/resource/secrets"
 	"github.com/rayben/stay-go/internal/resource/scripts"
 	"github.com/rayben/stay-go/internal/resource/services"
@@ -113,6 +114,7 @@ func main() {
 	eng.Register(users.New(cfg, exec))
 	eng.Register(services.New(cfg, exec))
 	eng.Register(scripts.New(cfg, exec))
+	eng.Register(rfiles.New(cfg, exec))
 	eng.Register(rsecrets.New(cfg))
 	eng.Register(commands.New(cfg, exec))
 
