@@ -1,3 +1,7 @@
 {
-    "makefile.configureOnOpen": false
+    "makefile.configureOnOpen": false,
+    "yaml.customTags": [
+        "!encrypted scalar",
+        "!include scalar"
+    ]
 }

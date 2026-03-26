@@ -10,21 +10,23 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
 // Config is the top-level structure for the desired system state.
 type Config struct {
-	Vars     map[string]string `yaml:"variables"`
-	Packages []PackageEntry    `yaml:"packages"`
-	Groups   []GroupEntry      `yaml:"groups"`
-	Users    []UserEntry       `yaml:"users"`
-	Services []ServiceEntry    `yaml:"services"`
-	Scripts  []ScriptEntry     `yaml:"scripts"`
-	Files    []FileEntry       `yaml:"files"`
-	Commands []CommandEntry    `yaml:"commands"`
-	Secrets  SecretsMap        `yaml:"secrets"`
+	Vars       map[string]string `yaml:"variables"`
+	Packages   []PackageEntry    `yaml:"packages"`
+	Groups     []GroupEntry      `yaml:"groups"`
+	Users      []UserEntry       `yaml:"users"`
+	Services   []ServiceEntry    `yaml:"services"`
+	Scripts    []ScriptEntry     `yaml:"scripts"`
+	Files      []FileEntry       `yaml:"files"`
+	Commands   []CommandEntry    `yaml:"commands"`
+	Secrets    SecretsMap        `yaml:"secrets"`
+	Containers []ContainerEntry  `yaml:"containers"`
 
 	// DecryptedSecrets holds the plaintext values of all secrets after the
 	// Manager has processed them. Populated by cmd/stay-go after LoadAll;
@@ -226,6 +228,73 @@ func (s *ServiceEntry) IsEnabled() bool {
 func (s *ServiceEntry) DependsOnIDs() []string {
 	var ids []string
 	for _, dep := range s.Depends {
+		for resourceType, names := range dep {
+			for _, name := range names {
+				ids = append(ids, resourceType+"/"+name)
+			}
+		}
+	}
+	return ids
+}
+
+// ContainerEntry defines the desired state of a container managed by Docker or Podman.
+// Field names mirror docker-compose conventions.
+type ContainerEntry struct {
+	Name        string            `yaml:"name,omitempty"`
+	Image       string            `yaml:"image"`
+	Runtime     string            `yaml:"runtime,omitempty"`      // docker or podman; auto-detected if empty
+	Ports       []string          `yaml:"ports,omitempty"`        // "hostPort:containerPort"
+	Volumes     []string          `yaml:"volumes,omitempty"`      // "host:container[:options]"
+	Environment []string          `yaml:"environment,omitempty"`  // "KEY=value"
+	EnvFile     []string          `yaml:"env_file,omitempty"`     // paths to env files
+	Labels      map[string]string `yaml:"labels,omitempty"`
+	Restart     string            `yaml:"restart,omitempty"`      // no, always, unless-stopped, on-failure
+	NetworkMode string            `yaml:"network_mode,omitempty"` // host, bridge, none, container:<name>
+	Networks    []string          `yaml:"networks,omitempty"`
+	Command     []string          `yaml:"command,omitempty"`
+	Entrypoint  string            `yaml:"entrypoint,omitempty"`
+	User        string            `yaml:"user,omitempty"`
+	Privileged  bool              `yaml:"privileged,omitempty"`
+	CapAdd      []string          `yaml:"cap_add,omitempty"`
+	CapDrop     []string          `yaml:"cap_drop,omitempty"`
+	Devices     []string          `yaml:"devices,omitempty"`
+	DNS         []string          `yaml:"dns,omitempty"`
+	ExtraHosts  []string          `yaml:"extra_hosts,omitempty"` // "hostname:ip"
+	Hostname    string            `yaml:"hostname,omitempty"`
+	Pull        string            `yaml:"pull,omitempty"` // always, missing (default), never
+	Sudo        bool              `yaml:"sudo,omitempty"`
+	Depends     []map[string][]string `yaml:"depends,omitempty"`
+	Level       string            `yaml:"-"` // set by LoadAll, not parsed from YAML
+}
+
+// ContainerName returns the effective container name: the explicit name field,
+// or derived from the image (last path segment, tag stripped).
+func (c *ContainerEntry) ContainerName() string {
+	if c.Name != "" {
+		return c.Name
+	}
+	img := c.Image
+	// Strip digest
+	if i := strings.Index(img, "@"); i >= 0 {
+		img = img[:i]
+	}
+	// Strip tag (but only after the last "/", to avoid stripping registry port)
+	if i := strings.LastIndex(img, ":"); i >= 0 {
+		if j := strings.LastIndex(img, "/"); j < 0 || i > j {
+			img = img[:i]
+		}
+	}
+	// Last path segment
+	if i := strings.LastIndex(img, "/"); i >= 0 {
+		img = img[i+1:]
+	}
+	return img
+}
+
+// DependsOnIDs converts the raw depends field into canonical resource node IDs.
+func (c *ContainerEntry) DependsOnIDs() []string {
+	var ids []string
+	for _, dep := range c.Depends {
 		for resourceType, names := range dep {
 			for _, name := range names {
 				ids = append(ids, resourceType+"/"+name)

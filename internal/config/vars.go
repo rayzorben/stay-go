@@ -104,6 +104,20 @@ func ApplyVars(cfg *Config, vars map[string]string) {
 			}
 		}
 	}
+	for i := range cfg.Containers {
+		cfg.Containers[i].Image = r(cfg.Containers[i].Image)
+		cfg.Containers[i].Hostname = r(cfg.Containers[i].Hostname)
+		cfg.Containers[i].Entrypoint = r(cfg.Containers[i].Entrypoint)
+		for j := range cfg.Containers[i].Volumes {
+			cfg.Containers[i].Volumes[j] = r(cfg.Containers[i].Volumes[j])
+		}
+		for j := range cfg.Containers[i].Environment {
+			cfg.Containers[i].Environment[j] = r(cfg.Containers[i].Environment[j])
+		}
+		for j := range cfg.Containers[i].EnvFile {
+			cfg.Containers[i].EnvFile[j] = r(cfg.Containers[i].EnvFile[j])
+		}
+	}
 }
 
 // resolveOne performs one substitution pass: expands ~ then replaces ${key}.

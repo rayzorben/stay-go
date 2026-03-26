@@ -27,10 +27,11 @@ import (
 	"github.com/rayben/stay-go/internal/engine"
 	"github.com/rayben/stay-go/internal/executor"
 	"github.com/rayben/stay-go/internal/resource/commands"
-	"github.com/rayben/stay-go/internal/resource/groups"
-	"github.com/rayben/stay-go/internal/resource/packages"
+	rcontainers "github.com/rayben/stay-go/internal/resource/containers"
 	rfiles "github.com/rayben/stay-go/internal/resource/files"
 	rsecrets "github.com/rayben/stay-go/internal/resource/secrets"
+	"github.com/rayben/stay-go/internal/resource/groups"
+	"github.com/rayben/stay-go/internal/resource/packages"
 	"github.com/rayben/stay-go/internal/resource/scripts"
 	"github.com/rayben/stay-go/internal/resource/services"
 	"github.com/rayben/stay-go/internal/resource/users"
@@ -117,6 +118,7 @@ func main() {
 	eng.Register(rfiles.New(cfg, exec))
 	eng.Register(rsecrets.New(cfg))
 	eng.Register(commands.New(cfg, exec))
+	eng.Register(rcontainers.New(cfg, exec))
 
 	// Respect Ctrl-C / SIGTERM for clean shutdown.
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

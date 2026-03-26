@@ -40,4 +40,14 @@ files:
     depends:
       - file: ["~/.ssh/id_ed25519"]
 
+containers:
+  - name: redis
+    image: redis:alpine
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - "${config_root}/data/redis:/data"
+    depends:
+      - services: [docker]
+
 ghostty: !include "./commands/ghostty.yaml"

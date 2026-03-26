@@ -69,14 +69,15 @@ func actionColor(a ActionType) func(string) string {
 
 // resourceLabel returns the singular display name for a resource type.
 var resourceLabel = map[string]string{
-	"packages": "package",
-	"groups":   "group",
-	"users":    "user",
-	"services": "service",
-	"scripts":  "script",
-	"files":    "file",
-	"commands": "command",
-	"secrets":  "secret",
+	"packages":   "package",
+	"groups":     "group",
+	"users":      "user",
+	"services":   "service",
+	"scripts":    "script",
+	"files":      "file",
+	"commands":   "command",
+	"secrets":    "secret",
+	"containers": "container",
 }
 
 func typeLabel(resourceType string) string {
@@ -331,7 +332,7 @@ func padCenter(s string, width int) string {
 // ─── Show command ─────────────────────────────────────────────────────────────
 
 // canonicalOrder defines the display order for resource types in --show output.
-var canonicalOrder = []string{"packages", "groups", "users", "services", "scripts", "files", "commands", "secrets"}
+var canonicalOrder = []string{"packages", "groups", "users", "services", "scripts", "files", "commands", "secrets", "containers"}
 
 // DisplayShow writes a read-only table of all currently-tracked nodes to w.
 // scope controls what is printed:

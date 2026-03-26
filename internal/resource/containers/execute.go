@@ -1,0 +1,83 @@
+package containers
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/rayben/stay-go/internal/config"
+	"github.com/rayben/stay-go/internal/engine"
+	"github.com/rayben/stay-go/internal/executor"
+	"github.com/rayben/stay-go/internal/state"
+)
+
+// Execute creates, recreates, or removes a container.
+// State is updated on success.
+// Implements engine.NodeExecutor.
+func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state.State) error {
+	entry, ok := r.nodeConfigs[node.ID]
+	if !ok {
+		return fmt.Errorf("no config found for container %q", node.DisplayName)
+	}
+
+	name := entry.ContainerName()
+	rt := resolveRuntime(entry.Runtime)
+	opts := executor.Options{Sudo: entry.Sudo}
+
+	switch node.Action {
+	case engine.ActionAdd:
+		// Remove any stopped container with the same name before (re)creating.
+		if containerExists(ctx, r.exec, rt, name) {
+			if err := stopAndRemove(ctx, r.exec, rt, opts, name); err != nil {
+				return err
+			}
+		}
+		if err := startContainer(ctx, r.exec, rt, opts, entry, name); err != nil {
+			return err
+		}
+		st.Set(node.ID, node.ConfigHash, node.Level, node.StateData)
+
+	case engine.ActionUpdate:
+		// Recreate: stop + remove the existing container, then run a fresh one.
+		if containerExists(ctx, r.exec, rt, name) {
+			if err := stopAndRemove(ctx, r.exec, rt, opts, name); err != nil {
+				return err
+			}
+		}
+		if err := startContainer(ctx, r.exec, rt, opts, entry, name); err != nil {
+			return err
+		}
+		st.Set(node.ID, node.ConfigHash, node.Level, node.StateData)
+
+	case engine.ActionRemove:
+		if containerExists(ctx, r.exec, rt, name) {
+			if err := stopAndRemove(ctx, r.exec, rt, opts, name); err != nil {
+				return err
+			}
+		}
+		st.Delete(node.ID)
+	}
+
+	return nil
+}
+
+// startContainer runs `runtime run -d ...` to create and start a container.
+func startContainer(ctx context.Context, exec *executor.Executor, rt string, opts executor.Options, entry *config.ContainerEntry, name string) error {
+	args := buildRunArgs(entry, name)
+	result, err := exec.Run(ctx, opts, rt, args...)
+	if err != nil {
+		return fmt.Errorf("starting container %q: %w\nstderr: %s", name, err, result.Stderr)
+	}
+	return nil
+}
+
+// stopAndRemove stops a running container (if needed) then removes it.
+func stopAndRemove(ctx context.Context, exec *executor.Executor, rt string, opts executor.Options, name string) error {
+	// Stop is best-effort; the container may already be stopped.
+	exec.Run(ctx, opts, rt, "stop", name) //nolint:errcheck
+
+	result, err := exec.Run(ctx, opts, rt, "rm", name)
+	if err != nil {
+		return fmt.Errorf("removing container %q: %w\nstderr: %s", name, err, result.Stderr)
+	}
+	return nil
+}
