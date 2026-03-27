@@ -3,8 +3,8 @@ host_config: !include "${config_root}/hosts/$(hostname).yaml"
 
 variables:
   dropbox_folder: ~/Dropbox
-  lucida_font: ${dropbox_folder}/Ray/Configuration/Fonts/LucidaProgrammerNerdFontMono-Regular.ttf
-  lucida_font_destination: /usr/share/fonts/TTF/LucidaProgrammerNerdFontMono-Regular.ttf
+  lucida_font: ${config_root}/files/fonts/LucidaProgrammerNerdFontMono-Regular.ttf
+  ttf_fonts: /usr/share/fonts/TTF
 
 packages:
   - neovim
