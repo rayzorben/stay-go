@@ -32,20 +32,10 @@ services:
     depends:
       - packages: ['dsearch-bin']
 
-commands:
-  - name: Lucida Font
+files:
+  - source: ${lucida_font}
+    target: ${ttf_fonts}
     sudo: true
-    command: |
-      cp ${lucida_font} ${lucida_font_destination}
-      fc-cache -f
-    depends:
-      - packages: [dropbox]
-      - files: ["${lucida_font}"]
-    rollback: |
-      rm ${lucida_font_destination}
-  - name: echo ssh
-    command: |
-      echo ${secrets.ssh_id_ed25519} > ~/ssh_test.key
 
 secrets:
   _verify: !encrypted sn+HxIuQgQPiWUqaJZkumrQQWr+18XTZyAd6+9kYPLKj/ETTZ2X/RGw5CtUBPuFz4bBQqY8hTC7CJlWfzj8=

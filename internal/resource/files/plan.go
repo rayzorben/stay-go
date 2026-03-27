@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/rayben/stay-go/internal/config"
 	"github.com/rayben/stay-go/internal/engine"
@@ -30,7 +29,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 		configSet[target] = true
 
 		id := nodeID(target)
-		displayName := filepath.Base(target)
+		displayName := target // full path; display.go truncates to fit terminal
 		level := entry.Level
 		if level == "" {
 			level = "common"
@@ -59,15 +58,15 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 		}
 		action, levelDesc := engine.CheckLevelChange(id, level, action, st)
 
-		desc := describeAction(action, kind)
-		if levelDesc != "" {
-			desc = levelDesc
-		}
-
 		// Build dependency list: declared deps + implicit secret dep.
 		deps := entry.DependsOnIDs()
 		if kind == kindSecret {
 			deps = append(deps, config.NodeID("secrets", secretKey(entry.Source)))
+		}
+
+		notes := buildFileNotes(action, kind, entry)
+		if levelDesc != "" {
+			notes = []string{levelDesc}
 		}
 
 		r.nodeConfigs[id] = entry
@@ -80,7 +79,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 			DependsOn:    deps,
 			NeedsSudo:    entry.Sudo,
 			Level:        level,
-			Description:  desc,
+			Notes:        notes,
 		})
 	}
 
@@ -127,26 +126,27 @@ func computeHash(entry *config.FileEntry, kind sourceKind, cfg *config.Config) (
 	}), ""
 }
 
-// describeAction returns a short description of what the action will do.
-func describeAction(action engine.ActionType, kind sourceKind) string {
+// buildFileNotes returns the ↳ sub-line detail for a file plan node.
+// REMOVE and LEVEL nodes get no notes — the action label is self-explanatory.
+func buildFileNotes(action engine.ActionType, kind sourceKind, entry *config.FileEntry) []string {
 	switch action {
-	case engine.ActionAdd:
-		switch kind {
-		case kindSecret:
-			return "write secret to file"
-		case kindLocal:
-			return "copy file"
-		case kindGitSSH:
-			return "clone repository (SSH)"
-		case kindGitHTTPS:
-			return "clone repository"
-		case kindHTTP:
-			return "download file"
-		}
-	case engine.ActionUpdate:
-		return "source changed, update"
-	case engine.ActionRemove:
-		return "remove from tracking"
+	case engine.ActionRemove, engine.ActionLevel, engine.ActionTrack:
+		return nil
 	}
-	return ""
+	switch kind {
+	case kindLocal:
+		if entry.Symlink {
+			return []string{"symlink " + entry.Target + " → " + entry.Source}
+		}
+		return []string{"copy " + entry.Source + " to " + entry.Target}
+	case kindHTTP:
+		return []string{"download " + entry.Source}
+	case kindGitSSH:
+		return []string{"clone " + entry.Source + " (SSH)"}
+	case kindGitHTTPS:
+		return []string{"clone " + entry.Source}
+	case kindSecret:
+		return []string{"write secret to " + entry.Target}
+	}
+	return nil
 }

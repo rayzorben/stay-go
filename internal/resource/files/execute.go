@@ -40,6 +40,7 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 // apply performs the actual file placement for the given entry.
 func (r *Resource) apply(ctx context.Context, entry *config.FileEntry) error {
 	target := entry.Target
+	sudo := entry.Sudo
 	kind := detectKind(entry.Source)
 
 	switch kind {
@@ -50,25 +51,35 @@ func (r *Resource) apply(ctx context.Context, entry *config.FileEntry) error {
 		if !ok {
 			return fmt.Errorf("secret %q not available (not decrypted)", key)
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		if err := mkdirAll(ctx, r.exec, filepath.Dir(target), 0o700, sudo); err != nil {
 			return fmt.Errorf("creating directory for %q: %w", target, err)
 		}
-		if err := atomicWriteFile(target, []byte(content), 0o600); err != nil {
-			return fmt.Errorf("writing %q: %w", target, err)
+		if sudo {
+			// Write to a temp file then sudo-copy to the protected target.
+			tmp, err := writeTempFile([]byte(content), 0o600)
+			if err != nil {
+				return fmt.Errorf("writing temp for %q: %w", target, err)
+			}
+			defer os.Remove(tmp)
+			if err := sudoCopy(ctx, r.exec, tmp, target); err != nil {
+				return fmt.Errorf("writing %q: %w", target, err)
+			}
+		} else {
+			if err := atomicWriteFile(target, []byte(content), 0o600); err != nil {
+				return fmt.Errorf("writing %q: %w", target, err)
+			}
 		}
 
 	case kindLocal:
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		if err := mkdirAll(ctx, r.exec, filepath.Dir(target), 0o755, sudo); err != nil {
 			return fmt.Errorf("creating directory for %q: %w", target, err)
 		}
 		if entry.Symlink {
-			// Remove stale link/file first so the symlink can be (re)created.
-			_ = os.Remove(target)
-			if err := os.Symlink(entry.Source, target); err != nil {
+			if err := makeSymlink(ctx, r.exec, entry.Source, target, sudo); err != nil {
 				return fmt.Errorf("creating symlink %q -> %q: %w", target, entry.Source, err)
 			}
 		} else {
-			if err := copyFile(entry.Source, target); err != nil {
+			if err := placeFile(ctx, r.exec, entry.Source, target, sudo); err != nil {
 				return fmt.Errorf("copying %q to %q: %w", entry.Source, target, err)
 			}
 		}
@@ -89,20 +100,99 @@ func (r *Resource) apply(ctx context.Context, entry *config.FileEntry) error {
 		}
 
 	case kindHTTP:
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		if err := mkdirAll(ctx, r.exec, filepath.Dir(target), 0o755, sudo); err != nil {
 			return fmt.Errorf("creating directory for %q: %w", target, err)
 		}
-		if err := downloadFile(ctx, entry.Source, target); err != nil {
-			return fmt.Errorf("downloading %q to %q: %w", entry.Source, target, err)
+		if sudo {
+			// Download to a temp file then sudo-copy to the protected target.
+			tmp, err := os.CreateTemp("", "stay-go-dl-*")
+			if err != nil {
+				return fmt.Errorf("creating temp file: %w", err)
+			}
+			tmp.Close()
+			defer os.Remove(tmp.Name())
+			if err := downloadFile(ctx, entry.Source, tmp.Name()); err != nil {
+				return fmt.Errorf("downloading %q: %w", entry.Source, err)
+			}
+			if err := sudoCopy(ctx, r.exec, tmp.Name(), target); err != nil {
+				return fmt.Errorf("placing %q: %w", target, err)
+			}
+		} else {
+			if err := downloadFile(ctx, entry.Source, target); err != nil {
+				return fmt.Errorf("downloading %q to %q: %w", entry.Source, target, err)
+			}
 		}
 	}
 
 	if entry.Mode != "" {
-		if err := applyMode(ctx, r.exec, target, entry.Mode, entry.Sudo); err != nil {
+		if err := applyMode(ctx, r.exec, target, entry.Mode, sudo); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// mkdirAll creates the directory, using sudo when required.
+func mkdirAll(ctx context.Context, exec *executor.Executor, dir string, perm os.FileMode, sudo bool) error {
+	if sudo {
+		result, err := exec.Run(ctx, executor.Options{Sudo: true}, "mkdir", "-p", dir)
+		if err != nil {
+			return fmt.Errorf("mkdir -p %q: %w\nstderr: %s", dir, err, result.Stderr)
+		}
+		return nil
+	}
+	return os.MkdirAll(dir, perm)
+}
+
+// placeFile copies src to dst, using sudo cp when required.
+func placeFile(ctx context.Context, exec *executor.Executor, src, dst string, sudo bool) error {
+	if sudo {
+		return sudoCopy(ctx, exec, src, dst)
+	}
+	return copyFile(src, dst)
+}
+
+// makeSymlink creates a symlink dst → src, using sudo ln -sf when required.
+func makeSymlink(ctx context.Context, exec *executor.Executor, src, dst string, sudo bool) error {
+	if sudo {
+		result, err := exec.Run(ctx, executor.Options{Sudo: true}, "ln", "-sf", src, dst)
+		if err != nil {
+			return fmt.Errorf("ln -sf %q %q: %w\nstderr: %s", src, dst, err, result.Stderr)
+		}
+		return nil
+	}
+	// Remove stale link/file first so the symlink can be (re)created.
+	_ = os.Remove(dst)
+	return os.Symlink(src, dst)
+}
+
+// sudoCopy copies src to dst via "sudo cp".
+func sudoCopy(ctx context.Context, exec *executor.Executor, src, dst string) error {
+	result, err := exec.Run(ctx, executor.Options{Sudo: true}, "cp", src, dst)
+	if err != nil {
+		return fmt.Errorf("cp %q %q: %w\nstderr: %s", src, dst, err, result.Stderr)
+	}
+	return nil
+}
+
+// writeTempFile writes content to a temporary file with the given permissions and returns its path.
+func writeTempFile(content []byte, perm os.FileMode) (string, error) {
+	f, err := os.CreateTemp("", "stay-go-secret-*")
+	if err != nil {
+		return "", err
+	}
+	name := f.Name()
+	if err := f.Chmod(perm); err != nil {
+		f.Close()
+		os.Remove(name)
+		return "", err
+	}
+	if _, err := f.Write(content); err != nil {
+		f.Close()
+		os.Remove(name)
+		return "", err
+	}
+	return name, f.Close()
 }
 
 // gitCloneOrPull clones url into target, or pulls if target already contains a git repo.

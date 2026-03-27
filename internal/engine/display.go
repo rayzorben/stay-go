@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strings"
+
+	"golang.org/x/term"
 
 	"github.com/rayben/stay-go/internal/state"
 )
@@ -188,6 +191,16 @@ func DisplayPlan(w io.Writer, nodes []*PlanNode) {
 			w4 = l
 		}
 	}
+	// Cap ITEM column to available terminal width so long paths don't overflow.
+	// Layout: "  " + action + "  " + level + "  " + resource + "  " + item
+	const minItemWidth = 20
+	avail := termWidth() - (8 + w1 + w2 + w3)
+	if avail < minItemWidth {
+		avail = minItemWidth
+	}
+	if w4 > avail {
+		w4 = avail
+	}
 
 	// Header.
 	fmt.Fprintln(w)
@@ -218,7 +231,7 @@ func DisplayPlan(w io.Writer, nodes []*PlanNode) {
 			color(padLeft(r.action, w1)),
 			w2, r.level,
 			w3, r.resourceType,
-			w4, r.item,
+			w4, truncatePath(r.item, w4),
 			suffix,
 		)
 		// Skip reasons are rendered as a dim continuation line beneath the row.
@@ -313,6 +326,49 @@ func Confirm(w io.Writer, r io.Reader) (bool, error) {
 	}
 	resp := strings.TrimSpace(strings.ToLower(scanner.Text()))
 	return resp == "" || resp == "y" || resp == "yes", nil
+}
+
+// ─── Terminal helpers ─────────────────────────────────────────────────────────
+
+// termWidth returns the current terminal width, or 120 as a fallback.
+func termWidth() int {
+	w, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || w < 40 {
+		return 120
+	}
+	return w
+}
+
+// truncatePath shortens a path to at most width characters, preserving the
+// start of the path and the last two segments (parent/file), joined by "/.../".
+// If even the last two segments exceed the budget, the filename is truncated.
+func truncatePath(s string, width int) string {
+	if width <= 0 || len(s) <= width {
+		return s
+	}
+	// Last two segments: "parent/file"
+	tail := s
+	if i := strings.LastIndex(s, "/"); i > 0 {
+		if j := strings.LastIndex(s[:i], "/"); j >= 0 {
+			tail = s[j+1:]
+		}
+	}
+	const ellipsis = "/.../"
+	tailRoom := width - len(ellipsis)
+	if tailRoom < 3 {
+		if len(s) > width-1 {
+			return s[:width-1] + "…"
+		}
+		return s
+	}
+	if len(tail) > tailRoom {
+		tail = tail[:tailRoom-3] + "..."
+	}
+	frontRoom := width - len(ellipsis) - len(tail)
+	if frontRoom <= 0 {
+		return tail
+	}
+	return s[:frontRoom] + ellipsis + tail
 }
 
 // ─── String padding helpers ───────────────────────────────────────────────────

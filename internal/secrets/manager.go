@@ -25,8 +25,9 @@ type Entry struct {
 // sentinel (an encrypted token stored alongside secrets in the YAML file)
 // guarantees consistency: a wrong password fails fast before touching anything.
 type Manager struct {
-	password string
-	unlocked bool
+	password    string
+	unlocked    bool
+	newSetup    bool // true when no _verify existed in any config file at Unlock time
 }
 
 // New returns an uninitialised Manager. Call Unlock before Encrypt/Decrypt.
@@ -47,6 +48,7 @@ func (m *Manager) IsUnlocked() bool { return m.unlocked }
 // decrypts the sentinel correctly (up to 3 attempts).
 func (m *Manager) Unlock(verifyToken string) error {
 	isNewSetup := verifyToken == ""
+	m.newSetup = isNewSetup
 
 	if !isNewSetup {
 		// Try the keyring first for existing setups only.
@@ -230,8 +232,11 @@ func (m *Manager) EncryptInFile(path string, keys []string) (map[string]string, 
 		lines = newLines
 	}
 
-	// Append _verify sentinel if not already present.
-	if findMappingValue(secretsNode, VerifyKey) == nil {
+	// Append _verify sentinel only if this is a new setup (no _verify existed
+	// in any config file when the manager was unlocked) and this file doesn't
+	// already have one. This prevents duplicate _verify entries across included
+	// config files — the sentinel lives in whichever file first triggered setup.
+	if m.newSetup && findMappingValue(secretsNode, VerifyKey) == nil {
 		token, err := encrypt(verifyMagic, m.password)
 		if err != nil {
 			return nil, fmt.Errorf("creating verify token: %w", err)

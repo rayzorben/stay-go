@@ -2,7 +2,6 @@
 // "/-" comments out the following node.
 // Check the wiki for a full description of the configuration:
 // https://github.com/YaLTeR/niri/wiki/Configuration:-Introduction
-include "rules.kdl"
 
 
 config-notification {
@@ -142,15 +141,18 @@ layout {
     struts {
     }
 }
+
 layer-rule {
     match namespace="^quickshell$"
     place-within-backdrop true
 }
+
 overview {
     workspace-shadow {
         off
     }
 }
+
 // Add lines like this to spawn processes at startup.
 // Note that running niri as a session supports xdg-desktop-autostart,
 // which may be more convenient to use.
@@ -169,11 +171,14 @@ environment {
   TERMINAL "kitty"
   EDITOR "nvim"
 }
+
 hotkey-overlay {
     skip-at-startup
 }
+
 prefer-no-csd
 screenshot-path "~/Pictures/Screenshots/Screenshot from %Y-%m-%d %H-%M-%S.png"
+
 animations {
     workspace-switch {
         spring damping-ratio=0.80 stiffness=523 epsilon=0.0001
@@ -206,6 +211,7 @@ animations {
         spring damping-ratio=0.85 stiffness=800 epsilon=0.0001
     }
 }
+
 // Window rules let you adjust behavior for individual windows.
 // Find more information on the wiki:
 // https://github.com/YaLTeR/niri/wiki/Configuration:-Window-Rules
@@ -218,12 +224,14 @@ window-rule {
     match app-id=r#"^org\.wezfurlong\.wezterm$"#
     default-column-width {}
 }
+
 window-rule {
     match app-id=r#"^org\.gnome\."#
     draw-border-with-background false
     geometry-corner-radius 12
     clip-to-geometry true
 }
+
 window-rule {
     match app-id=r#"^gnome-control-center$"#
     match app-id=r#"^pavucontrol$"#
@@ -231,6 +239,7 @@ window-rule {
     default-column-width { proportion 0.5; }
     open-floating false
 }
+
 window-rule {
     match app-id=r#"^galculator$"#
     match app-id=r#"^blueman-manager$"#
@@ -239,6 +248,7 @@ window-rule {
     match app-id=r#"^xdg-desktop-portal$"#
     open-floating true
 }
+
 window-rule {
     match app-id=r#"^org\.wezfurlong\.wezterm$"#
     match app-id="Alacritty"
@@ -247,15 +257,18 @@ window-rule {
     match app-id="kitty"
     draw-border-with-background false
 }
+
 window-rule {
     match app-id=r#"^gnome-calculator$"#
     open-floating true
     opacity 0.9
 }
+
 window-rule {
     match is-active=false
     opacity 0.9
 }
+
 window-rule {
     match app-id=r#"firefox$"# title="^Picture-in-Picture$"
     match app-id="zoom"
@@ -462,10 +475,11 @@ binds {
     Mod+Escape allow-inhibiting=false { toggle-keyboard-shortcuts-inhibit; }
     Mod+Shift+P { power-off-monitors; }
 }
+
 debug {
     honor-xdg-activation-with-invalid-serial
 }
 
 include "dms/cursor.kdl"
-
 include "dms/windowrules.kdl"
+include "rules.kdl"

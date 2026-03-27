@@ -8,4 +8,4 @@ commands:
       fi
     depends:
         - packages: [ghostty]
-        - files: ["~/.config/ghostty/config", "${lucida_font_destination}"]
+        - files: ["~/.config/ghostty/config", "${ttf_fonts}/LucidaProgrammerNerdFontMono-Regular.ttf"]
