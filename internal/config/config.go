@@ -17,16 +17,17 @@ import (
 
 // Config is the top-level structure for the desired system state.
 type Config struct {
-	Vars       map[string]string `yaml:"variables"`
-	Packages   []PackageEntry    `yaml:"packages"`
-	Groups     []GroupEntry      `yaml:"groups"`
-	Users      []UserEntry       `yaml:"users"`
-	Services   []ServiceEntry    `yaml:"services"`
-	Scripts    []ScriptEntry     `yaml:"scripts"`
-	Files      []FileEntry       `yaml:"files"`
-	Commands   []CommandEntry    `yaml:"commands"`
-	Secrets    SecretsMap        `yaml:"secrets"`
-	Containers []ContainerEntry  `yaml:"containers"`
+	Vars       map[string]string  `yaml:"variables"`
+	Packages   []PackageEntry     `yaml:"packages"`
+	Groups     []GroupEntry       `yaml:"groups"`
+	Users      []UserEntry        `yaml:"users"`
+	Services   []ServiceEntry     `yaml:"services"`
+	Scripts    []ScriptEntry      `yaml:"scripts"`
+	Files      []FileEntry        `yaml:"files"`
+	Commands   []CommandEntry     `yaml:"commands"`
+	Secrets    SecretsMap         `yaml:"secrets"`
+	Containers []ContainerEntry   `yaml:"containers"`
+	Distrobox  []DistroboxEntry   `yaml:"distrobox"`
 
 	// DecryptedSecrets holds the plaintext values of all secrets after the
 	// Manager has processed them. Populated by cmd/stay-go after LoadAll;
@@ -304,60 +305,74 @@ func (c *ContainerEntry) DependsOnIDs() []string {
 	return ids
 }
 
+// DistroboxEntry defines the desired state of a distrobox container and
+// the resources managed inside it. The host manages the container lifecycle;
+// in-box packages and commands are applied by a guest stay-go invocation.
+type DistroboxEntry struct {
+	Name     string                `yaml:"name"`
+	Image    string                `yaml:"image"`
+	Init     bool                  `yaml:"init,omitempty"`      // run /sbin/init (systemd inside)
+	Home     string                `yaml:"home,omitempty"`      // custom home directory for the box
+	HomeSudo bool                  `yaml:"home_sudo,omitempty"` // sudo required to create Home
+	Packages []PackageEntry        `yaml:"packages,omitempty"`  // in-box packages
+	Commands []CommandEntry        `yaml:"commands,omitempty"`  // in-box inline commands
+	Exports  []string              `yaml:"exports,omitempty"`   // app names to export via distrobox-export
+	Depends  []map[string][]string `yaml:"depends,omitempty"`   // host-level deps (e.g. services: [docker])
+	Level    string                `yaml:"-"`                   // set by LoadAll, not parsed from YAML
+}
+
+// DependsOnIDs converts the raw depends field into canonical resource node IDs.
+func (d *DistroboxEntry) DependsOnIDs() []string {
+	var ids []string
+	for _, dep := range d.Depends {
+		for resourceType, names := range dep {
+			for _, name := range names {
+				ids = append(ids, resourceType+"/"+name)
+			}
+		}
+	}
+	return ids
+}
+
 // Load reads and parses the YAML configuration file at path.
 // Top-level `key: !include "file"` directives are resolved and merged recursively.
 func Load(path string) (*Config, error) {
 	return loadLayer(path, "", make(map[string]bool))
 }
 
-// LoadAll loads and merges config from all applicable layers:
+// LoadAll loads config from default.yaml in configDir. Host- and user-specific
+// layers are included via `key: !include "path"` directives in that file.
+// Include paths support ${config_root}, ${env:VAR}, $(command), and ~.
 //
-//   - <configDir>/default.yaml            (level: "common")
-//   - <configDir>/hosts/<hostname>.yaml   (level: "host:<hostname>")
-//   - <configDir>/users/<username>.yaml   (level: "user:<username>")
-//
-// Higher-specificity layers override common entries with the same name.
-// Missing files are silently skipped. Within each layer, top-level
-// `key: !include "file"` directives produce sub-levels like "user:rayben:ghostty".
-func LoadAll(configDir, username, hostname string) (*Config, error) {
-	type layer struct {
-		path  string
-		level string
-	}
-	layers := []layer{
-		{filepath.Join(configDir, "default.yaml"), "common"},
-		{filepath.Join(configDir, "hosts", hostname+".yaml"), "host:" + hostname},
-		{filepath.Join(configDir, "users", username+".yaml"), "user:" + username},
-	}
-
-	merged := Config{Vars: make(map[string]string)}
-
-	for _, l := range layers {
-		cfg, err := loadLayerOptional(l.path, l.level, make(map[string]bool))
-		if err != nil {
-			return nil, fmt.Errorf("loading config layer %q: %w", l.path, err)
-		}
-		if cfg == nil {
-			continue
-		}
-		merged = *mergeConfigs(&merged, cfg)
-	}
-	// Inject implicit variables. config_root is always available; user-defined
-	// vars may reference it. ~ is expanded inline by ResolveString/resolveOne.
+// Direct entries in default.yaml carry level "common". Included files inherit
+// their level from the key name, e.g. `"user:rayben": !include "..."` produces
+// level "user:rayben", matching the old explicit-layer naming.
+func LoadAll(configDir string) (*Config, error) {
 	absConfigDir, err := filepath.Abs(configDir)
 	if err != nil {
 		absConfigDir = configDir
 	}
-	merged.Vars["config_root"] = absConfigDir
+
+	// Load default.yaml with level "" — stampLevel maps this to "common" so
+	// that direct entries remain backward-compatible with existing state.
+	cfg, err := loadLayerOptional(filepath.Join(configDir, "default.yaml"), "", make(map[string]bool))
+	if err != nil {
+		return nil, fmt.Errorf("loading config: %w", err)
+	}
+	if cfg == nil {
+		cfg = &Config{Vars: make(map[string]string)}
+	}
+
+	// Inject config_root so var values and remaining include paths can reference it.
+	cfg.Vars["config_root"] = absConfigDir
 
 	// Resolve variable references within var values (transitive), then apply
 	// the fully-resolved vars to all string fields across the config.
-	resolved := ResolveVars(merged.Vars)
-	ApplyVars(&merged, resolved)
-	// Expose the resolved vars so callers (e.g. --debug=variables) can inspect them.
-	merged.Vars = resolved
+	resolved := ResolveVars(cfg.Vars)
+	ApplyVars(cfg, resolved)
+	cfg.Vars = resolved
 
-	return &merged, nil
+	return cfg, nil
 }
 
 // NodeID returns the canonical resource node identifier used as a key in

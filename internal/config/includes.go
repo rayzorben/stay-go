@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -109,12 +110,12 @@ func extractIncludes(doc *yaml.Node, dir string) (*Config, []includeEntry, error
 		valNode := mapping.Content[i+1]
 
 		if valNode.Tag == "!include" {
-			filePath := valNode.Value
+			filePath := resolveIncludePath(valNode.Value, dir)
 			if !filepath.IsAbs(filePath) {
 				filePath = filepath.Join(dir, filePath)
 			}
 			includes = append(includes, includeEntry{
-				keyName:  keyNode.Value,
+				keyName:  resolveIncludePath(keyNode.Value, dir),
 				filePath: filePath,
 			})
 		} else {
@@ -130,8 +131,26 @@ func extractIncludes(doc *yaml.Node, dir string) (*Config, []includeEntry, error
 	return cfg, includes, nil
 }
 
+// resolveIncludePath resolves ${config_root}, ${env:VAR}, $(command), and ~
+// in an include path or key name. configRoot is the directory of the file
+// containing the include directive (equivalent to ${config_root} at that level).
+func resolveIncludePath(s, configRoot string) string {
+	home, _ := os.UserHomeDir()
+	s = strings.ReplaceAll(s, "${config_root}", configRoot)
+	s = strings.ReplaceAll(s, "~", home)
+	s = resolveEnvVars(s)
+	s = resolveCommandSubs(s)
+	return s
+}
+
 // stampLevel sets the Level field on every entry in cfg.
+// An empty level (the default.yaml root) is mapped to "common" so that direct
+// entries in default.yaml display and store as "common", preserving backward
+// compatibility with state written by the old explicit-layer approach.
 func stampLevel(cfg *Config, level string) {
+	if level == "" {
+		level = "common"
+	}
 	for i := range cfg.Packages {
 		cfg.Packages[i].Level = level
 	}
@@ -155,6 +174,15 @@ func stampLevel(cfg *Config, level string) {
 	}
 	for i := range cfg.Containers {
 		cfg.Containers[i].Level = level
+	}
+	for i := range cfg.Distrobox {
+		cfg.Distrobox[i].Level = level
+		for j := range cfg.Distrobox[i].Packages {
+			cfg.Distrobox[i].Packages[j].Level = level
+		}
+		for j := range cfg.Distrobox[i].Commands {
+			cfg.Distrobox[i].Commands[j].Level = level
+		}
 	}
 	for k := range cfg.Secrets {
 		e := cfg.Secrets[k]
@@ -210,6 +238,9 @@ func mergeConfigs(base, override *Config) *Config {
 
 	result.Containers = mergeByKey(base.Containers, override.Containers,
 		func(c ContainerEntry) string { return c.ContainerName() })
+
+	result.Distrobox = mergeByKey(base.Distrobox, override.Distrobox,
+		func(d DistroboxEntry) string { return d.Name })
 
 	return result
 }

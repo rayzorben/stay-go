@@ -28,6 +28,10 @@ type Options struct {
 	// Stdin is an optional reader attached to the process's standard input.
 	// Leave nil to use /dev/null (fully non-interactive).
 	Stdin io.Reader
+	// Stream pipes stdout/stderr to the terminal in addition to capturing,
+	// even when the executor is not in Debug mode. Use for long-running
+	// commands where the user needs to see live progress (e.g. in-box apply).
+	Stream bool
 }
 
 // Result holds the captured output of a completed command.
@@ -70,7 +74,7 @@ func (e *Executor) Run(ctx context.Context, opts Options, name string, args ...s
 	}
 
 	var stdoutBuf, stderrBuf bytes.Buffer
-	if e.Debug {
+	if e.Debug || opts.Stream {
 		cmd.Stdout = io.MultiWriter(os.Stdout, &stdoutBuf)
 		cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
 	} else {

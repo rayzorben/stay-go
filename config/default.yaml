@@ -1,3 +1,6 @@
+user_config: !include "${config_root}/users/${env:USER}.yaml"
+host_config: !include "${config_root}/hosts/$(hostname).yaml"
+
 variables:
   dropbox_folder: ~/Dropbox
   lucida_font: ${dropbox_folder}/Ray/Configuration/Fonts/LucidaProgrammerNerdFontMono-Regular.ttf
@@ -10,11 +13,6 @@ packages:
   - dropbox
   - dsearch-bin
   
-# TODO: think about a model where packages provide things?
-#packages:
-  #- package: dsearch-bin
-  #  provides: 
-
 groups:
   - wheel
   - docker

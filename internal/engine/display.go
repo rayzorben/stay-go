@@ -78,6 +78,7 @@ var resourceLabel = map[string]string{
 	"commands":   "command",
 	"secrets":    "secret",
 	"containers": "container",
+	"distrobox":  "distrobox",
 }
 
 func typeLabel(resourceType string) string {
@@ -226,6 +227,10 @@ func DisplayPlan(w io.Writer, nodes []*PlanNode) {
 				fmt.Fprintf(w, "  %s↳ %s%s\n", ansiDim, part, ansiReset)
 			}
 		}
+		// Notes (any action) — multi-line continuation detail.
+		for _, note := range r.node.Notes {
+			fmt.Fprintf(w, "  %s↳ %s%s\n", ansiDim, note, ansiReset)
+		}
 	}
 	fmt.Fprintln(w)
 }
@@ -332,7 +337,7 @@ func padCenter(s string, width int) string {
 // ─── Show command ─────────────────────────────────────────────────────────────
 
 // canonicalOrder defines the display order for resource types in --show output.
-var canonicalOrder = []string{"packages", "groups", "users", "services", "scripts", "files", "commands", "secrets", "containers"}
+var canonicalOrder = []string{"packages", "groups", "users", "services", "scripts", "files", "commands", "secrets", "containers", "distrobox"}
 
 // DisplayShow writes a read-only table of all currently-tracked nodes to w.
 // scope controls what is printed:

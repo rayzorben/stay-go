@@ -62,24 +62,30 @@ distrobox:
     image: docker.io/cachyos/cachyos-v3:latest
     home: /home/distrobox/sedanos
     home_sudo: true
-    exports: [microsoft-edge-stable, code, cursor, StorageExplorer]
+    exports:
+      - microsoft-edge-stable
+      - code
+      - cursor
+      - StorageExplorer
+
     packages:
       - paru
       - microsoft-edge-stable-bin
       - xdg-desktop-portal
       - xdg-desktop-portal-gtk
       - xdg-desktop-portal-gnome
-      - neovim
       - visual-studio-code-bin
+      - cursor-bin
       - azure-cli
       - storageexplorer
-      - jdk
       - jdk-openjdk
       - pulumi
 
     commands:
-      - name: Install Databricks CLI and UV
-        sudo: true
+      - name: Install Databricks CLI
         command: |
-          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh
+          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+        sudo: true
+      - name: Install uv
+        command: |
           curl -LsSf https://astral.sh/uv/install.sh | sh

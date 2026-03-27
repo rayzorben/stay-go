@@ -11,11 +11,17 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/rayben/stay-go/internal/state"
 )
+
+// ErrExecutionFailed is returned by Engine.Run when one or more plan nodes
+// failed during execution. Failures have already been reported to stdout;
+// callers should exit non-zero without printing additional output.
+var ErrExecutionFailed = errors.New("one or more nodes failed during execution")
 
 // ─── Action types ─────────────────────────────────────────────────────────────
 
@@ -99,6 +105,12 @@ type PlanNode struct {
 	// Stored on every TRACK/ADOPT/ADD/UPDATE so that future runs can diff
 	// new config against what was last applied rather than the live system.
 	StateData map[string]interface{}
+
+	// Notes are optional continuation lines rendered beneath the plan row with a
+	// leading ↳ symbol, regardless of action type. Used by resources that need
+	// to convey multi-line detail about a planned change (e.g. distrobox lists
+	// the packages, commands, and exports that will be applied in-box).
+	Notes []string
 
 	// ExecutionErr is set by the engine if Execute returns an error.
 	ExecutionErr error

@@ -6,7 +6,8 @@
       "Bash(go test:*)",
       "Bash(go run:*)",
       "Bash(go get:*)",
-      "Read(//home/raynb/Dropbox/PC/development/stay-go-2/internal/resource/packages/**)"
+      "Read(//home/raynb/Dropbox/PC/development/stay-go-2/internal/resource/packages/**)",
+      "Bash(bin/stay-go --dry-run)"
     ]
   }
 }

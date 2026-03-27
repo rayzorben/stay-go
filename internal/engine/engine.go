@@ -20,6 +20,13 @@ type Options struct {
 	Debug bool
 	// DryRun prints the plan but does not execute or save state.
 	DryRun bool
+	// AutoYes skips the interactive confirmation prompt and proceeds automatically.
+	// Intended for embedded use (e.g. stay-go running inside a distrobox).
+	AutoYes bool
+	// QuietPlan suppresses the plan table, summary, and leading blank line before
+	// execution. Execution results are still streamed normally. Used when stay-go
+	// runs embedded inside a distrobox — the parent already showed the plan.
+	QuietPlan bool
 }
 
 // Engine orchestrates knowledge gathering, plan building, and execution
@@ -90,7 +97,9 @@ func (e *Engine) Run(ctx context.Context, st *state.State) error {
 	}
 
 	if len(allNodes) == 0 {
-		fmt.Fprintln(os.Stdout, "Nothing to do — system matches config.")
+		if !e.opts.QuietPlan {
+			fmt.Fprintln(os.Stdout, "Nothing to do — system matches config.")
+		}
 		return nil
 	}
 
@@ -132,46 +141,56 @@ func (e *Engine) Run(ctx context.Context, st *state.State) error {
 	if !hasChanges {
 		if visibleCount == 0 {
 			// Everything is already managed — fully silent.
-			fmt.Fprintf(os.Stdout, "%sSystem is up to date.%s (%d managed)\n", ansiGreen, ansiReset, trackCount)
+			if !e.opts.QuietPlan {
+				fmt.Fprintf(os.Stdout, "%sSystem is up to date.%s (%d managed)\n", ansiGreen, ansiReset, trackCount)
+			}
 		} else {
 			// ADOPT/SKIP nodes to display but no confirmation needed.
-			DisplayPlan(os.Stdout, sorted)
-			DisplaySummary(os.Stdout, sorted)
+			if !e.opts.QuietPlan {
+				DisplayPlan(os.Stdout, sorted)
+				DisplaySummary(os.Stdout, sorted)
+			}
 		}
 		if e.opts.DryRun {
 			fmt.Fprintln(os.Stdout, "(dry-run: no changes made)")
 			return nil
 		}
 	} else {
-		DisplayPlan(os.Stdout, sorted)
-		DisplaySummary(os.Stdout, sorted)
+		if !e.opts.QuietPlan {
+			DisplayPlan(os.Stdout, sorted)
+			DisplaySummary(os.Stdout, sorted)
+		}
 
 		if e.opts.DryRun {
 			fmt.Fprintln(os.Stdout, "(dry-run: no changes made)")
 			return nil
 		}
 
-		ok, err := Confirm(os.Stdout, os.Stdin)
-		if err != nil {
-			return fmt.Errorf("reading confirmation: %w", err)
-		}
-		if !ok {
-			fmt.Fprintln(os.Stdout, "Aborted.")
-			return nil
+		if !e.opts.AutoYes {
+			ok, err := Confirm(os.Stdout, os.Stdin)
+			if err != nil {
+				return fmt.Errorf("reading confirmation: %w", err)
+			}
+			if !ok {
+				fmt.Fprintln(os.Stdout, "Aborted.")
+				return nil
+			}
 		}
 	}
 
 	// ── Step 6: Execute ───────────────────────────────────────────────────────
-	fmt.Fprintln(os.Stdout)
-	if err := e.execute(ctx, sorted, st); err != nil {
-		return err
+	if !e.opts.QuietPlan {
+		fmt.Fprintln(os.Stdout)
 	}
+	executeErr := e.execute(ctx, sorted, st)
 
 	// ── Step 7: Save state ────────────────────────────────────────────────────
+	// Always save — per-node state updates from successful nodes must be
+	// persisted even when other nodes failed.
 	if err := state.Save(st, e.opts.StatePath); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to save state: %v\n", err)
 	}
-	return nil
+	return executeErr
 }
 
 // preSudo runs "sudo -v" once to cache credentials if any active node in the
@@ -208,6 +227,7 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 
 	// Process nodes in topo order. The graph ensures REMOVE dependents before
 	// deps, and ADD/UPDATE deps before dependents.
+	var hasFailed bool
 	for _, node := range nodes {
 		switch node.Action {
 		case ActionTrack, ActionAdopt, ActionLevel:
@@ -219,6 +239,7 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 			if execErr := r.Execute(ctx, node, st); execErr != nil {
 				DisplayExecutionResult(os.Stdout, node, execErr)
 				succeeded[node.ID] = false
+				hasFailed = true
 			}
 
 		case ActionAdd, ActionUpdate, ActionRemove:
@@ -235,6 +256,9 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 			execErr := r.Execute(ctx, node, st)
 			node.ExecutionErr = execErr
 			succeeded[node.ID] = execErr == nil
+			if execErr != nil {
+				hasFailed = true
+			}
 			DisplayExecutionResult(os.Stdout, node, execErr)
 
 		case ActionSkip:
@@ -242,8 +266,13 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 		}
 	}
 
-	fmt.Fprintln(os.Stdout)
-	e.printFinalReport(nodes)
+	if !e.opts.QuietPlan {
+		fmt.Fprintln(os.Stdout)
+		e.printFinalReport(nodes)
+	}
+	if hasFailed {
+		return ErrExecutionFailed
+	}
 	return nil
 }
 

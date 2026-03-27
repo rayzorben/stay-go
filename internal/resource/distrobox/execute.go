@@ -1,0 +1,115 @@
+package distrobox
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/rayben/stay-go/internal/config"
+	"github.com/rayben/stay-go/internal/engine"
+	"github.com/rayben/stay-go/internal/executor"
+	"github.com/rayben/stay-go/internal/state"
+)
+
+// Execute creates, removes, or applies in-box changes for a distrobox node.
+// Implements engine.NodeExecutor.
+func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state.State) error {
+	entry, ok := r.nodeConfigs[node.ID]
+	if !ok {
+		return fmt.Errorf("no config found for distrobox node %q", node.DisplayName)
+	}
+
+	if isApplyNode(node.ID) {
+		return r.executeApply(ctx, node, entry, st)
+	}
+	return r.executeBox(ctx, node, entry, st)
+}
+
+// executeBox manages the host-level container lifecycle.
+func (r *Resource) executeBox(ctx context.Context, node *engine.PlanNode, entry *config.DistroboxEntry, st *state.State) error {
+	switch node.Action {
+	case engine.ActionAdd, engine.ActionUpdate:
+		// For UPDATE: the box config changed (e.g. image). Remove the old container
+		// first so distrobox create starts fresh.
+		if node.Action == engine.ActionUpdate {
+			r.exec.Run(ctx, executor.Options{}, "distrobox", "rm", "--yes", entry.Name) //nolint:errcheck
+		}
+		args := buildCreateArgs(entry)
+		result, err := r.exec.Run(ctx, executor.Options{Sudo: entry.HomeSudo}, "distrobox", args...)
+		if err != nil {
+			return fmt.Errorf("creating distrobox %q: %w\nstderr: %s", entry.Name, err, result.Stderr)
+		}
+		st.Set(node.ID, node.ConfigHash, node.Level, node.StateData)
+
+	case engine.ActionRemove:
+		result, err := r.exec.Run(ctx, executor.Options{}, "distrobox", "rm", "--yes", entry.Name)
+		if err != nil {
+			return fmt.Errorf("removing distrobox %q: %w\nstderr: %s", entry.Name, err, result.Stderr)
+		}
+		st.Delete(node.ID)
+		// Remove the apply sub-node from state too (if it was ever tracked).
+		st.Delete(applyNodeID(entry.Name))
+		// Clean up per-box state directory (sub-config + state JSON).
+		os.RemoveAll(r.boxStateDir(entry.Name)) //nolint:errcheck
+	}
+	return nil
+}
+
+// executeApply runs stay-go inside the box to apply in-box packages and
+// commands, then exports any declared desktop apps to the host.
+func (r *Resource) executeApply(ctx context.Context, node *engine.PlanNode, entry *config.DistroboxEntry, st *state.State) error {
+	// TRACK/ADOPT/LEVEL nodes require no execution — state is updated by the engine.
+	if node.Action == engine.ActionTrack || node.Action == engine.ActionAdopt || node.Action == engine.ActionLevel {
+		return nil
+	}
+
+	// 1. Inject the host binary into the shared home so the box can run it.
+	guestBin, err := r.ensureGuestBinary()
+	if err != nil {
+		return fmt.Errorf("injecting guest binary: %w", err)
+	}
+
+	// 2. Write the sub-config that the guest stay-go will load.
+	if err := r.writeBoxConfig(entry); err != nil {
+		return fmt.Errorf("writing in-box config: %w", err)
+	}
+
+	// 3. Print a section header so the user knows which box is being applied.
+	//    Clear the progress line (written with \r by the engine) first.
+	const sepWidth = 76
+	header := fmt.Sprintf("── applying in [%s] ", entry.Name)
+	if len(header) < sepWidth {
+		header += strings.Repeat("─", sepWidth-len(header))
+	}
+	fmt.Fprintf(os.Stdout, "\r\033[K%s\n", header)
+
+	// 4. Run stay-go inside the box with --yes and --quiet-plan so it applies
+	//    without an interactive prompt and streams execution rows only.
+	//    Forward --debug so in-box command output is visible when debugging.
+	guestArgs := []string{"--yes", "--quiet-plan",
+		"-c", r.boxConfigDir(entry.Name),
+		"--state", r.boxStatePath(entry.Name),
+	}
+	if r.exec.Debug {
+		guestArgs = append(guestArgs, "--debug")
+	}
+	inBoxArgs := append([]string{"enter", "-n", entry.Name, "--", guestBin}, guestArgs...)
+	result, err := r.exec.Run(ctx, executor.Options{Stream: true}, "distrobox", inBoxArgs...)
+	fmt.Fprintln(os.Stdout, strings.Repeat("─", sepWidth))
+	if err != nil {
+		return fmt.Errorf("applying in-box config for %q: %w\nstderr: %s", entry.Name, err, result.Stderr)
+	}
+
+	// 5. Export declared apps from inside the box to the host desktop.
+	for _, app := range entry.Exports {
+		r.exec.Run(ctx, executor.Options{}, //nolint:errcheck
+			"distrobox", "enter", "-n", entry.Name, "--",
+			"distrobox-export", "--app", app,
+		)
+	}
+
+	st.Set(node.ID, node.ConfigHash, node.Level, node.StateData)
+	return nil
+}
+

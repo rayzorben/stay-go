@@ -1,0 +1,84 @@
+workspace "personal"
+workspace "sed-1"
+workspace "sed-2"
+workspace "sed-3"
+workspace "vis"
+workspace "sbx"
+workspace "ssi"
+
+window-rule {
+    match app-id="satty"
+    open-floating true
+}
+
+window-rule {
+    match app-id="org.gnome.Calculator"
+    open-floating true
+    opacity 0.5
+
+    default-column-width { fixed 480; }
+    default-window-height { fixed 640; }
+
+    shadow {
+        on
+    }
+}
+
+window-rule {
+    match title="FreeRDP"
+    match app-id="wlfreerdp"
+    open-floating true
+}
+
+window-rule {
+    match app-id="firefox$"
+    open-on-workspace "personal"
+    open-maximized true
+}
+
+window-rule {
+    match title="- SED -"
+    match app-id="-sedanos$"
+    open-on-workspace "sed-1"
+    open-maximized true
+}
+
+window-rule {
+    match title="- VIS -"
+    match title="- OCS -"
+    match app-id="-visionet$"
+    open-on-workspace "vis"
+    open-maximized true
+}
+
+window-rule {
+    match title="- SBX -"
+    match app-id="-starbudks$"
+    open-on-workspace "sbx"
+    open-maximized true
+}
+
+window-rule {
+    match title="- SSI -"
+    open-on-workspace "ssi"
+    open-maximized true
+}
+
+layer-rule {
+    match namespace="dms:spotlight"
+
+    // Properties that apply continuously.
+    opacity 0.9
+    block-out-from "screencast"
+
+    geometry-corner-radius 12
+    place-within-backdrop true
+}
+
+layer-rule {
+    match namespace="dms:spotlight"
+
+    // Properties that apply continuously.
+    opacity 0.9
+    block-out-from "screencast"
+}

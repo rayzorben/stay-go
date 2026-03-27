@@ -18,6 +18,7 @@ package config
 
 import (
 	"os"
+	"os/exec"
 	"strings"
 )
 
@@ -118,14 +119,85 @@ func ApplyVars(cfg *Config, vars map[string]string) {
 			cfg.Containers[i].EnvFile[j] = r(cfg.Containers[i].EnvFile[j])
 		}
 	}
+	for i := range cfg.Distrobox {
+		cfg.Distrobox[i].Image = r(cfg.Distrobox[i].Image)
+		cfg.Distrobox[i].Home = r(cfg.Distrobox[i].Home)
+		for j := range cfg.Distrobox[i].Packages {
+			cfg.Distrobox[i].Packages[j].Name = r(cfg.Distrobox[i].Packages[j].Name)
+		}
+		for j := range cfg.Distrobox[i].Commands {
+			cfg.Distrobox[i].Commands[j].Command = r(cfg.Distrobox[i].Commands[j].Command)
+			cfg.Distrobox[i].Commands[j].Rollback = r(cfg.Distrobox[i].Commands[j].Rollback)
+		}
+	}
 }
 
-// resolveOne performs one substitution pass: expands ~ then replaces ${key}.
-// Tokens of the form ${secrets.*} are intentionally left untouched; they are
-// substituted at execute time by config.ApplySecrets so secrets are never
-// printed in plan output.
+// resolveEnvVars replaces ${env:NAME} tokens with the corresponding OS
+// environment variable value. Missing variables expand to empty string.
+func resolveEnvVars(s string) string {
+	const prefix = "${env:"
+	for {
+		start := strings.Index(s, prefix)
+		if start < 0 {
+			break
+		}
+		end := strings.Index(s[start:], "}")
+		if end < 0 {
+			break
+		}
+		end += start
+		name := s[start+len(prefix) : end]
+		s = s[:start] + os.Getenv(name) + s[end+1:]
+	}
+	return s
+}
+
+// resolveCommandSubs replaces $(command) tokens with the trimmed stdout of
+// running the command via bash. On error the token expands to empty string.
+func resolveCommandSubs(s string) string {
+	for {
+		start := strings.Index(s, "$(")
+		if start < 0 {
+			break
+		}
+		depth, end := 0, -1
+		for i := start + 2; i < len(s); i++ {
+			switch s[i] {
+			case '(':
+				depth++
+			case ')':
+				if depth == 0 {
+					end = i
+				} else {
+					depth--
+				}
+			}
+			if end >= 0 {
+				break
+			}
+		}
+		if end < 0 {
+			break
+		}
+		cmd := s[start+2 : end]
+		out, err := exec.Command("bash", "-c", cmd).Output()
+		result := ""
+		if err == nil {
+			result = strings.TrimSpace(string(out))
+		}
+		s = s[:start] + result + s[end+1:]
+	}
+	return s
+}
+
+// resolveOne performs one substitution pass: expands ~, ${env:VAR}, $(cmd),
+// then replaces ${key} from vars. Tokens of the form ${secrets.*} are
+// intentionally left untouched; they are substituted at execute time by
+// config.ApplySecrets so secrets are never printed in plan output.
 func resolveOne(s string, vars map[string]string, home string) string {
 	s = strings.ReplaceAll(s, "~", home)
+	s = resolveEnvVars(s)
+	s = resolveCommandSubs(s)
 	for k, v := range vars {
 		s = strings.ReplaceAll(s, "${"+k+"}", v)
 	}
@@ -137,13 +209,14 @@ func hasSecretsRef(s string) bool {
 	return strings.Contains(s, "${secrets.")
 }
 
-// countVarTokens counts unresolved ${...} and ~ tokens across all var values.
-// Used to detect when iterative resolution has stabilised.
+// countVarTokens counts unresolved ${...}, ~, and $(...) tokens across all
+// var values. Used to detect when iterative resolution has stabilised.
 func countVarTokens(vars map[string]string) int {
 	n := 0
 	for _, v := range vars {
 		n += strings.Count(v, "${")
 		n += strings.Count(v, "~")
+		n += strings.Count(v, "$(")
 	}
 	return n
 }

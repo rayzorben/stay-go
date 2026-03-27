@@ -16,6 +16,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -28,6 +30,7 @@ import (
 	"github.com/rayben/stay-go/internal/executor"
 	"github.com/rayben/stay-go/internal/resource/commands"
 	rcontainers "github.com/rayben/stay-go/internal/resource/containers"
+	rdistrobox "github.com/rayben/stay-go/internal/resource/distrobox"
 	rfiles "github.com/rayben/stay-go/internal/resource/files"
 	rsecrets "github.com/rayben/stay-go/internal/resource/secrets"
 	"github.com/rayben/stay-go/internal/resource/groups"
@@ -57,11 +60,14 @@ func (s *showFlag) Set(v string) error {
 func main() {
 	// Flags.
 	var (
-		configDir string
-		statePath string
-		debug     bool
-		dryRun    bool
-		show      showFlag
+		configDir      string
+		statePath      string
+		debug          bool
+		dryRun         bool
+		autoYes        bool
+		quietPlan      bool
+		guestKnowledge bool
+		show           showFlag
 	)
 
 	flag.StringVar(&configDir, "config", "config", "path to config directory")
@@ -72,16 +78,17 @@ func main() {
 	flag.Var(&show, "show", "print tracked state without executing: --show (all), --show=packages|groups|users|services|variables")
 	flag.BoolVar(&dryRun, "dry-run", false, "show plan without executing")
 	flag.BoolVar(&dryRun, "n", false, "show plan without executing (shorthand)")
+	flag.BoolVar(&autoYes, "yes", false, "auto-confirm execution plan without prompting")
+	flag.BoolVar(&autoYes, "y", false, "auto-confirm (shorthand)")
+	flag.BoolVar(&quietPlan, "quiet-plan", false, "suppress plan table, summary, and final report (used internally by distrobox resource)")
+	flag.BoolVar(&guestKnowledge, "guest-knowledge", false, "gather installed-package knowledge and output as JSON (internal: used by distrobox resource)")
 
 	flag.Usage = usage
 	flag.Parse()
 
-	// Resolve current user and hostname for config layer discovery.
-	username := currentUsername()
-	hostname, _ := os.Hostname()
-
-	// Load and merge config from all applicable layers.
-	cfg, err := config.LoadAll(configDir, username, hostname)
+	// Load and merge config. Host/user layers are declared as !include directives
+	// in default.yaml using ${env:USER} and $(hostname) expressions.
+	cfg, err := config.LoadAll(configDir)
 	if err != nil {
 		fatalf("config: %v", err)
 	}
@@ -101,6 +108,25 @@ func main() {
 	// Shared process executor.
 	exec := &executor.Executor{Debug: debug}
 
+	// --guest-knowledge: gather what packages are installed (runs inside a distrobox).
+	// Outputs a JSON map of nodeID → true and exits. Used internally by the distrobox resource.
+	if guestKnowledge {
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer cancel()
+		entries, err := packages.New(cfg, exec).GatherKnowledge(ctx)
+		if err != nil {
+			fatalf("guest-knowledge: %v", err)
+		}
+		knowledge := make(map[string]bool, len(entries))
+		for _, e := range entries {
+			knowledge[e.ID] = true
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(knowledge); err != nil {
+			fatalf("guest-knowledge encode: %v", err)
+		}
+		return
+	}
+
 	// Build engine and register resources in canonical order.
 	// The registration order controls the display grouping in the plan.
 	opts := engine.Options{
@@ -108,6 +134,8 @@ func main() {
 		StatePath:  statePath,
 		Debug:      debug,
 		DryRun:     dryRun,
+		AutoYes:    autoYes,
+		QuietPlan:  quietPlan,
 	}
 	eng := engine.New(opts, exec)
 	eng.Register(packages.New(cfg, exec))
@@ -119,13 +147,17 @@ func main() {
 	eng.Register(rsecrets.New(cfg))
 	eng.Register(commands.New(cfg, exec))
 	eng.Register(rcontainers.New(cfg, exec))
+	eng.Register(rdistrobox.New(cfg, exec))
 
 	// Respect Ctrl-C / SIGTERM for clean shutdown.
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
 	if err := eng.Run(ctx, st); err != nil {
-		fatalf("%v", err)
+		if !errors.Is(err, engine.ErrExecutionFailed) {
+			fatalf("%v", err)
+		}
+		os.Exit(1) // failures already reported by the engine's final report
 	}
 }
 
