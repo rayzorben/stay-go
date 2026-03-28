@@ -35,7 +35,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 			level = "common"
 		}
 
-		kind := detectKind(entry.Source)
+		kind := detectKind(entry)
 
 		hash, skipReason := computeHash(entry, kind, r.cfg)
 		if skipReason != "" {
@@ -99,6 +99,8 @@ func computeHash(entry *config.FileEntry, kind sourceKind, cfg *config.Config) (
 	}
 	source := entry.Source
 	switch kind {
+	case kindInline:
+		source = entry.Content
 	case kindSecret:
 		key := secretKey(entry.Source)
 		se, ok := cfg.Secrets[key]
@@ -147,6 +149,8 @@ func buildFileNotes(action engine.ActionType, kind sourceKind, entry *config.Fil
 		return []string{"clone " + entry.Source}
 	case kindSecret:
 		return []string{"write secret to " + entry.Target}
+	case kindInline:
+		return []string{"write inline content to " + entry.Target}
 	}
 	return nil
 }

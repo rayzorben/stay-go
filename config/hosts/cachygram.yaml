@@ -5,3 +5,29 @@ services:
   - service: sddm
     depends: 
       - packages: ['sddm']
+      
+files:
+  - source: ${config_root}/files/necessary-verbs.sh
+    target: /usr/local/sbin/necessary-verbs.sh
+    sudo: true
+    mode: "+x"
+    
+  - content: |
+      [Unit]
+      Description=Run internal speaker fix script at startup
+      After=getty.target
+
+      [Service]
+      User=root
+      Group=root
+      Type=simple
+      ExecStart=/usr/local/sbin/necessary-verbs.sh
+      Restart=always
+      TimeoutStartSec=0
+
+      [Install]
+      WantedBy=default.target
+    target: /etc/systemd/system/necessary-verbs.service
+    sudo: true
+    depends:
+      - files: [/usr/local/sbin/necessary-verbs.sh]

@@ -76,7 +76,8 @@ func (e *CommandEntry) FileConditions() []string {
 
 // FileEntry defines a file, directory clone, or download to place on disk.
 type FileEntry struct {
-	Source  string                `yaml:"source"`            // path, ${secrets.*}, git URL, or http URL
+	Source  string                `yaml:"source,omitempty"`  // path, ${secrets.*}, git URL, or http URL
+	Content string                `yaml:"content,omitempty"` // inline file content (alternative to source)
 	Target  string                `yaml:"target"`            // destination path (~ expanded)
 	Mode    string                `yaml:"mode,omitempty"`    // e.g. "0600", "+x"
 	Symlink bool                  `yaml:"symlink,omitempty"` // create symlink instead of copy (local only)

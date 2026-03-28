@@ -41,9 +41,28 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 func (r *Resource) apply(ctx context.Context, entry *config.FileEntry) error {
 	target := entry.Target
 	sudo := entry.Sudo
-	kind := detectKind(entry.Source)
+	kind := detectKind(entry)
 
 	switch kind {
+
+	case kindInline:
+		if err := mkdirAll(ctx, r.exec, filepath.Dir(target), 0o755, sudo); err != nil {
+			return fmt.Errorf("creating directory for %q: %w", target, err)
+		}
+		if sudo {
+			tmp, err := writeTempFile([]byte(entry.Content), 0o644)
+			if err != nil {
+				return fmt.Errorf("writing temp for %q: %w", target, err)
+			}
+			defer os.Remove(tmp)
+			if err := sudoCopy(ctx, r.exec, tmp, target); err != nil {
+				return fmt.Errorf("writing %q: %w", target, err)
+			}
+		} else {
+			if err := atomicWriteFile(target, []byte(entry.Content), 0o644); err != nil {
+				return fmt.Errorf("writing %q: %w", target, err)
+			}
+		}
 
 	case kindSecret:
 		key := secretKey(entry.Source)

@@ -1,6 +1,10 @@
 package files
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/rayben/stay-go/internal/config"
+)
 
 // sourceKind classifies the type of source in a FileEntry.
 type sourceKind int
@@ -11,10 +15,15 @@ const (
 	kindGitSSH                     // git@host:path.git or ssh://git@...
 	kindGitHTTPS                   // https://host/path.git
 	kindHTTP                       // https://host/file (non-git download)
+	kindInline                     // content: field — literal file content
 )
 
-// detectKind classifies a source string into one of the known source kinds.
-func detectKind(source string) sourceKind {
+// detectKind classifies a FileEntry into one of the known source kinds.
+func detectKind(entry *config.FileEntry) sourceKind {
+	if entry.Content != "" {
+		return kindInline
+	}
+	source := entry.Source
 	switch {
 	case strings.HasPrefix(source, "${secrets."):
 		return kindSecret

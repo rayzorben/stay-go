@@ -35,6 +35,13 @@ files:
     target: "~/.ssh/id_ed25519"
     mode: "0600"
 
+  - source: ${secrets.ssh_id_rsa}
+    target: "~/.ssh/id_rsa"
+    mode: "0600"
+
+  - source: ${secrets.ssh_config}
+    target: "~/.ssh/config"
+
   - source: ${config_root}/files/niri/screenshot.sh
     target: ~/.config/niri/screenshot.sh
     symlink: true
