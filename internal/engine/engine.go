@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/rayben/stay-go/internal/executor"
 	"github.com/rayben/stay-go/internal/state"
@@ -98,7 +99,7 @@ func (e *Engine) Run(ctx context.Context, st *state.State) error {
 
 	if len(allNodes) == 0 {
 		if !e.opts.QuietPlan {
-			fmt.Fprintln(os.Stdout, "Nothing to do — system matches config.")
+			fmt.Fprintf(os.Stdout, "\n  Nothing to do — no resources configured.\n\n")
 		}
 		return nil
 	}
@@ -142,27 +143,26 @@ func (e *Engine) Run(ctx context.Context, st *state.State) error {
 		if visibleCount == 0 {
 			// Everything is already managed — fully silent.
 			if !e.opts.QuietPlan {
-				fmt.Fprintf(os.Stdout, "%sSystem is up to date.%s (%d managed)\n", ansiGreen, ansiReset, trackCount)
+				fmt.Fprintf(os.Stdout, "\n  %s✓%s  System up to date  %s·  %d managed%s\n\n",
+					ansiGreen, ansiReset, ansiDim, trackCount, ansiReset)
 			}
 		} else {
 			// ADOPT/SKIP nodes to display but no confirmation needed.
 			if !e.opts.QuietPlan {
 				DisplayPlan(os.Stdout, sorted)
-				DisplaySummary(os.Stdout, sorted)
 			}
 		}
 		if e.opts.DryRun {
-			fmt.Fprintln(os.Stdout, "(dry-run: no changes made)")
+			fmt.Fprintf(os.Stdout, "  %s(dry-run — no changes applied)%s\n\n", ansiDim, ansiReset)
 			return nil
 		}
 	} else {
 		if !e.opts.QuietPlan {
 			DisplayPlan(os.Stdout, sorted)
-			DisplaySummary(os.Stdout, sorted)
 		}
 
 		if e.opts.DryRun {
-			fmt.Fprintln(os.Stdout, "(dry-run: no changes made)")
+			fmt.Fprintf(os.Stdout, "  %s(dry-run — no changes applied)%s\n\n", ansiDim, ansiReset)
 			return nil
 		}
 
@@ -172,16 +172,13 @@ func (e *Engine) Run(ctx context.Context, st *state.State) error {
 				return fmt.Errorf("reading confirmation: %w", err)
 			}
 			if !ok {
-				fmt.Fprintln(os.Stdout, "Aborted.")
+				fmt.Fprintf(os.Stdout, "\n  Aborted.\n\n")
 				return nil
 			}
 		}
 	}
 
 	// ── Step 6: Execute ───────────────────────────────────────────────────────
-	if !e.opts.QuietPlan {
-		fmt.Fprintln(os.Stdout)
-	}
 	executeErr := e.execute(ctx, sorted, st)
 
 	// ── Step 7: Save state ────────────────────────────────────────────────────
@@ -237,7 +234,7 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 			// (e.g. secrets resource decrypts values into cfg.DecryptedSecrets).
 			r := resourceByType[node.ResourceType]
 			if execErr := r.Execute(ctx, node, st); execErr != nil {
-				DisplayExecutionResult(os.Stdout, node, execErr)
+				DisplayExecutionResult(os.Stdout, node, execErr, 0)
 				succeeded[node.ID] = false
 				hasFailed = true
 			}
@@ -247,19 +244,21 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 			if !e.depsSucceeded(node, succeeded) {
 				node.Action = ActionSkip
 				node.SkipReason = "dependency failed during execution"
-				DisplayExecutionResult(os.Stdout, node, nil)
+				DisplayExecutionResult(os.Stdout, node, nil, 0)
 				succeeded[node.ID] = false
 				continue
 			}
 			DisplayExecutionProgress(os.Stdout, node)
+			start := time.Now()
 			r := resourceByType[node.ResourceType]
 			execErr := r.Execute(ctx, node, st)
+			dur := time.Since(start)
 			node.ExecutionErr = execErr
 			succeeded[node.ID] = execErr == nil
 			if execErr != nil {
 				hasFailed = true
 			}
-			DisplayExecutionResult(os.Stdout, node, execErr)
+			DisplayExecutionResult(os.Stdout, node, execErr, dur)
 
 		case ActionSkip:
 			succeeded[node.ID] = false
@@ -267,7 +266,6 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 	}
 
 	if !e.opts.QuietPlan {
-		fmt.Fprintln(os.Stdout)
 		e.printFinalReport(nodes)
 	}
 	if hasFailed {
@@ -288,7 +286,7 @@ func (e *Engine) depsSucceeded(node *PlanNode, succeeded map[string]bool) bool {
 	return true
 }
 
-// printFinalReport prints a summary of execution results.
+// printFinalReport prints the post-execution summary with a divider.
 func (e *Engine) printFinalReport(nodes []*PlanNode) {
 	var success, failed, skipped int
 	for _, n := range nodes {
@@ -303,11 +301,26 @@ func (e *Engine) printFinalReport(nodes []*PlanNode) {
 			success++
 		}
 	}
+
+	tw := termWidth()
+	fmt.Fprintln(os.Stdout)
+	divider(os.Stdout, tw)
+	fmt.Fprintln(os.Stdout)
+
 	if failed > 0 {
-		fmt.Fprintf(os.Stdout, "%s%d succeeded, %d failed, %d skipped%s\n",
-			ansiYellow, success, failed, skipped, ansiReset)
+		fmt.Fprintf(os.Stdout, "  %s✗ %d failed%s  %s·%s  %s✓ %d applied%s  %s·%s  %s! %d skipped%s\n",
+			ansiRed, failed, ansiReset,
+			ansiDim, ansiReset,
+			ansiGreen, success, ansiReset,
+			ansiDim, ansiReset,
+			ansiDim, skipped, ansiReset,
+		)
 	} else {
-		fmt.Fprintf(os.Stdout, "%sAll done. %d applied, %d skipped.%s\n",
-			ansiGreen, success, skipped, ansiReset)
+		fmt.Fprintf(os.Stdout, "  %s✓ %d applied%s  %s·%s  %s! %d skipped%s\n",
+			ansiGreen, success, ansiReset,
+			ansiDim, ansiReset,
+			ansiDim, skipped, ansiReset,
+		)
 	}
+	fmt.Fprintln(os.Stdout)
 }

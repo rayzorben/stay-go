@@ -7,13 +7,15 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"golang.org/x/term"
 
 	"github.com/rayben/stay-go/internal/state"
 )
 
-// ANSI escape codes — unexported; callers use the public Display* functions.
+// ─── ANSI escape codes ────────────────────────────────────────────────────────
+
 const (
 	ansiReset  = "\033[0m"
 	ansiBold   = "\033[1m"
@@ -24,53 +26,49 @@ const (
 	ansiCyan   = "\033[36m"
 )
 
-// ─── Action labels ────────────────────────────────────────────────────────────
+// ─── Display metrics ──────────────────────────────────────────────────────────
 
-// actionLabel returns the short, fixed-width action code shown in the table.
-func actionLabel(a ActionType) string {
-	switch a {
-	case ActionAdd:
-		return "+ ADD"
-	case ActionRemove:
-		return "- REM"
-	case ActionUpdate:
-		return "~ UPD"
-	case ActionAdopt:
-		return "* NEW"
-	case ActionLevel:
-		return "> LVL"
-	case ActionTrack:
-		return "~ TRK"
-	case ActionSkip:
-		return "! SKP"
-	default:
-		return "? ???"
-	}
-}
+// displayMetrics holds column widths computed by DisplayPlan and reused by the
+// execution display functions for visual consistency. Defaults handle the
+// QuietPlan case where DisplayPlan is never called.
+var displayMetrics = struct{ nameW, typeW int }{nameW: 40, typeW: 9}
 
-// actionColor wraps text in the ANSI colour appropriate for the action.
+// ─── Colour and symbol helpers ────────────────────────────────────────────────
+
+// actionColor wraps text in the ANSI colour for the given action.
 func actionColor(a ActionType) func(string) string {
 	switch a {
-	case ActionAdd:
+	case ActionAdd, ActionAdopt:
 		return func(s string) string { return ansiGreen + s + ansiReset }
 	case ActionRemove:
 		return func(s string) string { return ansiRed + s + ansiReset }
-	case ActionUpdate:
+	case ActionUpdate, ActionLevel:
 		return func(s string) string { return ansiYellow + s + ansiReset }
-	case ActionAdopt:
-		return func(s string) string { return ansiCyan + s + ansiReset }
-	case ActionLevel:
-		return func(s string) string { return ansiCyan + ansiDim + s + ansiReset }
-	case ActionTrack:
-		return func(s string) string { return ansiDim + s + ansiReset }
 	case ActionSkip:
-		return func(s string) string { return ansiYellow + s + ansiReset }
+		return func(s string) string { return ansiDim + s + ansiReset }
 	default:
 		return func(s string) string { return s }
 	}
 }
 
-// resourceLabel returns the singular display name for a resource type.
+// itemSymbol returns the single character shown next to each plan item.
+func itemSymbol(a ActionType) string {
+	switch a {
+	case ActionAdd, ActionAdopt:
+		return "+"
+	case ActionUpdate, ActionLevel:
+		return "~"
+	case ActionRemove:
+		return "-"
+	case ActionSkip:
+		return "!"
+	default:
+		return "·"
+	}
+}
+
+// ─── Resource type labels ─────────────────────────────────────────────────────
+
 var resourceLabel = map[string]string{
 	"packages":   "package",
 	"groups":     "group",
@@ -91,232 +89,319 @@ func typeLabel(resourceType string) string {
 	return resourceType
 }
 
-// ─── Table rendering ──────────────────────────────────────────────────────────
+// ─── Canonical resource order ─────────────────────────────────────────────────
 
-// tableRow holds the plain (un-coloured) string values for one plan row.
-type tableRow struct {
-	action       string // e.g. "+ ADD"
-	resourceType string // e.g. "package"
-	level        string // e.g. "common" or "user:rayben"
-	item         string // DisplayName only (for column width computation)
-	description  string // optional contextual detail shown in dim after item
-	node         *PlanNode
+// canonicalOrder defines the display order for resource types.
+var canonicalOrder = []string{
+	"packages", "groups", "users", "services", "scripts",
+	"files", "commands", "secrets", "containers", "distrobox",
 }
 
-// actionSortOrder returns a numeric priority for display sorting.
-// Lower numbers appear first; SKIP is always last.
-func actionSortOrder(a ActionType) int {
+var canonicalIndex = func() map[string]int {
+	m := make(map[string]int, len(canonicalOrder))
+	for i, t := range canonicalOrder {
+		m[t] = i
+	}
+	return m
+}()
+
+// ─── Action groups ────────────────────────────────────────────────────────────
+
+// groupID classifies actions into one of four display sections.
+type groupID int
+
+const (
+	grpAdding   groupID = 0
+	grpUpdating groupID = 1
+	grpRemoving groupID = 2
+	grpSkipped  groupID = 3
+)
+
+type groupDef struct {
+	label string
+	color func(string) string
+}
+
+var planGroups = [4]groupDef{
+	grpAdding:   {"adding", actionColor(ActionAdd)},
+	grpUpdating: {"updating", actionColor(ActionUpdate)},
+	grpRemoving: {"removing", actionColor(ActionRemove)},
+	grpSkipped:  {"skipped", actionColor(ActionSkip)},
+}
+
+// nodeGroupID maps an ActionType to its display section.
+// Returns (group, true) or (0, false) for hidden ActionTrack nodes.
+func nodeGroupID(a ActionType) (groupID, bool) {
 	switch a {
-	case ActionAdd:
-		return 0
+	case ActionAdd, ActionAdopt:
+		return grpAdding, true
+	case ActionUpdate, ActionLevel:
+		return grpUpdating, true
 	case ActionRemove:
-		return 1
-	case ActionUpdate:
-		return 2
-	case ActionAdopt:
-		return 3
-	case ActionLevel:
-		return 4
+		return grpRemoving, true
 	case ActionSkip:
-		return 5
+		return grpSkipped, true
 	default:
-		return 6
+		return 0, false
 	}
 }
 
-// buildRows converts a plan into displayable rows sorted by action priority,
-// then level, then resource type. TRACK nodes are always omitted.
-// Skip reasons are stored on the node and rendered as a continuation line;
-// item column widths are computed only from the bare DisplayName.
-func buildRows(nodes []*PlanNode) []tableRow {
-	rows := make([]tableRow, 0, len(nodes))
+// ─── Low-level rendering primitives ──────────────────────────────────────────
+
+// sectionHeader writes: `  ─── {label} {─────...}\n`
+// The label is rendered in its section colour; surrounding dashes are dim.
+func sectionHeader(w io.Writer, label string, color func(string) string, tw int) {
+	// Visible text structure: "  ─── " (6) + label + " " + trailing dashes
+	const preamble = "  ─── "
+	trailing := tw - len(preamble) - len(label) - 1
+	if trailing < 1 {
+		trailing = 1
+	}
+	fmt.Fprintf(w, "%s%s%s%s %s%s%s\n",
+		ansiDim, preamble, ansiReset,
+		color(label),
+		ansiDim, strings.Repeat("─", trailing), ansiReset,
+	)
+}
+
+// divider writes a full-width dim horizontal rule.
+func divider(w io.Writer, tw int) {
+	if tw > 2 {
+		fmt.Fprintf(w, "  %s%s%s\n", ansiDim, strings.Repeat("─", tw-2), ansiReset)
+	}
+}
+
+// noteLine writes a dim `     └ {text}` continuation beneath a plan item.
+// text is truncated to fit within tw.
+func noteLine(w io.Writer, text string, tw int) {
+	const prefix = "     └ " // 7 visible chars
+	maxText := tw - len(prefix)
+	if maxText < 1 {
+		maxText = 1
+	}
+	if len(text) > maxText {
+		text = text[:maxText-1] + "…"
+	}
+	fmt.Fprintf(w, "%s%s%s%s\n", ansiDim, prefix, text, ansiReset)
+}
+
+// writeSummaryLine writes the compact line shown above the plan groups:
+// `  +N add  ~N update  -N remove  !N skip  ·  N managed`
+func writeSummaryLine(w io.Writer, nodes []*PlanNode) {
+	counts := make(map[ActionType]int, 8)
 	for _, n := range nodes {
-		if n.Action == ActionTrack {
-			continue
-		}
-		level := n.Level
-		if level == "" {
-			level = "common"
-		}
-		desc := ""
-		if n.Action != ActionSkip {
-			desc = n.Description
-		}
-		rows = append(rows, tableRow{
-			action:       actionLabel(n.Action),
-			resourceType: typeLabel(n.ResourceType),
-			level:        level,
-			item:         n.DisplayName,
-			description:  desc,
-			node:         n,
-		})
+		counts[n.Action]++
 	}
-	sort.Slice(rows, func(i, j int) bool {
-		oa, ob := actionSortOrder(rows[i].node.Action), actionSortOrder(rows[j].node.Action)
-		if oa != ob {
-			return oa < ob
-		}
-		if rows[i].level != rows[j].level {
-			return rows[i].level < rows[j].level
-		}
-		return rows[i].resourceType < rows[j].resourceType
-	})
-	return rows
+	add := counts[ActionAdd] + counts[ActionAdopt]
+	upd := counts[ActionUpdate] + counts[ActionLevel]
+	rem := counts[ActionRemove]
+	skp := counts[ActionSkip]
+	managed := counts[ActionTrack]
+
+	fmt.Fprintf(w, "  %s+%d add%s  %s~%d update%s  %s-%d remove%s  %s!%d skip%s  %s·  %d managed%s\n",
+		ansiGreen, add, ansiReset,
+		ansiYellow, upd, ansiReset,
+		ansiRed, rem, ansiReset,
+		ansiDim, skp, ansiReset,
+		ansiDim, managed, ansiReset,
+	)
 }
 
-// DisplayPlan writes the formatted tabular execution plan to w.
-// Columns: ACTION | LEVEL | RESOURCE | ITEM
+// formatDur formats a duration as a compact decimal-second string, e.g. "0.3s".
+func formatDur(d time.Duration) string {
+	s := d.Seconds()
+	if s < 10 {
+		return fmt.Sprintf("%.1fs", s)
+	}
+	return fmt.Sprintf("%.0fs", s)
+}
+
+// ─── Plan display ─────────────────────────────────────────────────────────────
+
+// DisplayPlan writes the grouped plan to w and updates displayMetrics.
+//
+// Layout per item:
+//
+//	  {sym}  {name}{spaces}{type}  {level}
+//
+// where type+level is right-aligned to the terminal edge.
 func DisplayPlan(w io.Writer, nodes []*PlanNode) {
 	if len(nodes) == 0 {
 		return
 	}
-	rows := buildRows(nodes)
 
-	// Compute column widths from data (minimum = header width).
-	w1 := len("ACTION")
-	w2 := len("LEVEL")
-	w3 := len("RESOURCE")
-	w4 := len("ITEM")
-	for _, r := range rows {
-		if l := len(r.action); l > w1 {
-			w1 = l
-		}
-		if l := len(r.level); l > w2 {
-			w2 = l
-		}
-		if l := len(r.resourceType); l > w3 {
-			w3 = l
-		}
-		if l := len(r.item); l > w4 {
-			w4 = l
-		}
+	tw := termWidth()
+
+	// Partition visible nodes into groups (TRACK is hidden).
+	type vnode struct {
+		n     *PlanNode
+		grp   groupID
+		typ   string // typeLabel result
+		level string
 	}
-	// Cap ITEM column to available terminal width so long paths don't overflow.
-	// Layout: "  " + action + "  " + level + "  " + resource + "  " + item
-	const minItemWidth = 20
-	avail := termWidth() - (8 + w1 + w2 + w3)
-	if avail < minItemWidth {
-		avail = minItemWidth
+	var visible []vnode
+	for _, n := range nodes {
+		g, ok := nodeGroupID(n.Action)
+		if !ok {
+			continue
+		}
+		lv := n.Level
+		if lv == "" {
+			lv = "common"
+		}
+		visible = append(visible, vnode{n: n, grp: g, typ: typeLabel(n.ResourceType), level: lv})
 	}
-	if w4 > avail {
-		w4 = avail
+	if len(visible) == 0 {
+		return
 	}
 
-	// Header.
+	// Compute right-block column widths across all visible nodes.
+	typeW, levelW := 0, 6 // "common" minimum
+	for _, v := range visible {
+		if l := len(v.typ); l > typeW {
+			typeW = l
+		}
+		if l := len(v.level); l > levelW {
+			levelW = l
+		}
+	}
+
+	// rightBlockLen = typeW + 2 ("  ") + levelW; this block is right-aligned.
+	// maxNameLen: what remains after prefix (5) + min-gap (2) + right block.
+	const prefixLen = 5 // "  {sym}  "
+	const minGap = 2
+	rightBlockLen := typeW + 2 + levelW
+	maxNameLen := tw - prefixLen - minGap - rightBlockLen
+	if maxNameLen < 10 {
+		maxNameLen = 10
+	}
+
+	// Save for execution display.
+	displayMetrics.nameW = maxNameLen
+	displayMetrics.typeW = typeW
+
+	// Sort: by group (fixed order 0–3), then canonical resource type, then name.
+	sort.SliceStable(visible, func(i, j int) bool {
+		vi, vj := visible[i], visible[j]
+		if vi.grp != vj.grp {
+			return vi.grp < vj.grp
+		}
+		oi := canonicalIndex[vi.n.ResourceType]
+		oj := canonicalIndex[vj.n.ResourceType]
+		if oi != oj {
+			return oi < oj
+		}
+		return vi.n.DisplayName < vj.n.DisplayName
+	})
+
+	// Render.
 	fmt.Fprintln(w)
-	fmt.Fprintf(w, "  %s%s%s  %s%s%s  %s%s%s  %s%s%s\n",
-		ansiBold, padCenter("ACTION", w1), ansiReset,
-		ansiBold, padCenter("LEVEL", w2), ansiReset,
-		ansiBold, padCenter("RESOURCE", w3), ansiReset,
-		ansiBold, padCenter("ITEM", w4), ansiReset,
-	)
+	writeSummaryLine(w, nodes)
 
-	// Separator.
-	sep := fmt.Sprintf("  %s  %s  %s  %s",
-		strings.Repeat("-", w1),
-		strings.Repeat("-", w2),
-		strings.Repeat("-", w3),
-		strings.Repeat("-", w4),
-	)
-	fmt.Fprintln(w, ansiDim+sep+ansiReset)
-
-	// Data rows.
-	for _, r := range rows {
-		color := actionColor(r.node.Action)
-		suffix := ""
-		if r.description != "" {
-			suffix = "  " + ansiDim + r.description + ansiReset
+	curGrp := groupID(-1)
+	for _, v := range visible {
+		if v.grp != curGrp {
+			curGrp = v.grp
+			g := planGroups[curGrp]
+			fmt.Fprintln(w)
+			sectionHeader(w, g.label, g.color, tw)
+			fmt.Fprintln(w)
 		}
-		fmt.Fprintf(w, "  %s  %-*s  %-*s  %-*s%s\n",
-			color(padLeft(r.action, w1)),
-			w2, r.level,
-			w3, r.resourceType,
-			w4, truncatePath(r.item, w4),
-			suffix,
+
+		n := v.n
+		color := actionColor(n.Action)
+		name := truncatePath(n.DisplayName, maxNameLen)
+
+		// Spaces so that type+level lands at the right edge.
+		// right block visible length is fixed at rightBlockLen.
+		gap := tw - prefixLen - len(name) - rightBlockLen
+		if gap < minGap {
+			gap = minGap
+		}
+
+		fmt.Fprintf(w, "  %s  %s%s%s%-*s  %s%s\n",
+			color(itemSymbol(n.Action)),
+			name,
+			strings.Repeat(" ", gap),
+			ansiDim,
+			typeW, v.typ,
+			v.level,
+			ansiReset,
 		)
-		// Skip reasons are rendered as a dim continuation line beneath the row.
-		if r.node.Action == ActionSkip && r.node.SkipReason != "" {
-			for _, part := range strings.Split(r.node.SkipReason, "; ") {
-				fmt.Fprintf(w, "  %s↳ %s%s\n", ansiDim, part, ansiReset)
+
+		// Sub-lines: skip reason first, then description, then notes.
+		if n.Action == ActionSkip && n.SkipReason != "" {
+			for _, part := range strings.Split(n.SkipReason, "; ") {
+				noteLine(w, part, tw)
 			}
 		}
-		// Notes (any action) — multi-line continuation detail.
-		for _, note := range r.node.Notes {
-			fmt.Fprintf(w, "  %s↳ %s%s\n", ansiDim, note, ansiReset)
+		if n.Description != "" && n.Action != ActionSkip {
+			noteLine(w, n.Description, tw)
+		}
+		for _, note := range n.Notes {
+			noteLine(w, note, tw)
 		}
 	}
+
+	// Bottom divider.
+	fmt.Fprintln(w)
+	divider(w, tw)
 	fmt.Fprintln(w)
 }
 
-// DisplaySummary writes the compact change summary line.
-func DisplaySummary(w io.Writer, nodes []*PlanNode) {
-	counts := make(map[ActionType]int)
-	for _, n := range nodes {
-		counts[n.Action]++
-	}
-	fmt.Fprintf(w, "Summary:  %s+%d add%s  %s-%d remove%s  ~%d update  %s*%d new%s  %s>%d moved%s  %s!%d skipped%s  %s%d managed%s\n\n",
-		ansiGreen, counts[ActionAdd], ansiReset,
-		ansiRed, counts[ActionRemove], ansiReset,
-		counts[ActionUpdate],
-		ansiCyan, counts[ActionAdopt], ansiReset,
-		ansiCyan, counts[ActionLevel], ansiReset,
-		ansiYellow, counts[ActionSkip], ansiReset,
-		ansiDim, counts[ActionTrack], ansiReset,
-	)
-}
+// ─── Execution display ────────────────────────────────────────────────────────
 
-// DisplayExecutionProgress prints the pending action line immediately before
-// execution begins. It ends with \r (no newline) so that DisplayExecutionResult
-// can overwrite it in place once the outcome is known.
+// DisplayExecutionProgress prints a pending-action line ending with \r so that
+// DisplayExecutionResult can overwrite it in place.
 func DisplayExecutionProgress(w io.Writer, node *PlanNode) {
-	level := node.Level
-	if level == "" {
-		level = "common"
-	}
-	color := actionColor(node.Action)
-	fmt.Fprintf(w, "  %s  %-14s  %-8s  %s\r",
-		color(padLeft(actionLabel(node.Action), 5)),
-		level,
-		typeLabel(node.ResourceType),
-		node.DisplayName,
+	name := truncatePath(node.DisplayName, displayMetrics.nameW)
+	fmt.Fprintf(w, "  %s  %-*s  %-*s  %s…%s\r",
+		ansiDim+"·"+ansiReset,
+		displayMetrics.nameW, name,
+		displayMetrics.typeW, typeLabel(node.ResourceType),
+		ansiDim, ansiReset,
 	)
 }
 
-// DisplayExecutionResult overwrites the pending progress line with the final
-// outcome. \r\033[K repositions and clears the line before printing.
-func DisplayExecutionResult(w io.Writer, node *PlanNode, err error) {
-	level := node.Level
-	if level == "" {
-		level = "common"
+// DisplayExecutionResult overwrites the progress line with the final outcome.
+// Pass dur=0 for TRACK/ADOPT/LEVEL nodes and skipped-by-dependency nodes.
+func DisplayExecutionResult(w io.Writer, node *PlanNode, err error, dur time.Duration) {
+	name := truncatePath(node.DisplayName, displayMetrics.nameW)
+	typ := typeLabel(node.ResourceType)
+
+	var sym, status string
+	switch {
+	case err != nil:
+		sym = ansiRed + "✗" + ansiReset
+		status = ansiRed + "failed" + ansiReset
+	case node.Action == ActionSkip:
+		sym = ansiDim + "!" + ansiReset
+		status = ansiDim + "skipped" + ansiReset
+	default:
+		sym = ansiGreen + "✓" + ansiReset
+		if dur > 0 {
+			status = ansiDim + formatDur(dur) + ansiReset
+		}
 	}
 
-	action := actionLabel(node.Action)
-	if err != nil {
-		action = "✗ ERR"
-	}
-	color := actionColor(node.Action)
-	if err != nil {
-		color = func(s string) string { return ansiRed + s + ansiReset }
-	}
-
-	result := ""
-	if err != nil {
-		result = fmt.Sprintf("  %s%v%s", ansiRed, err, ansiReset)
-	}
-
-	fmt.Fprintf(w, "\r\033[K  %s  %-14s  %-8s  %s%s\n",
-		color(padLeft(action, 5)),
-		level,
-		typeLabel(node.ResourceType),
-		node.DisplayName,
-		result,
+	fmt.Fprintf(w, "\r\033[K  %s  %-*s  %-*s  %s\n",
+		sym,
+		displayMetrics.nameW, name,
+		displayMetrics.typeW, typ,
+		status,
 	)
+
+	if err != nil {
+		noteLine(w, err.Error(), termWidth())
+	}
 }
 
-// Confirm prints the prompt and reads a Y/n response from r.
-// Returns true if the user presses Enter or types y/Y.
+// ─── Confirmation prompt ──────────────────────────────────────────────────────
+
+// Confirm prints the prompt and reads a Y/n response.
+// Returns true if the user presses Enter or types y/Y/yes.
 func Confirm(w io.Writer, r io.Reader) (bool, error) {
-	fmt.Fprintf(w, "Proceed with execution? %s[Y/n]%s: ", ansiBold, ansiReset)
+	fmt.Fprint(w, "  Proceed? [Y/n]: ")
 	scanner := bufio.NewScanner(r)
 	if !scanner.Scan() {
 		if err := scanner.Err(); err != nil {
@@ -346,7 +431,6 @@ func truncatePath(s string, width int) string {
 	if width <= 0 || len(s) <= width {
 		return s
 	}
-	// Last two segments: "parent/file"
 	tail := s
 	if i := strings.LastIndex(s, "/"); i > 0 {
 		if j := strings.LastIndex(s[:i], "/"); j >= 0 {
@@ -371,15 +455,8 @@ func truncatePath(s string, width int) string {
 	return s[:frontRoom] + ellipsis + tail
 }
 
-// ─── String padding helpers ───────────────────────────────────────────────────
-
-func padLeft(s string, width int) string {
-	if len(s) >= width {
-		return s
-	}
-	return s + strings.Repeat(" ", width-len(s))
-}
-
+// padCenter centers s within a field of the given width.
+// Used by DisplayShow.
 func padCenter(s string, width int) string {
 	if len(s) >= width {
 		return s
@@ -391,9 +468,6 @@ func padCenter(s string, width int) string {
 }
 
 // ─── Show command ─────────────────────────────────────────────────────────────
-
-// canonicalOrder defines the display order for resource types in --show output.
-var canonicalOrder = []string{"packages", "groups", "users", "services", "scripts", "files", "commands", "secrets", "containers", "distrobox"}
 
 // DisplayShow writes a read-only table of all currently-tracked nodes to w.
 // scope controls what is printed:
@@ -435,7 +509,6 @@ func DisplayShow(w io.Writer, st *state.State, vars map[string]string, scope str
 		tracked      string
 	}
 
-	// Collect rows, ordered by canonical resource type then item name.
 	orderIdx := make(map[string]int, len(canonicalOrder))
 	for i, t := range canonicalOrder {
 		orderIdx[t] = i
