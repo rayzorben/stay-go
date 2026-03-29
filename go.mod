@@ -5,6 +5,7 @@ go 1.25.0
 require gopkg.in/yaml.v3 v3.0.1
 
 require (
+	github.com/creack/pty v1.1.24 // indirect
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/zalando/go-keyring v0.2.8 // indirect

@@ -27,7 +27,7 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 		// Substitute ${secrets.*} tokens with decrypted values at the last
 		// moment before execution so plaintext never appears in plan output.
 		cmd := config.ApplySecrets(entry.Command, r.cfg.DecryptedSecrets)
-		result, err := r.exec.Run(ctx, executor.Options{Sudo: entry.Sudo}, "bash", "-c", "set -e\n"+cmd)
+		result, err := r.exec.Run(ctx, executor.Options{Sudo: entry.Sudo, AllowInteractive: true}, "bash", "-c", "set -e\n"+cmd)
 		if err != nil {
 			return fmt.Errorf("running command %q: %w\nstderr: %s", node.DisplayName, err, result.Stderr)
 		}

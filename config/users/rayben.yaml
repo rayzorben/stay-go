@@ -1,21 +1,26 @@
 packages:
   - zoxide
   - fzf
+  - cursor-bin
+  - visual-studio-code-bin
+  - go
+  - entr # for monitoring file events for diff
+  - gron # same
+  - firefox
+  - gnome-calculator
+  - onlyoffice-bin
+  - stremio
+  - libappindicator
+  - dropbox
+  - distrobox
 
 scripts:
-  - script: ${config_root}/scripts/aerial-sddm-theme.sh
-    sudo: true
-    depends:
-      - packages: [git]
-      - services: [sddm]
-      - folders: ["!/usr/share/sddm/themes/aerial-sddm-theme"]
-  
   - script: ${config_root}/scripts/configure-zoxide.sh
     depends:
       - packages: [zoxide, fzf]
       
 commands:
-  - name: Git Config
+  - name: git config
     command: |
       git config --global user.name "Raymond Bennett"
       git config --global user.email "raymond.bennett@gmail.com"
@@ -24,6 +29,10 @@ commands:
     rollback: |
       git config --global --unset user.name
       git config --global --unset user.email
+  - name: wheel no password
+    command: |
+      sed -i 's/%wheel ALL=(ALL) ALL/%wheel ALL=(ALL) NOPASSWD: ALL/' /etc/sudoers.d/10-installer
+    sudo: true
 
 secrets:
   ssh_id_ed25519: !encrypted x4Ymy7QRZy+muTonTD21H4vODMLPPGAZNg+IxlBU760tJD/Y03dmqKcFv2cInY7HpqgJcT4TqPm9u5wgGQFqJdH5Tk/1baJMaeVoVYl/c8sPeIlGLHt4k2V3ZiKOyOzFyJqNTxChLsd8F0wAxS9L3UMoyIRjPFfJG9kPeq23K/gN58j/jw6XDli3k3m0GgrCvDSDPo/9s9iPclOcQsr4/MSbOAWfjakkBIOwfiYXcQH4J5n/zLv5m9X9p0TZ9GLJaLtuKglRHNZj6tgOkQkpCZUIFBNdCZDWJt7OnqAE6c3DvoyjZud/ac/BDRT6VjliKxGNdC+yyoqc/OUwZqLS91/tt8SJvNEhPw3VIObX+BlatC9ztgaEqe/dpAYMLYts0Bqb0ec0X/JDgePSxHrWP+54F4fVd82Okcky/1qv/igrAgdve1gmw17iCol+WQJ7b3Ctmi9EsVC9mH/lg9U8narPCp0PdMp5zENq/3oWhOxcqy3j8gjZy6tw9k2kKfeUhh7Ieg8jEzVxqCkLPPCibxZqbOroCMMGrKzajdI8mgOIT9z1z8FFJeTHbUN0EgYNANYthVT1dZQIvwdSlfhOxMSqJ8oqrzIkuQmGEVzsTmhZdzjFGTpo2HDqNlukBI190b5Z5sKvAKiA79JEKzKD7/VfGkRdpWpxntVkiQ==
@@ -51,6 +60,10 @@ files:
     target: ~/.config/niri/rules.kdl
     symlink: true
     
+  - source: ${config_root}/files/niri/spawn.kdl
+    target: ~/.config/niri/spawn.kdl
+    symlink: true
+    
   - source: ${config_root}/files/config/electron-flags.conf
     target: ~/.config/electron-flags.conf
     symlink: true
@@ -65,6 +78,47 @@ files:
     depends:
       - file: ["~/.ssh/id_ed25519"]
 
+  - source: ${config_root}/files/config/firefox-user.js
+    target: '~/.config/mozilla/firefox/$(awk -F= "/^\[Install/ {getline; print \$2}" ~/.config/mozilla/firefox/profiles.ini)/user.js'
+    depends:
+        - packages: ['firefox']
+
+  - content: |
+      function watchdiff
+        set file $argv[1]
+        set backup ".$file.bak"
+        
+        # Create the initial backup if it doesn't exist
+        cp $file $backup
+        
+        echo "Watching $file... (Ctrl+C to stop)"
+        
+        # We use -p to postpone the first run until a change actually occurs
+        echo $file | entr -s "diff -u $backup $file; cp $file $backup"
+      end
+    target: ~/.config/fish/functions/watchdiff.fish
+    mode: "+x"
+    depends: 
+      - packages: [entr]
+  - content: |
+      function watchjson
+        set file $argv[1]
+        set old_flat "/tmp/$file.old.txt"
+        set new_flat "/tmp/$file.new.txt"
+
+        # Initial state
+        gron $file > $old_flat
+
+        echo "Watching JSON paths in $file... (Ctrl+C to stop)"
+
+        # Watch the file, flatten it, diff it, then update the "old" snapshot
+        echo $file | entr -s "gron $file > $new_flat; diff -u $old_flat $new_flat | grep '^[-+][^---]'; mv $new_flat $old_flat"
+      end
+    target: ~/.config/fish/functions/watchjson.fish
+    mode: "+x"
+    depends:
+      - packages: [gron]
+
 containers:
   - name: redis
     image: redis:alpine
@@ -76,7 +130,6 @@ containers:
       - services: [docker]
 
 ghostty: !include "./commands/ghostty.yaml"
-
       
 distrobox:
   - name: sedanos
@@ -110,3 +163,33 @@ distrobox:
       - name: Install uv
         command: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
+
+json:
+  - file: ~/.config/DankMaterialShell/settings.json
+    json:
+      use24HourClock: true
+      clockDateFormat: "dddd, MMMM d"
+      lockDateFormat: "dddd, MMMM d"
+      useFahrenheit: true
+      useAutoLocation: true
+      animationSpeed: 2
+      cornerRadius: 6
+      fontFamily: "LucidaProgrammer Nerd Font Mono"
+      monoFontFamily: "LucidaProgrammer Nerd Font Mono"
+      showWorkspaceIndex: true
+      workspaceDragReorder: false
+      workspaceFocusedBorderEnabled: true
+      barConfigs[0]:
+        borderEnabled: true
+        borderOpacity: 0.5
+        squareCorners: true
+        maximizeWidgetText: true
+        maximizeWidgetIcons: true
+        widgetOutlineEnabled: true
+        widgetOutlineOpacity: 0.5
+        leftWidgets:
+          - "workspaceSwitcher"
+          - "focusedWindow"
+          - {}
+      cursorSettings.size: 28
+      

@@ -26,6 +26,11 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 		if err != nil {
 			return fmt.Errorf("installing package %q: %w\nstderr: %s", name, err, result.Stderr)
 		}
+		// If a higher-priority manager (e.g. paru) was just installed, reset the
+		// cached manager so subsequent packages use it instead of the current one.
+		if betterManagerNowAvailable(r.manager) {
+			r.manager = nil
+		}
 		st.Set(node.ID, node.ConfigHash, node.Level, node.StateData)
 
 	case engine.ActionRemove:

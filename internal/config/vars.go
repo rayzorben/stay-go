@@ -119,6 +119,16 @@ func ApplyVars(cfg *Config, vars map[string]string) {
 			cfg.Containers[i].EnvFile[j] = r(cfg.Containers[i].EnvFile[j])
 		}
 	}
+	for i := range cfg.Json {
+		cfg.Json[i].File = r(cfg.Json[i].File)
+		for j, dep := range cfg.Json[i].Depends {
+			for k, vals := range dep {
+				for l, v := range vals {
+					cfg.Json[i].Depends[j][k][l] = r(v)
+				}
+			}
+		}
+	}
 	for i := range cfg.Distrobox {
 		cfg.Distrobox[i].Image = r(cfg.Distrobox[i].Image)
 		cfg.Distrobox[i].Home = r(cfg.Distrobox[i].Home)

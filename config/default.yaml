@@ -5,13 +5,30 @@ variables:
   dropbox_folder: ~/Dropbox
   lucida_font: ${config_root}/files/fonts/LucidaProgrammerNerdFontMono-Regular.ttf
   ttf_fonts: /usr/share/fonts/TTF
+  lucida_target: ${ttf_fonts}/LucidaProgrammerNerdFontMono-Regular.ttf
 
 packages:
+  - qt6-wayland
+  - qt5-wayland
+  - sddm
+  - niri
   - neovim
   - git
   - docker
   - dropbox
   - dsearch-bin
+  - xdg-desktop-portal-gnome
+  - xdg-desktop-portal-gtk
+  - gnome-keyring
+  - hyprpolkitagent
+  - libsecret
+  - gst-libav
+  - phonon-qt5-gstreamer
+  - gst-plugins-good
+  - qt5-quickcontrols
+  - qt5-graphicaleffects
+  - qt5-multimedia
+  - ghostty
   
 groups:
   - wheel
@@ -31,11 +48,38 @@ services:
     user: true
     depends:
       - packages: ['dsearch-bin']
+  - service: sddm
+    depends: 
+      - packages: ['sddm']
+    now: false # TODO: add support for not now
+  - service: hyprpolkitagent
+    user: true
+    depends:
+      - packages: ['hyprpolkitagent']
+      
 
 files:
   - source: ${lucida_font}
-    target: ${ttf_fonts}
+    target: ${lucida_target}
     sudo: true
+    
+commands:
+  - name: install dms
+    command: curl -fsSL https://install.danklinux.com | sh
+    depends:
+      - packages: ['niri']
+  - name: refresh fonts
+    command: fc-cache -f
+    depends:
+      - files: ['${lucida_target}']
 
+scripts:
+  - script: ${config_root}/scripts/aerial-sddm-theme.sh
+    sudo: true
+    depends:
+      - packages: [git, gst-libav, phonon-qt5-gstreamer, gst-plugins-good, qt5-quickcontrols, qt5-graphicaleffects, qt5-multimedia]
+      - services: [sddm]
+      - folders: ["!/usr/share/sddm/themes/aerial-sddm-theme"]
+  
 secrets:
   _verify: !encrypted sn+HxIuQgQPiWUqaJZkumrQQWr+18XTZyAd6+9kYPLKj/ETTZ2X/RGw5CtUBPuFz4bBQqY8hTC7CJlWfzj8=

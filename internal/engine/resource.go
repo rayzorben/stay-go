@@ -215,11 +215,16 @@ func StateRemovals(resourceType string, configSet map[string]bool, st *state.Sta
 		}
 		name := strings.TrimPrefix(id, prefix)
 		if !configSet[name] {
+			level := ""
+			if entry, ok := st.Get(id); ok {
+				level = entry.Level
+			}
 			nodes = append(nodes, &PlanNode{
 				ID:           id,
 				ResourceType: resourceType,
 				DisplayName:  name,
 				Action:       ActionRemove,
+				Level:        level,
 			})
 		}
 	}

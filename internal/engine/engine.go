@@ -191,22 +191,50 @@ func (e *Engine) Run(ctx context.Context, st *state.State) error {
 }
 
 // preSudo runs "sudo -v" once to cache credentials if any active node in the
-// plan requires sudo. This ensures a single password prompt at the start of
-// execution rather than interrupting individual operations mid-plan.
-func (e *Engine) preSudo(ctx context.Context, nodes []*PlanNode) {
+// plan requires sudo. Prints a newline first so the password prompt appears on
+// a clean line. Returns true if sudo is needed (so the caller can start a keepalive).
+func (e *Engine) preSudo(ctx context.Context, nodes []*PlanNode) bool {
 	for _, n := range nodes {
 		if n.NeedsSudo && (n.Action == ActionAdd || n.Action == ActionUpdate || n.Action == ActionRemove) {
+			fmt.Fprintln(os.Stdout)
 			e.exec.Run(ctx, executor.Options{}, "sudo", "-v") //nolint:errcheck
-			return
+			return true
 		}
 	}
+	return false
+}
+
+// startSudoKeepalive runs "sudo -v -n" every 3 minutes in the background so
+// that long-running operations do not let the credential cache expire mid-run.
+// The returned stop function must be called when execution finishes.
+func (e *Engine) startSudoKeepalive(ctx context.Context) func() {
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(3 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				// -n: non-interactive — refreshes only if already authenticated.
+				e.exec.Run(ctx, executor.Options{}, "sudo", "-v", "-n") //nolint:errcheck
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return func() { close(done) }
 }
 
 // execute processes nodes in topological order with runtime failure propagation.
 // REMOVE nodes are executed first (in their pre-sorted reverse-dep order),
 // then ADD/UPDATE nodes (forward dep order), then TRACK nodes (state update only).
 func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State) error {
-	e.preSudo(ctx, nodes)
+	if e.preSudo(ctx, nodes) {
+		stopKeepalive := e.startSudoKeepalive(ctx)
+		defer stopKeepalive()
+	}
 
 	resourceByType := make(map[string]Resource, len(e.resources))
 	for _, r := range e.resources {
@@ -248,10 +276,20 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 				succeeded[node.ID] = false
 				continue
 			}
-			DisplayExecutionProgress(os.Stdout, node)
+			DisplayExecutionProgress(os.Stdout, node, "")
+			if node.NeedsSudo {
+				// Commit the progress line — sudo will prompt via /dev/tty and
+				// we need a clean line for the password prompt to appear on.
+				fmt.Fprintln(os.Stdout)
+			} else {
+				e.exec.ProgressFn = func(line string) {
+					DisplayExecutionProgress(os.Stdout, node, line)
+				}
+			}
 			start := time.Now()
 			r := resourceByType[node.ResourceType]
 			execErr := r.Execute(ctx, node, st)
+			e.exec.ProgressFn = nil
 			dur := time.Since(start)
 			node.ExecutionErr = execErr
 			succeeded[node.ID] = execErr == nil

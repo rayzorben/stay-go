@@ -42,8 +42,10 @@ func actionColor(a ActionType) func(string) string {
 		return func(s string) string { return ansiGreen + s + ansiReset }
 	case ActionRemove:
 		return func(s string) string { return ansiRed + s + ansiReset }
-	case ActionUpdate, ActionLevel:
+	case ActionUpdate:
 		return func(s string) string { return ansiYellow + s + ansiReset }
+	case ActionLevel:
+		return func(s string) string { return ansiCyan + s + ansiReset }
 	case ActionSkip:
 		return func(s string) string { return ansiDim + s + ansiReset }
 	default:
@@ -56,8 +58,10 @@ func itemSymbol(a ActionType) string {
 	switch a {
 	case ActionAdd, ActionAdopt:
 		return "+"
-	case ActionUpdate, ActionLevel:
+	case ActionUpdate:
 		return "~"
+	case ActionLevel:
+		return "="
 	case ActionRemove:
 		return "-"
 	case ActionSkip:
@@ -80,6 +84,7 @@ var resourceLabel = map[string]string{
 	"secrets":    "secret",
 	"containers": "container",
 	"distrobox":  "distrobox",
+	"json":       "json",
 }
 
 func typeLabel(resourceType string) string {
@@ -94,7 +99,7 @@ func typeLabel(resourceType string) string {
 // canonicalOrder defines the display order for resource types.
 var canonicalOrder = []string{
 	"packages", "groups", "users", "services", "scripts",
-	"files", "commands", "secrets", "containers", "distrobox",
+	"files", "commands", "secrets", "containers", "distrobox", "json",
 }
 
 var canonicalIndex = func() map[string]int {
@@ -113,8 +118,9 @@ type groupID int
 const (
 	grpAdding   groupID = 0
 	grpUpdating groupID = 1
-	grpRemoving groupID = 2
-	grpSkipped  groupID = 3
+	grpMoved    groupID = 2
+	grpRemoving groupID = 3
+	grpSkipped  groupID = 4
 )
 
 type groupDef struct {
@@ -122,9 +128,10 @@ type groupDef struct {
 	color func(string) string
 }
 
-var planGroups = [4]groupDef{
+var planGroups = [5]groupDef{
 	grpAdding:   {"adding", actionColor(ActionAdd)},
 	grpUpdating: {"updating", actionColor(ActionUpdate)},
+	grpMoved:    {"moved", actionColor(ActionLevel)},
 	grpRemoving: {"removing", actionColor(ActionRemove)},
 	grpSkipped:  {"skipped", actionColor(ActionSkip)},
 }
@@ -135,8 +142,10 @@ func nodeGroupID(a ActionType) (groupID, bool) {
 	switch a {
 	case ActionAdd, ActionAdopt:
 		return grpAdding, true
-	case ActionUpdate, ActionLevel:
+	case ActionUpdate:
 		return grpUpdating, true
+	case ActionLevel:
+		return grpMoved, true
 	case ActionRemove:
 		return grpRemoving, true
 	case ActionSkip:
@@ -193,18 +202,30 @@ func writeSummaryLine(w io.Writer, nodes []*PlanNode) {
 		counts[n.Action]++
 	}
 	add := counts[ActionAdd] + counts[ActionAdopt]
-	upd := counts[ActionUpdate] + counts[ActionLevel]
+	upd := counts[ActionUpdate]
+	mov := counts[ActionLevel]
 	rem := counts[ActionRemove]
 	skp := counts[ActionSkip]
 	managed := counts[ActionTrack]
 
-	fmt.Fprintf(w, "  %s+%d add%s  %s~%d update%s  %s-%d remove%s  %s!%d skip%s  %s·  %d managed%s\n",
-		ansiGreen, add, ansiReset,
-		ansiYellow, upd, ansiReset,
-		ansiRed, rem, ansiReset,
-		ansiDim, skp, ansiReset,
-		ansiDim, managed, ansiReset,
-	)
+	var parts []string
+	if add > 0 {
+		parts = append(parts, fmt.Sprintf("%s+%d add%s", ansiGreen, add, ansiReset))
+	}
+	if upd > 0 {
+		parts = append(parts, fmt.Sprintf("%s~%d update%s", ansiYellow, upd, ansiReset))
+	}
+	if mov > 0 {
+		parts = append(parts, fmt.Sprintf("%s=%d moved%s", ansiCyan, mov, ansiReset))
+	}
+	if rem > 0 {
+		parts = append(parts, fmt.Sprintf("%s-%d remove%s", ansiRed, rem, ansiReset))
+	}
+	if skp > 0 {
+		parts = append(parts, fmt.Sprintf("%s!%d skip%s", ansiDim, skp, ansiReset))
+	}
+	parts = append(parts, fmt.Sprintf("%s·  %d managed%s", ansiDim, managed, ansiReset))
+	fmt.Fprintf(w, "  %s\n", strings.Join(parts, "  "))
 }
 
 // formatDur formats a duration as a compact decimal-second string, e.g. "0.3s".
@@ -351,22 +372,54 @@ func DisplayPlan(w io.Writer, nodes []*PlanNode) {
 
 // ─── Execution display ────────────────────────────────────────────────────────
 
+// execNameW returns the name column width for execution rows.
+// Execution rows have no level column, so we reclaim that space from the
+// plan-display nameW rather than re-querying termWidth (which may return a
+// wrong value when running inside a distrobox or pipe).
+// The level column is typically "common" (6) or "user_config" (11) + 2 gap = ~8.
+const execLevelReclaim = 10 // chars reclaimed by dropping the level column
+
+func execNameW() int {
+	w := displayMetrics.nameW + execLevelReclaim
+	if w < 10 {
+		w = 10
+	}
+	return w
+}
+
 // DisplayExecutionProgress prints a pending-action line ending with \r so that
-// DisplayExecutionResult can overwrite it in place.
-func DisplayExecutionProgress(w io.Writer, node *PlanNode) {
-	name := truncatePath(node.DisplayName, displayMetrics.nameW)
-	fmt.Fprintf(w, "  %s  %-*s  %-*s  %s…%s\r",
+// DisplayExecutionResult can overwrite it in place. lastLine, if non-empty,
+// is shown as a dim hint after the ellipsis so long-running commands look alive.
+func DisplayExecutionProgress(w io.Writer, node *PlanNode, lastLine string) {
+	tw := termWidth()
+	nw := execNameW()
+	name := truncatePath(node.DisplayName, nw)
+	// Fixed portion: "  ·  <name padded>  <type padded>  …  "
+	fixedLen := 2 + 1 + 2 + nw + 2 + displayMetrics.typeW + 4
+	hint := ""
+	if lastLine != "" {
+		budget := tw - fixedLen - 1
+		if budget > 8 {
+			if len(lastLine) > budget {
+				lastLine = lastLine[:budget-1] + "…"
+			}
+			hint = ansiDim + lastLine + ansiReset
+		}
+	}
+	fmt.Fprintf(w, "\r\033[K  %s  %-*s  %-*s  %s…%s  %s",
 		ansiDim+"·"+ansiReset,
-		displayMetrics.nameW, name,
+		nw, name,
 		displayMetrics.typeW, typeLabel(node.ResourceType),
 		ansiDim, ansiReset,
+		hint,
 	)
 }
 
 // DisplayExecutionResult overwrites the progress line with the final outcome.
 // Pass dur=0 for TRACK/ADOPT/LEVEL nodes and skipped-by-dependency nodes.
 func DisplayExecutionResult(w io.Writer, node *PlanNode, err error, dur time.Duration) {
-	name := truncatePath(node.DisplayName, displayMetrics.nameW)
+	nw := execNameW()
+	name := truncatePath(node.DisplayName, nw)
 	typ := typeLabel(node.ResourceType)
 
 	var sym, status string
@@ -386,7 +439,7 @@ func DisplayExecutionResult(w io.Writer, node *PlanNode, err error, dur time.Dur
 
 	fmt.Fprintf(w, "\r\033[K  %s  %-*s  %-*s  %s\n",
 		sym,
-		displayMetrics.nameW, name,
+		nw, name,
 		displayMetrics.typeW, typ,
 		status,
 	)

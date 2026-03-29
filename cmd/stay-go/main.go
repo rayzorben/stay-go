@@ -31,6 +31,7 @@ import (
 	"github.com/rayben/stay-go/internal/resource/commands"
 	rcontainers "github.com/rayben/stay-go/internal/resource/containers"
 	rdistrobox "github.com/rayben/stay-go/internal/resource/distrobox"
+	rjson "github.com/rayben/stay-go/internal/resource/json"
 	rfiles "github.com/rayben/stay-go/internal/resource/files"
 	rsecrets "github.com/rayben/stay-go/internal/resource/secrets"
 	"github.com/rayben/stay-go/internal/resource/groups"
@@ -148,6 +149,7 @@ func main() {
 	eng.Register(commands.New(cfg, exec))
 	eng.Register(rcontainers.New(cfg, exec))
 	eng.Register(rdistrobox.New(cfg, exec))
+	eng.Register(rjson.New(cfg, exec))
 
 	// Respect Ctrl-C / SIGTERM for clean shutdown.
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

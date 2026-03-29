@@ -10,13 +10,23 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
+	"syscall"
+
+	"github.com/creack/pty"
+	"golang.org/x/term"
 )
 
 // Executor is a stateless command runner. Debug controls whether command output
 // is streamed to the terminal in addition to being captured.
 type Executor struct {
 	Debug bool
+	// ProgressFn, when set, is called with each non-empty output line as the
+	// command runs. Used by the engine to show a live last-line indicator in the
+	// progress row. Not called in Debug or Stream mode (output is already visible).
+	// Safe to set/clear from the engine's sequential execute loop.
+	ProgressFn func(string)
 }
 
 // Options configures a single command invocation.
@@ -32,6 +42,11 @@ type Options struct {
 	// even when the executor is not in Debug mode. Use for long-running
 	// commands where the user needs to see live progress (e.g. in-box apply).
 	Stream bool
+	// AllowInteractive streams output in real time and detects when no newline
+	// has been written for 15 seconds. The user is then prompted to cancel or
+	// enter interactive mode (connecting os.Stdin to the process). Falls back
+	// to normal non-streaming behaviour when stdin is not a terminal.
+	AllowInteractive bool
 }
 
 // Result holds the captured output of a completed command.
@@ -61,9 +76,20 @@ func (e *Executor) Run(ctx context.Context, opts Options, name string, args ...s
 		fmt.Fprintf(os.Stderr, "  $ %s\n", strings.Join(cmd.Args, " "))
 	}
 
-	// Stdin: use /dev/null unless the caller supplies a reader.
-	// This prevents package managers from blocking on interactive input.
-	if opts.Stdin != nil {
+	// Interactive mode: streams output via PTY so the process sees a real
+	// terminal. Not used when sudo is involved — the PTY creates a new TTY
+	// device which breaks sudo's per-tty credential cache, causing a second
+	// password prompt even after preSudo has already authenticated.
+	if opts.AllowInteractive && isTerminalStdin() && !opts.Sudo {
+		return e.runInteractive(ctx, cmd)
+	}
+
+	// Stdin: sudo commands get os.Stdin so that the process runs on the same
+	// controlling terminal that preSudo used, preventing a second prompt.
+	// All other commands use /dev/null to stay non-interactive.
+	if opts.Sudo {
+		cmd.Stdin = os.Stdin
+	} else if opts.Stdin != nil {
 		cmd.Stdin = opts.Stdin
 	} else {
 		devNull, err := os.Open(os.DevNull)
@@ -77,6 +103,10 @@ func (e *Executor) Run(ctx context.Context, opts Options, name string, args ...s
 	if e.Debug || opts.Stream {
 		cmd.Stdout = io.MultiWriter(os.Stdout, &stdoutBuf)
 		cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
+	} else if e.ProgressFn != nil {
+		llw := &lastLineWriter{fn: e.ProgressFn}
+		cmd.Stdout = io.MultiWriter(llw, &stdoutBuf)
+		cmd.Stderr = &stderrBuf
 	} else {
 		cmd.Stdout = &stdoutBuf
 		cmd.Stderr = &stderrBuf
@@ -91,6 +121,113 @@ func (e *Executor) Run(ctx context.Context, opts Options, name string, args ...s
 		result.ExitCode = exitErr.ExitCode()
 	}
 	return result, err
+}
+
+// isTerminalStdin reports whether os.Stdin is connected to a terminal.
+func isTerminalStdin() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+// runInteractive executes cmd under a PTY so the process sees a real terminal
+// (preserving ANSI colours, box-drawing, and correct isatty detection). The
+// terminal is put in raw mode and stdin is forwarded directly to the PTY so
+// the user can interact with the process in real time. Ctrl+C is forwarded to
+// the process's terminal line discipline, which sends SIGINT to the child.
+func (e *Executor) runInteractive(ctx context.Context, cmd *exec.Cmd) (*Result, error) {
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("pty start: %w", err)
+	}
+	defer ptmx.Close()
+
+	// Match PTY dimensions to our terminal so TUI layouts render correctly.
+	if cols, rows, sizeErr := term.GetSize(int(os.Stdout.Fd())); sizeErr == nil {
+		pty.Setsize(ptmx, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)}) //nolint:errcheck
+	}
+
+	// Forward terminal resize events into the PTY.
+	winch := make(chan os.Signal, 1)
+	signal.Notify(winch, syscall.SIGWINCH)
+	defer func() { signal.Stop(winch); close(winch) }()
+	go func() {
+		for range winch {
+			if cols, rows, sizeErr := term.GetSize(int(os.Stdout.Fd())); sizeErr == nil {
+				pty.Setsize(ptmx, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)}) //nolint:errcheck
+			}
+		}
+	}()
+
+	// Raw mode: pass all bytes (including Ctrl+C) straight through to the PTY.
+	if oldState, rawErr := term.MakeRaw(int(os.Stdin.Fd())); rawErr == nil {
+		defer term.Restore(int(os.Stdin.Fd()), oldState) //nolint:errcheck
+	}
+	go io.Copy(ptmx, os.Stdin) //nolint:errcheck
+
+	// Stream PTY output to the terminal and capture it.
+	var outBuf bytes.Buffer
+	doneCh := make(chan error, 1)
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, readErr := ptmx.Read(buf)
+			if n > 0 {
+				os.Stdout.Write(buf[:n]) //nolint:errcheck
+				outBuf.Write(buf[:n])
+			}
+			if readErr != nil {
+				break
+			}
+		}
+		doneCh <- cmd.Wait()
+	}()
+
+	buildResult := func() *Result {
+		r := &Result{Stdout: outBuf.String()}
+		if cmd.ProcessState != nil {
+			r.ExitCode = cmd.ProcessState.ExitCode()
+		}
+		return r
+	}
+
+	select {
+	case <-ctx.Done():
+		cmd.Process.Kill() //nolint:errcheck
+		<-doneCh
+		return buildResult(), ctx.Err()
+	case err := <-doneCh:
+		r := buildResult()
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			r.ExitCode = exitErr.ExitCode()
+		}
+		return r, err
+	}
+}
+
+// lastLineWriter captures output line by line and calls fn with each non-empty line.
+// Partial lines (no trailing newline yet) are held in buf until the next Write.
+type lastLineWriter struct {
+	fn  func(string)
+	buf []byte
+}
+
+func (w *lastLineWriter) Write(p []byte) (int, error) {
+	w.buf = append(w.buf, p...)
+	for {
+		idx := bytes.IndexByte(w.buf, '\n')
+		if idx < 0 {
+			break
+		}
+		line := strings.TrimSpace(string(w.buf[:idx]))
+		w.buf = w.buf[idx+1:]
+		if line != "" {
+			w.fn(line)
+		}
+	}
+	return len(p), nil
 }
 
 // Output runs name with args (no sudo, no extra env) and returns trimmed stdout.

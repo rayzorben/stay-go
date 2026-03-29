@@ -283,6 +283,20 @@ func formatNoteList(label string, items []string) string {
 	return prefix + strings.Join(kept, ", ")
 }
 
+// needsHomeSudo reports whether creating this entry requires sudo — only when
+// home_sudo is set and Home is an absolute path outside the user's home dir.
+func needsHomeSudo(e *config.DistroboxEntry) bool {
+	if !e.HomeSudo || e.Home == "" {
+		return false
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return true // conservative
+	}
+	// Home is already ~ -expanded by vars, so a simple prefix check is enough.
+	return !strings.HasPrefix(e.Home, home)
+}
+
 // buildCreateArgs constructs the argument slice for `distrobox create`.
 func buildCreateArgs(e *config.DistroboxEntry) []string {
 	args := []string{"create", "--yes", "--name", e.Name, "--image", e.Image}

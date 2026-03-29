@@ -3,5 +3,6 @@
     "yaml.customTags": [
         "!encrypted scalar",
         "!include scalar"
-    ]
+    ],
+    "sarif-viewer.connectToGithubCodeScanning": "off"
 }

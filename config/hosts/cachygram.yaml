@@ -1,11 +1,7 @@
 packages:
-  - sddm
+  - solaar
+  - alsa-tools # for hda-verb
 
-services:
-  - service: sddm
-    depends: 
-      - packages: ['sddm']
-      
 files:
   - source: ${config_root}/files/necessary-verbs.sh
     target: /usr/local/sbin/necessary-verbs.sh
@@ -31,3 +27,10 @@ files:
     sudo: true
     depends:
       - files: [/usr/local/sbin/necessary-verbs.sh]
+      - packages: ['alsa-tools']
+      
+  - source: ${config_root}/files/config/solaar.yaml
+    target: ~/.config/solaar/config.yaml
+    symlink: true
+    depends:
+      - packages: [solaar]

@@ -39,13 +39,16 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 
 		rt := resolveRuntime(entry.Runtime)
 
+		deps := entry.DependsOnIDs()
+		deps = append(deps, config.NodeID("packages", rt))
+
 		nodes = append(nodes, &engine.PlanNode{
 			ID:           id,
 			ResourceType: "containers",
 			DisplayName:  name,
 			Action:       action,
 			ConfigHash:   hash,
-			DependsOn:    entry.DependsOnIDs(),
+			DependsOn:    deps,
 			NeedsSudo:    entry.Sudo,
 			Level:        level,
 			Description:  desc,

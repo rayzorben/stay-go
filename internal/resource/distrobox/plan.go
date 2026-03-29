@@ -38,15 +38,18 @@ func (r *Resource) BuildPlan(ctx context.Context, knowledge map[string]bool, st 
 		action := engine.DetermineAction(id, knowledge[id], hash, st)
 		action, levelDesc := engine.CheckLevelChange(id, entry.Level, action, st)
 
+		deps := entry.DependsOnIDs()
+		deps = append(deps, config.NodeID("packages", "distrobox"))
+
 		boxNode := &engine.PlanNode{
 			ID:           id,
 			ResourceType: "distrobox",
 			DisplayName:  entry.Name,
 			Action:       action,
 			ConfigHash:   hash,
-			DependsOn:    entry.DependsOnIDs(),
+			DependsOn:    deps,
 			Level:        entry.Level,
-			NeedsSudo:    entry.HomeSudo,
+			NeedsSudo:    needsHomeSudo(entry),
 			Description:  describeBoxAction(action, entry, levelDesc),
 			StateData:    map[string]interface{}{"name": entry.Name, "image": entry.Image},
 		}

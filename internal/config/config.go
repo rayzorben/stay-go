@@ -29,6 +29,8 @@ type Config struct {
 	Containers []ContainerEntry   `yaml:"containers"`
 	Distrobox  []DistroboxEntry   `yaml:"distrobox"`
 
+	Json []JsonEntry `yaml:"json"`
+
 	// DecryptedSecrets holds the plaintext values of all secrets after the
 	// Manager has processed them. Populated by cmd/stay-go after LoadAll;
 	// not serialised to YAML. Keyed by the secret name (without "secrets." prefix).
@@ -172,16 +174,26 @@ func (g *GroupEntry) UnmarshalYAML(value *yaml.Node) error {
 
 // PackageEntry represents a single package to manage. Supports both scalar
 // ("neovim") and mapping ({ name: neovim }) forms in YAML.
+// A leading "!" (e.g. "!foo") marks the package for forced removal.
 type PackageEntry struct {
-	Name  string
-	Level string `yaml:"-"` // set by LoadAll, not parsed from YAML
+	Name   string
+	Remove bool   // true when the name was prefixed with "!"
+	Level  string `yaml:"-"` // set by LoadAll, not parsed from YAML
 }
 
 // UnmarshalYAML implements yaml.Unmarshaler to accept both scalar and map forms.
 func (p *PackageEntry) UnmarshalYAML(value *yaml.Node) error {
+	applyName := func(raw string) {
+		if strings.HasPrefix(raw, "!") {
+			p.Name = raw[1:]
+			p.Remove = true
+		} else {
+			p.Name = raw
+		}
+	}
 	switch value.Kind {
 	case yaml.ScalarNode:
-		p.Name = value.Value
+		applyName(value.Value)
 		return nil
 	case yaml.MappingNode:
 		var m struct {
@@ -190,7 +202,7 @@ func (p *PackageEntry) UnmarshalYAML(value *yaml.Node) error {
 		if err := value.Decode(&m); err != nil {
 			return fmt.Errorf("decoding package entry: %w", err)
 		}
-		p.Name = m.Name
+		applyName(m.Name)
 		return nil
 	default:
 		return fmt.Errorf("unexpected YAML node kind %v for package entry", value.Kind)
@@ -213,6 +225,7 @@ type ServiceEntry struct {
 	Service string                `yaml:"service"`
 	User    bool                  `yaml:"user,omitempty"`    // true = systemd user service
 	Enabled *bool                 `yaml:"enabled,omitempty"` // default true
+	Now     *bool                 `yaml:"now,omitempty"`     // default true; false = enable without starting
 	Depends []map[string][]string `yaml:"depends,omitempty"` // [{packages: [docker]}]
 	Level   string                `yaml:"-"`                 // set by LoadAll, not parsed from YAML
 }
@@ -223,6 +236,14 @@ func (s *ServiceEntry) IsEnabled() bool {
 		return true
 	}
 	return *s.Enabled
+}
+
+// IsNow returns whether the service should be started immediately on enable (defaults to true).
+func (s *ServiceEntry) IsNow() bool {
+	if s.Now == nil {
+		return true
+	}
+	return *s.Now
 }
 
 // DependsOnIDs converts the raw depends field into canonical resource node IDs.
@@ -326,6 +347,85 @@ type DistroboxEntry struct {
 func (d *DistroboxEntry) DependsOnIDs() []string {
 	var ids []string
 	for _, dep := range d.Depends {
+		for resourceType, names := range dep {
+			for _, name := range names {
+				ids = append(ids, resourceType+"/"+name)
+			}
+		}
+	}
+	return ids
+}
+
+// JsonEntry defines desired values to set at specific JSON paths within a file.
+// The File field is the path to the JSON file to manage. Values is a map of
+// JSON paths (using gron-style dot/bracket notation, e.g. "json.foo[0].bar")
+// to their desired values. The original values are saved to state on first
+// application and restored on removal.
+type JsonEntry struct {
+	File    string                 `yaml:"file"`
+	Values  map[string]interface{} `yaml:"-"`       // populated by UnmarshalYAML
+	Depends []map[string][]string  `yaml:"depends,omitempty"`
+	Level   string                 `yaml:"-"` // set by LoadAll, not parsed from YAML
+}
+
+// UnmarshalYAML parses a json entry. The mapping may contain "file",
+// "depends", and any number of json-path keys (prefixed with "json.").
+func (e *JsonEntry) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.MappingNode {
+		return fmt.Errorf("json entry must be a mapping")
+	}
+	e.Values = make(map[string]interface{})
+	for i := 0; i+1 < len(value.Content); i += 2 {
+		k := value.Content[i].Value
+		v := value.Content[i+1]
+		switch k {
+		case "file":
+			e.File = v.Value
+		case "depends":
+			if err := v.Decode(&e.Depends); err != nil {
+				return fmt.Errorf("decoding json depends: %w", err)
+			}
+		default:
+			// All other keys are json-path assignments.
+			// If the value is a mapping, flatten it into individual full paths
+			// (e.g. "json.barConfigs[0]" + {borderEnabled: true} →
+			//  "json.barConfigs[0].borderEnabled": true).
+			// This ensures only the specified leaf values are touched; other
+			// properties at the same level are left unchanged.
+			// Scalar values are stored directly (e.g. "json.foo.bar": true).
+			flattenYAMLNode(k, v, e.Values)
+		}
+	}
+	return nil
+}
+
+// flattenYAMLNode recursively flattens a yaml.Node into the out map under prefix.
+// Mapping nodes produce "prefix.key" entries; sequence nodes produce "prefix[i]"
+// entries; scalar nodes store the decoded value directly at prefix.
+func flattenYAMLNode(prefix string, node *yaml.Node, out map[string]interface{}) {
+	switch node.Kind {
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			childKey := node.Content[i].Value
+			childVal := node.Content[i+1]
+			flattenYAMLNode(prefix+"."+childKey, childVal, out)
+		}
+	case yaml.SequenceNode:
+		for i, elem := range node.Content {
+			flattenYAMLNode(fmt.Sprintf("%s[%d]", prefix, i), elem, out)
+		}
+	default:
+		var val interface{}
+		if err := node.Decode(&val); err == nil {
+			out[prefix] = val
+		}
+	}
+}
+
+// DependsOnIDs converts the raw depends field into canonical resource node IDs.
+func (e *JsonEntry) DependsOnIDs() []string {
+	var ids []string
+	for _, dep := range e.Depends {
 		for resourceType, names := range dep {
 			for _, name := range names {
 				ids = append(ids, resourceType+"/"+name)

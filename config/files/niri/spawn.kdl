@@ -1,0 +1,2 @@
+spawn-at-startup "gnome-keyring-daemon" "-s"
+spawn-at-startup "solaar" "-w" "hide"

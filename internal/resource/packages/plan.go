@@ -13,14 +13,41 @@ import (
 // detecting packages to remove — both shared helpers (DRY).
 // Implements engine.Planner.
 func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *state.State) ([]*engine.PlanNode, error) {
+	// configSet only includes packages we install (not forced-removal entries).
 	configSet := make(map[string]bool, len(r.cfg.Packages))
 	for _, p := range r.cfg.Packages {
-		configSet[p.Name] = true
+		if !p.Remove {
+			configSet[p.Name] = true
+		}
 	}
 
 	var nodes []*engine.PlanNode
 
+	// Emit forced-removal ("!pkg") nodes first so they execute before installs,
+	// avoiding conflicts. Only emit a node when the package is actually installed.
 	for _, p := range r.cfg.Packages {
+		if !p.Remove {
+			continue
+		}
+		id := config.NodeID("packages", p.Name)
+		if !knowledge[id] {
+			continue // already absent — nothing to do
+		}
+		nodes = append(nodes, &engine.PlanNode{
+			ID:           id,
+			ResourceType: "packages",
+			DisplayName:  p.Name,
+			Action:       engine.ActionRemove,
+			ConfigHash:   config.Hash(p.Name),
+			NeedsSudo:    r.manager != nil && r.manager.NeedsSudo,
+			Description:  describePackageChange(engine.ActionRemove, r.manager),
+		})
+	}
+
+	for _, p := range r.cfg.Packages {
+		if p.Remove {
+			continue
+		}
 		id := config.NodeID("packages", p.Name)
 		hash := config.Hash(p.Name)
 		action := engine.DetermineAction(id, knowledge[id], hash, st)

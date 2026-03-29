@@ -184,6 +184,9 @@ func stampLevel(cfg *Config, level string) {
 			cfg.Distrobox[i].Commands[j].Level = level
 		}
 	}
+	for i := range cfg.Json {
+		cfg.Json[i].Level = level
+	}
 	for k := range cfg.Secrets {
 		e := cfg.Secrets[k]
 		e.Level = level
@@ -241,6 +244,9 @@ func mergeConfigs(base, override *Config) *Config {
 
 	result.Distrobox = mergeByKey(base.Distrobox, override.Distrobox,
 		func(d DistroboxEntry) string { return d.Name })
+
+	result.Json = mergeByKey(base.Json, override.Json,
+		func(j JsonEntry) string { return j.File })
 
 	return result
 }

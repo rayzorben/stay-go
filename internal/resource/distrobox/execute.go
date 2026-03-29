@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/user"
+	"path/filepath"
 	"strings"
 
 	"github.com/rayben/stay-go/internal/config"
@@ -35,8 +37,18 @@ func (r *Resource) executeBox(ctx context.Context, node *engine.PlanNode, entry 
 		if node.Action == engine.ActionUpdate {
 			r.exec.Run(ctx, executor.Options{}, "distrobox", "rm", "--yes", entry.Name) //nolint:errcheck
 		}
+
+		// home_sudo: if the custom home directory is outside the user's home
+		// directory, create it with sudo and chown it to the current user.
+		// distrobox create itself always runs as the current user.
+		if entry.HomeSudo && entry.Home != "" {
+			if err := r.prepareExternalHome(ctx, entry.Home); err != nil {
+				return fmt.Errorf("preparing home dir for %q: %w", entry.Name, err)
+			}
+		}
+
 		args := buildCreateArgs(entry)
-		result, err := r.exec.Run(ctx, executor.Options{Sudo: entry.HomeSudo}, "distrobox", args...)
+		result, err := r.exec.Run(ctx, executor.Options{}, "distrobox", args...)
 		if err != nil {
 			return fmt.Errorf("creating distrobox %q: %w\nstderr: %s", entry.Name, err, result.Stderr)
 		}
@@ -52,6 +64,38 @@ func (r *Resource) executeBox(ctx context.Context, node *engine.PlanNode, entry 
 		st.Delete(applyNodeID(entry.Name))
 		// Clean up per-box state directory (sub-config + state JSON).
 		os.RemoveAll(r.boxStateDir(entry.Name)) //nolint:errcheck
+	}
+	return nil
+}
+
+// prepareExternalHome creates a home directory outside the user's home using
+// sudo, then chowns it to the current user so distrobox can use it without
+// elevated privileges.
+func (r *Resource) prepareExternalHome(ctx context.Context, home string) error {
+	u, err := user.Current()
+	if err != nil {
+		return fmt.Errorf("getting current user: %w", err)
+	}
+	// Resolve ~ in home path (already done by vars, but be defensive).
+	if home == "~" || home == "" {
+		return nil
+	}
+	result, err := r.exec.Run(ctx, executor.Options{Sudo: true}, "mkdir", "-p", home)
+	if err != nil {
+		return fmt.Errorf("mkdir -p %q: %w\nstderr: %s", home, err, result.Stderr)
+	}
+	owner := u.Username
+	if u.Gid != "" {
+		owner = u.Username + ":" + u.Username
+	}
+	result, err = r.exec.Run(ctx, executor.Options{Sudo: true}, "chown", owner, home)
+	if err != nil {
+		return fmt.Errorf("chown %q %q: %w\nstderr: %s", owner, home, err, result.Stderr)
+	}
+	// Also ensure the parent path up to the root is accessible.
+	parent := filepath.Dir(home)
+	if parent != "." && parent != "/" {
+		r.exec.Run(ctx, executor.Options{Sudo: true}, "chmod", "a+x", parent) //nolint:errcheck
 	}
 	return nil
 }

@@ -53,7 +53,8 @@ func serviceHash(e *config.ServiceEntry) string {
 		Service string
 		User    bool
 		Enabled bool
-	}{e.Service, e.User, e.IsEnabled()})
+		Now     bool
+	}{e.Service, e.User, e.IsEnabled(), e.IsNow()})
 }
 
 // isEnabled checks whether a service is currently enabled via systemctl.

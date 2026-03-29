@@ -112,6 +112,21 @@ var managers = []PackageManager{
 	},
 }
 
+// betterManagerNowAvailable reports whether a higher-priority manager than
+// current has become available in PATH. Used after a successful install to
+// detect when e.g. paru was just installed and should now be used.
+func betterManagerNowAvailable(current *PackageManager) bool {
+	for i := range managers {
+		if managers[i].Name == current.Name {
+			return false // reached current without finding anything better
+		}
+		if executor.Exists(managers[i].Binary) {
+			return true
+		}
+	}
+	return false
+}
+
 // Detect walks the managers table and returns the first whose Binary is found
 // in PATH. Returns an error listing supported managers if none is detected.
 func Detect(_ context.Context) (*PackageManager, error) {

@@ -25,8 +25,12 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 
 	switch node.Action {
 	case engine.ActionAdd:
-		result, err := r.exec.Run(ctx, opts,
-			"systemctl", systemctlArgs(isUser, "enable", "--now", name)...)
+		args := []string{"enable"}
+		if entry.IsNow() {
+			args = append(args, "--now")
+		}
+		args = append(args, name)
+		result, err := r.exec.Run(ctx, opts, "systemctl", systemctlArgs(isUser, args...)...)
 		if err != nil {
 			return fmt.Errorf("enabling service %q: %w\nstderr: %s", name, err, result.Stderr)
 		}
