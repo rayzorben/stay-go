@@ -1,0 +1,47 @@
+---
+alwaysApply: true
+---
+
+# stay-go Project Rules
+
+## 1. Architectural Integrity & Layering
+- **Strict Layering**: Follow the defined import hierarchy to prevent circular dependencies:
+  `stdlib` → `executor` → `config` → `state` → `engine` (defines interfaces) → `resource/*` → `cmd/stay-go`.
+- **Interface Segregation**: Every resource must implement the `engine.Resource` interface by composing `Knowledger`, `Planner`, and `NodeExecutor`.
+- **Engine Purity**: The `internal/engine` package must remain agnostic of specific resource implementations. New resources must be "pluggable" without modifying the engine's core orchestration logic.
+
+## 2. Resource Implementation Patterns
+Each resource must strictly follow the "one file per concern" rule:
+- `resource.go`: Struct definition, constructor (`New`), and `Type() string`.
+- `knowledge.go`: `GatherKnowledge` implementation. Must be safe for concurrent execution.
+- `plan.go`: `BuildPlan` implementation.
+    - **DRY Rule**: Always use `engine.DetermineAction` for status logic.
+    - **DRY Rule**: Always use `engine.StateRemovals` to detect resources removed from config.
+    - **Sudo**: Set `NeedsSudo: true` on `PlanNode` if the resource requires elevation.
+- `execute.go`: `Execute` implementation.
+    - Must update state on success: `st.Set(...)` for ADD/UPDATE, `st.Delete(...)` for REMOVE.
+    - Capture output via `executor` and wrap errors with `fmt.Errorf("context: %w", err)`.
+
+## 3. Configuration & State Rules
+- **Deterministic Hashing**: All `Config` entries must have a deterministic hash (SHA-256) used for `PlanNode.ConfigHash`. If a resource depends on external file content (like `scripts`), include that content in the hash.
+- **Variables**: Use `internal/config/vars.go` for variable resolution. References are `${var_name}`, and `~` is shorthand for home.
+- **Atomic Operations**: All writes to the state JSON or configuration files must be atomic (Write to `.tmp` → `os.Rename`). Use helpers in `internal/state` or `internal/secrets`.
+- **Secrets**: Never print decrypted secrets. Use `config.MaskSecrets` for display/logs and `config.ApplySecrets` only at the final `Execute` step.
+
+## 4. Coding Conventions & Safety
+- **Error Handling**: Use wrapped errors: `fmt.Errorf("doing X: %w", err)`.
+- **Concurrency**: `GatherKnowledge` runs in parallel; ensure no shared map writes without mutexes (though per-resource state is preferred).
+- **Execution Safety**:
+    - Default `Stdin` to `/dev/null` unless explicitly requiring `os.Stdin` for sudo/passwords.
+    - Use `executor.Options{Sudo: true}` instead of hardcoding the `sudo` string in command arguments.
+    - Always provide `-y` or `--noconfirm` flags to system package managers.
+- **Dependency Sorting**: Ensure `topoSort` in `engine/graph.go` is respected. REMOVE actions must trigger in reverse dependency order.
+
+## 5. UI & Display
+- **Plan Symbols**: Use canonical symbols: `[+] ADD`, `[~] UPDATE`, `[-] REMOVE`, `[!] SKIP`, `[=] LEVEL`.
+- **Resource Labels**: When adding a resource, update `resourceLabel` and `canonicalOrder` in `internal/engine/display.go`.
+
+## 6. Testing Requirements
+- **Logic Tests**: Every parser (like package manager output) must have unit tests in its respective package.
+- **Hash Stability**: Ensure `config.Hash` remains deterministic across runs to avoid spurious UPDATE plans.
+- Run `make test` before suggesting any PR-level changes.
