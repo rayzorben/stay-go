@@ -73,13 +73,12 @@ func (r *Resource) BuildPlan(ctx context.Context, knowledge map[string]bool, st 
 		case engine.ActionAdd:
 			// Box is being created — all in-box resources are new.
 			applyAction = engine.ActionAdd
-			applyDesc = summarizeInBoxConfig(entry)
 			applyNotes = buildApplyNotes(entry)
 
 		case engine.ActionUpdate:
 			// Box is being recreated — in-box state effectively resets.
 			applyAction = engine.ActionAdd
-			applyDesc = "box recreated: " + summarizeInBoxConfig(entry)
+			applyDesc = "box recreated"
 			applyNotes = buildApplyNotes(entry)
 
 		case engine.ActionRemove:

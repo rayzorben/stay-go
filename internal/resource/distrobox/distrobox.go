@@ -244,12 +244,17 @@ func (r *Resource) writeBoxConfig(entry *config.DistroboxEntry) error {
 func buildApplyNotes(entry *config.DistroboxEntry) []string {
 	var notes []string
 	if len(entry.Packages) > 0 {
-		notes = append(notes, formatNoteList("packages", packageNames(entry.Packages)))
+		names := packageNames(entry.Packages)
+		prefixed := make([]string, len(names))
+		for i, n := range names {
+			prefixed[i] = "+" + n
+		}
+		notes = append(notes, formatNoteList("packages", prefixed))
 	}
 	if len(entry.Commands) > 0 {
 		names := make([]string, len(entry.Commands))
 		for i, c := range entry.Commands {
-			names[i] = c.Name
+			names[i] = "+" + c.Name
 		}
 		notes = append(notes, "commands: "+strings.Join(names, ", "))
 	}

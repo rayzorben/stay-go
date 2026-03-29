@@ -194,8 +194,8 @@ func noteLine(w io.Writer, text string, tw int) {
 	fmt.Fprintf(w, "%s%s%s%s\n", ansiDim, prefix, text, ansiReset)
 }
 
-// writeSummaryLine writes the compact line shown above the plan groups:
-// `  +N add  ~N update  -N remove  !N skip  ·  N managed`
+// writeSummaryLine writes all action counts — including zeros — so the user can
+// confirm at a glance that nothing unexpected is being added or removed.
 func writeSummaryLine(w io.Writer, nodes []*PlanNode) {
 	counts := make(map[ActionType]int, 8)
 	for _, n := range nodes {
@@ -208,24 +208,14 @@ func writeSummaryLine(w io.Writer, nodes []*PlanNode) {
 	skp := counts[ActionSkip]
 	managed := counts[ActionTrack]
 
-	var parts []string
-	if add > 0 {
-		parts = append(parts, fmt.Sprintf("%s+%d add%s", ansiGreen, add, ansiReset))
-	}
-	if upd > 0 {
-		parts = append(parts, fmt.Sprintf("%s~%d update%s", ansiYellow, upd, ansiReset))
-	}
-	if mov > 0 {
-		parts = append(parts, fmt.Sprintf("%s=%d moved%s", ansiCyan, mov, ansiReset))
-	}
-	if rem > 0 {
-		parts = append(parts, fmt.Sprintf("%s-%d remove%s", ansiRed, rem, ansiReset))
-	}
-	if skp > 0 {
-		parts = append(parts, fmt.Sprintf("%s!%d skip%s", ansiDim, skp, ansiReset))
-	}
-	parts = append(parts, fmt.Sprintf("%s·  %d managed%s", ansiDim, managed, ansiReset))
-	fmt.Fprintf(w, "  %s\n", strings.Join(parts, "  "))
+	fmt.Fprintf(w, "  %s+%d added%s  %s~%d updated%s  %s=%d moved%s  %s-%d removed%s  %s!%d skipped%s  %s·  %d managed%s\n",
+		ansiGreen, add, ansiReset,
+		ansiYellow, upd, ansiReset,
+		ansiCyan, mov, ansiReset,
+		ansiRed, rem, ansiReset,
+		ansiDim, skp, ansiReset,
+		ansiDim, managed, ansiReset,
+	)
 }
 
 // formatDur formats a duration as a compact decimal-second string, e.g. "0.3s".
@@ -243,9 +233,12 @@ func formatDur(d time.Duration) string {
 //
 // Layout per item:
 //
-//	  {sym}  {name}{spaces}{type}  {level}
+//	  {sym}  {name}  [{cyan}type{dim} · {level}]  {dim}description{reset}
+//	     └ {note}
 //
-// where type+level is right-aligned to the terminal edge.
+// Type and level are labelled inline so their roles are obvious. Description
+// is appended on the same line when space allows. Summary of all counts
+// (including zeros) is printed at the bottom, right before the confirm prompt.
 func DisplayPlan(w io.Writer, nodes []*PlanNode) {
 	if len(nodes) == 0 {
 		return
@@ -257,7 +250,7 @@ func DisplayPlan(w io.Writer, nodes []*PlanNode) {
 	type vnode struct {
 		n     *PlanNode
 		grp   groupID
-		typ   string // typeLabel result
+		typ   string
 		level string
 	}
 	var visible []vnode
@@ -276,32 +269,32 @@ func DisplayPlan(w io.Writer, nodes []*PlanNode) {
 		return
 	}
 
-	// Compute right-block column widths across all visible nodes.
-	typeW, levelW := 0, 6 // "common" minimum
+	// Compute max type width for execution row metrics.
+	typeW := 0
 	for _, v := range visible {
 		if l := len(v.typ); l > typeW {
 			typeW = l
 		}
-		if l := len(v.level); l > levelW {
-			levelW = l
-		}
 	}
-
-	// rightBlockLen = typeW + 2 ("  ") + levelW; this block is right-aligned.
-	// maxNameLen: what remains after prefix (5) + min-gap (2) + right block.
-	const prefixLen = 5 // "  {sym}  "
-	const minGap = 2
-	rightBlockLen := typeW + 2 + levelW
-	maxNameLen := tw - prefixLen - minGap - rightBlockLen
-	if maxNameLen < 10 {
-		maxNameLen = 10
-	}
-
-	// Save for execution display.
-	displayMetrics.nameW = maxNameLen
 	displayMetrics.typeW = typeW
 
-	// Sort: by group (fixed order 0–3), then canonical resource type, then name.
+	// Pre-compute execution row name width using real terminal size.
+	// Fall back to a conservative 80 when size can't be determined (e.g. inside
+	// a distrobox where the PTY may not propagate dimensions correctly).
+	{
+		etw, _, err := term.GetSize(int(os.Stdout.Fd()))
+		if err != nil || etw < 40 {
+			etw = 80
+		}
+		const execOverhead = 5 + 2 + 2 + 12 // "  ·  " + gaps + status
+		nw := etw - execOverhead - typeW
+		if nw < 10 {
+			nw = 10
+		}
+		displayMetrics.nameW = nw
+	}
+
+	// Sort: by group (fixed order), then canonical resource type, then name.
 	sort.SliceStable(visible, func(i, j int) bool {
 		vi, vj := visible[i], visible[j]
 		if vi.grp != vj.grp {
@@ -315,9 +308,9 @@ func DisplayPlan(w io.Writer, nodes []*PlanNode) {
 		return vi.n.DisplayName < vj.n.DisplayName
 	})
 
-	// Render.
+	const prefixVis = 5 // "  {sym}  "
+
 	fmt.Fprintln(w)
-	writeSummaryLine(w, nodes)
 
 	curGrp := groupID(-1)
 	for _, v := range visible {
@@ -330,61 +323,90 @@ func DisplayPlan(w io.Writer, nodes []*PlanNode) {
 		}
 
 		n := v.n
-		color := actionColor(n.Action)
+		aColor := actionColor(n.Action)
+
+		// ── Meta block: [type · level] ────────────────────────────────────────
+		// type in cyan; level in yellow for user-scoped entries, dim for common.
+		levelColor := ansiDim
+		if strings.HasPrefix(v.level, "user") {
+			levelColor = ansiYellow
+		}
+		metaLen := 1 + len(v.typ) + 3 + len(v.level) + 1 // "[type · level]" visible chars
+		meta := ansiDim + "[" + ansiReset +
+			ansiCyan + v.typ + ansiReset +
+			ansiDim + " · " + ansiReset +
+			levelColor + v.level +
+			ansiDim + "]" + ansiReset
+
+		// ── Name: coloured by action, truncated to leave room for meta ────────
+		maxNameLen := tw - prefixVis - 2 - metaLen
+		if maxNameLen < 10 {
+			maxNameLen = 10
+		}
 		name := truncatePath(n.DisplayName, maxNameLen)
 
-		// Spaces so that type+level lands at the right edge.
-		// right block visible length is fixed at rightBlockLen.
-		gap := tw - prefixLen - len(name) - rightBlockLen
-		if gap < minGap {
-			gap = minGap
+		// ── Inline description ────────────────────────────────────────────────
+		// Space left on the line after "  {sym}  {name}  {meta}".
+		lineUsed := prefixVis + len(name) + 2 + metaLen
+		descBudget := tw - lineUsed - 2
+
+		var inlineText string
+		var subLineParts []string
+
+		if n.Action == ActionSkip && n.SkipReason != "" {
+			parts := strings.Split(n.SkipReason, "; ")
+			if len(parts) == 1 {
+				inlineText = parts[0]
+			} else {
+				// Multi-part skip reasons always go to sub-lines for clarity.
+				subLineParts = parts
+			}
+		} else if n.Description != "" {
+			inlineText = n.Description
 		}
 
-		fmt.Fprintf(w, "  %s  %s%s%s%-*s  %s%s\n",
-			color(itemSymbol(n.Action)),
-			name,
-			strings.Repeat(" ", gap),
-			ansiDim,
-			typeW, v.typ,
-			v.level,
-			ansiReset,
+		inlineDesc := ""
+		if inlineText != "" && descBudget >= 12 {
+			if len(inlineText) <= descBudget {
+				inlineDesc = "  " + ansiDim + inlineText + ansiReset
+			} else {
+				inlineDesc = "  " + ansiDim + inlineText[:descBudget-1] + "…" + ansiReset
+			}
+		} else if inlineText != "" {
+			subLineParts = append(subLineParts, inlineText)
+		}
+
+		fmt.Fprintf(w, "  %s  %s  %s%s\n",
+			aColor(itemSymbol(n.Action)),
+			aColor(name),
+			meta,
+			inlineDesc,
 		)
 
-		// Sub-lines: skip reason first, then description, then notes.
-		if n.Action == ActionSkip && n.SkipReason != "" {
-			for _, part := range strings.Split(n.SkipReason, "; ") {
-				noteLine(w, part, tw)
-			}
-		}
-		if n.Description != "" && n.Action != ActionSkip {
-			noteLine(w, n.Description, tw)
+		for _, part := range subLineParts {
+			noteLine(w, part, tw)
 		}
 		for _, note := range n.Notes {
 			noteLine(w, note, tw)
 		}
 	}
 
-	// Bottom divider.
+	// Bottom divider + summary, positioned right before the confirmation prompt.
 	fmt.Fprintln(w)
 	divider(w, tw)
+	fmt.Fprintln(w)
+	writeSummaryLine(w, nodes)
 	fmt.Fprintln(w)
 }
 
 // ─── Execution display ────────────────────────────────────────────────────────
 
 // execNameW returns the name column width for execution rows.
-// Execution rows have no level column, so we reclaim that space from the
-// plan-display nameW rather than re-querying termWidth (which may return a
-// wrong value when running inside a distrobox or pipe).
-// The level column is typically "common" (6) or "user_config" (11) + 2 gap = ~8.
-const execLevelReclaim = 10 // chars reclaimed by dropping the level column
-
+// displayMetrics.nameW is set by DisplayPlan using the real terminal size.
+// In guest mode (QuietPlan), DisplayPlan is never called, so it stays at the
+// conservative default (40) which fits safely in an 80-column terminal.
 func execNameW() int {
-	w := displayMetrics.nameW + execLevelReclaim
-	if w < 10 {
-		w = 10
-	}
-	return w
+	return displayMetrics.nameW
 }
 
 // DisplayExecutionProgress prints a pending-action line ending with \r so that
@@ -394,8 +416,8 @@ func DisplayExecutionProgress(w io.Writer, node *PlanNode, lastLine string) {
 	tw := termWidth()
 	nw := execNameW()
 	name := truncatePath(node.DisplayName, nw)
-	// Fixed portion: "  ·  <name padded>  <type padded>  …  "
-	fixedLen := 2 + 1 + 2 + nw + 2 + displayMetrics.typeW + 4
+	// Fixed portion: "  ·  " (5) + name (nw) + "  " (2) + type (typeW) + "  …  " (5)
+	fixedLen := 5 + nw + 2 + displayMetrics.typeW + 5
 	hint := ""
 	if lastLine != "" {
 		budget := tw - fixedLen - 1
