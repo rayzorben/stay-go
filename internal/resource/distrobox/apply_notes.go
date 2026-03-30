@@ -13,6 +13,13 @@ import (
 	"github.com/rayben/stay-go/internal/state"
 )
 
+// guestInBoxStateLevel is the level stamped on every node in the per-box
+// state file by stay-go running inside the container (LoadAll of default.yaml
+// only → stampLevel maps "" to "common"). Host-layer DistroboxEntry / nested
+// entries may carry user_config etc.; CheckLevelChange must use this level
+// when diffing against boxSt, not the host entry's Level.
+const guestInBoxStateLevel = "common"
+
 // guestPkgKnowledge runs stay-go inside the box with --guest-knowledge and
 // returns (map, true) on success. On failure the map is nil and ok is false.
 func (r *Resource) guestPkgKnowledge(ctx context.Context, entry *config.DistroboxEntry, guestBin string, guestBinErr error) (map[string]bool, bool) {
@@ -124,11 +131,7 @@ func (r *Resource) guestWorkDeltas(entry *config.DistroboxEntry, guestPkg map[st
 			inK = guestPkg[id]
 		}
 		act := engine.DetermineAction(id, inK, hash, boxSt)
-		level := p.Level
-		if level == "" {
-			level = "common"
-		}
-		act, _ = engine.CheckLevelChange(id, level, act, boxSt)
+		act, _ = engine.CheckLevelChange(id, guestInBoxStateLevel, act, boxSt)
 		if act == engine.ActionTrack {
 			continue
 		}
@@ -156,11 +159,7 @@ func (r *Resource) guestWorkDeltas(entry *config.DistroboxEntry, guestPkg map[st
 		if act == engine.ActionAdopt {
 			act = engine.ActionAdd
 		}
-		level := c.Level
-		if level == "" {
-			level = "common"
-		}
-		act, _ = engine.CheckLevelChange(id, level, act, boxSt)
+		act, _ = engine.CheckLevelChange(id, guestInBoxStateLevel, act, boxSt)
 		if act == engine.ActionTrack {
 			continue
 		}
@@ -186,10 +185,74 @@ func guestWorkPending(deltas []guestDelta) bool {
 	return false
 }
 
+// sortedStringsCopy returns a sorted copy of s (for stable snapshots and diffs).
+func sortedStringsCopy(s []string) []string {
+	out := append([]string(nil), s...)
+	sort.Strings(out)
+	return out
+}
+
+func diffSortedStringSets(prev, cur []string) (added, removed []string) {
+	ps := make(map[string]bool, len(prev))
+	for _, x := range prev {
+		ps[x] = true
+	}
+	cs := make(map[string]bool, len(cur))
+	for _, x := range cur {
+		cs[x] = true
+	}
+	for x := range cs {
+		if !ps[x] {
+			added = append(added, x)
+		}
+	}
+	for x := range ps {
+		if !cs[x] {
+			removed = append(removed, x)
+		}
+	}
+	sort.Strings(added)
+	sort.Strings(removed)
+	return added, removed
+}
+
+// exportsSnapshotFromStateData reads exports_snapshot from persisted apply-node data.
+// JSON state uses []interface{}; normalise to sorted []string.
+func exportsSnapshotFromStateData(data map[string]interface{}) []string {
+	if data == nil {
+		return nil
+	}
+	raw, ok := data["exports_snapshot"]
+	if !ok || raw == nil {
+		return nil
+	}
+	switch x := raw.(type) {
+	case []string:
+		return sortedStringsCopy(x)
+	case []interface{}:
+		out := make([]string, 0, len(x))
+		for _, e := range x {
+			if s, ok := e.(string); ok {
+				out = append(out, s)
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return sortedStringsCopy(out)
+	default:
+		return nil
+	}
+}
+
 // formatGuestWorkNotes turns deltas into coloured continuation lines.
 // includeExports is true when the apply node will run guest stay-go (ADD/UPDATE).
 // exportAction is ActionAdd for first-time apply and ActionUpdate when re-applying.
-func formatGuestWorkNotes(entry *config.DistroboxEntry, deltas []guestDelta, guestPkgOK bool, includeExports bool, exportAction engine.ActionType) []string {
+// prevExportsSorted is the last-applied export app list (from host state); when
+// exportAction is UPDATE and this is empty, the exports line is omitted (legacy
+// state or unchanged list with no snapshot). When non-empty, only added/removed
+// apps are listed for UPDATE.
+func formatGuestWorkNotes(entry *config.DistroboxEntry, deltas []guestDelta, guestPkgOK bool, includeExports bool, exportAction engine.ActionType, prevExportsSorted []string) []string {
 	var notes []string
 	if len(entry.Packages) > 0 && !guestPkgOK {
 		notes = append(notes, "packages: guest inventory unavailable (distrobox enter or guest binary failed)")
@@ -211,11 +274,31 @@ func formatGuestWorkNotes(entry *config.DistroboxEntry, deltas []guestDelta, gue
 		notes = append(notes, "commands: "+strings.Join(cmdTok, " "))
 	}
 	if includeExports && len(entry.Exports) > 0 {
-		var expTok []string
-		for _, app := range entry.Exports {
-			expTok = append(expTok, engine.ColoredPlanDelta(exportAction, app))
+		cur := sortedStringsCopy(entry.Exports)
+		switch exportAction {
+		case engine.ActionAdd:
+			var expTok []string
+			for _, app := range cur {
+				expTok = append(expTok, engine.ColoredPlanDelta(engine.ActionAdd, app))
+			}
+			notes = append(notes, "exports: "+strings.Join(expTok, " "))
+		case engine.ActionUpdate:
+			if len(prevExportsSorted) == 0 {
+				break
+			}
+			added, removed := diffSortedStringSets(prevExportsSorted, cur)
+			if len(added) == 0 && len(removed) == 0 {
+				break
+			}
+			var expTok []string
+			for _, app := range added {
+				expTok = append(expTok, engine.ColoredPlanDelta(engine.ActionAdd, app))
+			}
+			for _, app := range removed {
+				expTok = append(expTok, engine.ColoredPlanDelta(engine.ActionRemove, app))
+			}
+			notes = append(notes, "exports: "+strings.Join(expTok, " "))
 		}
-		notes = append(notes, "exports: "+strings.Join(expTok, " "))
 	}
 	if len(notes) == 0 {
 		return nil

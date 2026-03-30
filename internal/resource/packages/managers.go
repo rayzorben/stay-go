@@ -26,6 +26,17 @@ type PackageManager struct {
 	ParseOutput func(raw string) []string
 }
 
+// usesPacmanQqList reports whether m lists installed packages via pacman -Qq.
+// On Arch, that output uses database package names (e.g. zen-browser-bin) while
+// config and paru -S often use a virtual / AUR name (e.g. zen-browser) that
+// pacman -Q <name> still resolves via provides.
+func usesPacmanQqList(m *PackageManager) bool {
+	if m == nil || len(m.ListCmd) < 2 {
+		return false
+	}
+	return m.ListCmd[0] == "pacman" && m.ListCmd[1] == "-Qq"
+}
+
 // managers is the ordered preference table. Detection walks this list and
 // returns the first whose Binary exists in PATH.
 var managers = []PackageManager{

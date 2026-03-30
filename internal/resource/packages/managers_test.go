@@ -4,6 +4,18 @@ import (
 	"testing"
 )
 
+func TestUsesPacmanQqList(t *testing.T) {
+	if !usesPacmanQqList(&PackageManager{ListCmd: []string{"pacman", "-Qq"}}) {
+		t.Fatal("expected true for pacman -Qq")
+	}
+	if usesPacmanQqList(&PackageManager{ListCmd: []string{"pacman", "-Q"}}) {
+		t.Fatal("expected false for other pacman list")
+	}
+	if usesPacmanQqList(nil) {
+		t.Fatal("expected false for nil")
+	}
+}
+
 func TestParseXBPS(t *testing.T) {
 	raw := `ii bash-5.2.032_1        The GNU Bourne Again shell
 ii python3.12-3.12.0_1   Python3 interpreter

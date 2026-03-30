@@ -40,6 +40,33 @@ func (r *Resource) GatherKnowledge(ctx context.Context) ([]engine.KnowledgeEntry
 			})
 		}
 	}
+
+	// Arch: pacman -Qq omits virtual/provides names. Treat configured package
+	// names as present when `pacman -Q --quiet <name>` succeeds (same query
+	// users run to verify an install).
+	if usesPacmanQqList(r.manager) {
+		seen := make(map[string]bool, len(entries))
+		for _, e := range entries {
+			seen[e.ID] = true
+		}
+		for _, p := range r.cfg.Packages {
+			if p.Remove {
+				continue
+			}
+			id := config.NodeID("packages", p.Name)
+			if seen[id] {
+				continue
+			}
+			_, err := r.exec.Run(ctx, executor.Options{Env: r.manager.Env},
+				"pacman", "-Q", "--quiet", p.Name)
+			if err != nil {
+				continue
+			}
+			entries = append(entries, engine.KnowledgeEntry{ID: id})
+			seen[id] = true
+		}
+	}
+
 	return entries, nil
 }
 

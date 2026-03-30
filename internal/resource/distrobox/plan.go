@@ -75,13 +75,13 @@ func (r *Resource) BuildPlan(ctx context.Context, knowledge map[string]bool, st 
 		case engine.ActionAdd:
 			applyAction = engine.ActionAdd
 			deltas := r.guestWorkDeltas(entry, nil, false, boxSt)
-			applyNotes = formatGuestWorkNotes(entry, deltas, len(entry.Packages) == 0, true, engine.ActionAdd)
+			applyNotes = formatGuestWorkNotes(entry, deltas, len(entry.Packages) == 0, true, engine.ActionAdd, nil)
 
 		case engine.ActionUpdate:
 			applyAction = engine.ActionAdd
 			applyDesc = "box recreated"
 			deltas := r.guestWorkDeltas(entry, nil, false, boxSt)
-			applyNotes = formatGuestWorkNotes(entry, deltas, len(entry.Packages) == 0, true, engine.ActionAdd)
+			applyNotes = formatGuestWorkNotes(entry, deltas, len(entry.Packages) == 0, true, engine.ActionAdd, nil)
 
 		case engine.ActionRemove:
 			continue
@@ -103,7 +103,18 @@ func (r *Resource) BuildPlan(ctx context.Context, knowledge map[string]bool, st 
 			if applyAction == engine.ActionAdd {
 				exportAct = engine.ActionAdd
 			}
-			applyNotes = formatGuestWorkNotes(entry, deltas, guestOk, includeExports, exportAct)
+			var prevExports []string
+			if prev, ok := st.Get(aid); ok {
+				prevExports = exportsSnapshotFromStateData(prev.Data)
+			}
+			applyNotes = formatGuestWorkNotes(entry, deltas, guestOk, includeExports, exportAct, prevExports)
+		}
+
+		stateData := map[string]interface{}{"name": entry.Name}
+		if prev, ok := st.Get(aid); ok && prev.Data != nil {
+			if snap, ok := prev.Data["exports_snapshot"]; ok {
+				stateData["exports_snapshot"] = snap
+			}
 		}
 
 		applyNode := &engine.PlanNode{
@@ -116,7 +127,7 @@ func (r *Resource) BuildPlan(ctx context.Context, knowledge map[string]bool, st 
 			Level:        entry.Level,
 			Description:  applyDesc,
 			Notes:        applyNotes,
-			StateData:    map[string]interface{}{"name": entry.Name},
+			StateData:    stateData,
 		}
 		nodes = append(nodes, applyNode)
 		r.nodeConfigs[aid] = entry

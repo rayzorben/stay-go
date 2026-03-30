@@ -153,6 +153,12 @@ func (r *Resource) executeApply(ctx context.Context, node *engine.PlanNode, entr
 		)
 	}
 
-	st.Set(node.ID, node.ConfigHash, node.Level, node.StateData)
+	data := map[string]interface{}{
+		"name": entry.Name,
+	}
+	if len(entry.Exports) > 0 {
+		data["exports_snapshot"] = sortedStringsCopy(entry.Exports)
+	}
+	st.Set(node.ID, node.ConfigHash, node.Level, data)
 	return nil
 }
