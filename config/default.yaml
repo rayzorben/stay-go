@@ -27,6 +27,7 @@ packages:
   - qt5-graphicaleffects
   - qt5-multimedia
   - ghostty
+  - wl-clipboard
 
 # adding services to packages creates an implicit depends on that package
   - package: docker
