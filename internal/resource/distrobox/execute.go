@@ -156,4 +156,3 @@ func (r *Resource) executeApply(ctx context.Context, node *engine.PlanNode, entr
 	st.Set(node.ID, node.ConfigHash, node.Level, node.StateData)
 	return nil
 }
-

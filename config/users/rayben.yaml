@@ -1,3 +1,6 @@
+# The basis for this config is cachy-os with no desktop installed.
+# The default Niri install contains a different shell that is difficult to remove.
+
 packages:
   - zoxide
   - fzf
@@ -13,7 +16,8 @@ packages:
   - libappindicator
   - dropbox
   - distrobox
-  - ttf-ms-win11-auto
+  - discord
+  - zen-browser
 
 scripts:
   - script: ${config_root}/scripts/configure-zoxide.sh
@@ -175,7 +179,8 @@ distrobox:
 json:
   - file: ~/.config/DankMaterialShell/settings.json
     json:
-      use24HourClock: true
+      use24HourClock: false
+      showSeconds: true
       clockDateFormat: "dddd, MMMM d"
       lockDateFormat: "dddd, MMMM d"
       useFahrenheit: true
@@ -188,12 +193,13 @@ json:
       workspaceDragReorder: false
       workspaceFocusedBorderEnabled: true
       barConfigs[0]:
+        openOnOverview: true
         borderEnabled: true
         borderOpacity: 0.5
         squareCorners: true
         maximizeWidgetText: true
         maximizeWidgetIcons: true
-        widgetOutlineEnabled: true
+        widgetOutlineEnabled: false
         widgetOutlineOpacity: 0.5
         leftWidgets:
           - "workspaceSwitcher"

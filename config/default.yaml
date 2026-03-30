@@ -27,6 +27,8 @@ packages:
   - qt5-graphicaleffects
   - qt5-multimedia
   - ghostty
+
+# adding services to packages creates an implicit depends on that package
   - package: docker
     services: [docker]
   - package: dsearch-bin
@@ -35,6 +37,7 @@ packages:
 groups:
   - wheel
   - docker
+  - disk
 
 users:
   - username: rayben

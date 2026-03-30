@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/term"
 
@@ -33,7 +34,33 @@ const (
 // QuietPlan case where DisplayPlan is never called.
 var displayMetrics = struct{ nameW, typeW int }{nameW: 40, typeW: 9}
 
+// execNameMaxCol caps the resource name column on execution rows so more terminal
+// width remains for streaming output (e.g. package manager progress).
+const execNameMaxCol = 50
+
 // ─── Colour and symbol helpers ────────────────────────────────────────────────
+
+// ColoredPlanDelta renders a single in-plan detail token with the same colours
+// as the action column: + green, ~ yellow, - red, = cyan, ! dim (skip).
+// Use for resource-specific continuation lines; plain TRACK nodes should not emit tokens.
+func ColoredPlanDelta(action ActionType, name string) string {
+	var prefix string
+	switch action {
+	case ActionAdd, ActionAdopt:
+		prefix = "+"
+	case ActionUpdate:
+		prefix = "~"
+	case ActionRemove:
+		prefix = "-"
+	case ActionLevel:
+		prefix = "="
+	case ActionSkip:
+		return actionColor(ActionSkip)("!" + name)
+	default:
+		return name
+	}
+	return actionColor(action)(prefix + name)
+}
 
 // actionColor wraps text in the ANSI colour for the given action.
 func actionColor(a ActionType) func(string) string {
@@ -178,6 +205,62 @@ func actionColumnWidth() int {
 	return w
 }
 
+// visibleLen returns the number of terminal cells for s, excluding ANSI CSI sequences.
+func visibleLen(s string) int {
+	var n int
+	for i := 0; i < len(s); {
+		if s[i] == '\x1b' && i+1 < len(s) && s[i+1] == '[' {
+			j := i + 2
+			for j < len(s) && s[j] != 'm' {
+				j++
+			}
+			if j < len(s) {
+				i = j + 1
+				continue
+			}
+		}
+		_, sz := utf8.DecodeRuneInString(s[i:])
+		n++
+		i += sz
+	}
+	return n
+}
+
+// truncateVisible truncates s so visibleLen is at most maxVis, appending "…" if trimmed.
+func truncateVisible(s string, maxVis int) string {
+	if maxVis < 1 {
+		return ""
+	}
+	if visibleLen(s) <= maxVis {
+		return s
+	}
+	target := maxVis - 1 // room for …
+	var b strings.Builder
+	v := 0
+	for i := 0; i < len(s) && v < target; {
+		if s[i] == '\x1b' && i+1 < len(s) && s[i+1] == '[' {
+			j := i + 2
+			for j < len(s) && s[j] != 'm' {
+				j++
+			}
+			if j < len(s) {
+				b.WriteString(s[i : j+1])
+				i = j + 1
+				continue
+			}
+		}
+		_, sz := utf8.DecodeRuneInString(s[i:])
+		if v+1 > target {
+			break
+		}
+		b.WriteString(s[i : i+sz])
+		v++
+		i += sz
+	}
+	b.WriteString("…")
+	return b.String()
+}
+
 // planDetailLine writes a continuation aligned under the resource column.
 func planDetailLine(w io.Writer, levelColW int, text string, tw int) {
 	// "  " + level + "  " + "│ "
@@ -187,6 +270,18 @@ func planDetailLine(w io.Writer, levelColW int, text string, tw int) {
 	maxText := tw - prefixVis
 	if maxText < 8 {
 		maxText = 8
+	}
+	colored := strings.Contains(text, "\x1b[")
+	if colored {
+		if visibleLen(text) > maxText {
+			text = truncateVisible(text, maxText)
+		}
+		fmt.Fprintf(w, "%s%s%s%s%s\n",
+			strings.Repeat(" ", indent),
+			ansiDim, pipe, ansiReset,
+			text,
+		)
+		return
 	}
 	if len(text) > maxText {
 		text = text[:maxText-1] + "…"
@@ -205,18 +300,44 @@ func divider(w io.Writer, tw int) {
 	}
 }
 
-// noteLine writes a dim `     └ {text}` continuation beneath a plan item.
-// text is truncated to fit within tw.
+// noteLine writes dim continuation lines beneath execution errors (and plan items).
+// Each line is limited to (tw − 7) runes after the 7-column prefix so a full
+// 80-column terminal shows 73 characters of message; wider terminals get more.
+// Multi-line messages are split on "\n"; each line is truncated rune-safe.
 func noteLine(w io.Writer, text string, tw int) {
-	const prefix = "     └ " // 7 visible chars
-	maxText := tw - len(prefix)
-	if maxText < 1 {
-		maxText = 1
+	const firstPrefix = "     └ "
+	const contPrefix = "       " // 7 cols, align with text after "└ "
+	const prefixCols = 7
+	maxRunes := noteMaxRunes(tw, prefixCols)
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		p := firstPrefix
+		if i > 0 {
+			p = contPrefix
+		}
+		line = truncateStringVisual(line, maxRunes)
+		fmt.Fprintf(w, "%s%s%s%s\n", ansiDim, p, line, ansiReset)
 	}
-	if len(text) > maxText {
-		text = text[:maxText-1] + "…"
+}
+
+// noteMaxRunes returns the maximum rune count per line for text after the prefix.
+func noteMaxRunes(tw, prefixCols int) int {
+	maxRunes := tw - prefixCols
+	if maxRunes < 1 {
+		maxRunes = 1
 	}
-	fmt.Fprintf(w, "%s%s%s%s\n", ansiDim, prefix, text, ansiReset)
+	return maxRunes
+}
+
+func truncateStringVisual(s string, maxRunes int) string {
+	if maxRunes < 1 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= maxRunes {
+		return s
+	}
+	return string(r[:maxRunes-1]) + "…"
 }
 
 // writeSummaryLine writes all action counts — including zeros — so the user can
@@ -430,24 +551,32 @@ func execNameW() int {
 	return displayMetrics.nameW
 }
 
+// execNameDisplayW caps the execution name column so streaming hints keep more room.
+func execNameDisplayW() int {
+	nw := execNameW()
+	if nw > execNameMaxCol {
+		return execNameMaxCol
+	}
+	return nw
+}
+
 // DisplayExecutionProgress prints a pending-action line ending with \r so that
 // DisplayExecutionResult can overwrite it in place. lastLine, if non-empty,
 // is shown as a dim hint after the ellipsis so long-running commands look alive.
 func DisplayExecutionProgress(w io.Writer, node *PlanNode, lastLine string) {
 	tw := termWidth()
-	nw := execNameW()
+	nw := execNameDisplayW()
 	name := truncatePath(node.DisplayName, nw)
 	// Fixed portion: "  ·  " (5) + name (nw) + "  " (2) + type (typeW) + "  …  " (5)
 	fixedLen := 5 + nw + 2 + displayMetrics.typeW + 5
 	hint := ""
 	if lastLine != "" {
 		budget := tw - fixedLen - 1
-		if budget > 8 {
-			if len(lastLine) > budget {
-				lastLine = lastLine[:budget-1] + "…"
-			}
-			hint = ansiDim + lastLine + ansiReset
+		if budget < 1 {
+			budget = 1
 		}
+		lastLine = truncateStringVisual(lastLine, budget)
+		hint = ansiDim + lastLine + ansiReset
 	}
 	fmt.Fprintf(w, "\r\033[K  %s  %-*s  %-*s  %s…%s  %s",
 		ansiDim+"·"+ansiReset,
@@ -461,7 +590,7 @@ func DisplayExecutionProgress(w io.Writer, node *PlanNode, lastLine string) {
 // DisplayExecutionResult overwrites the progress line with the final outcome.
 // Pass dur=0 for TRACK/ADOPT/LEVEL nodes and skipped-by-dependency nodes.
 func DisplayExecutionResult(w io.Writer, node *PlanNode, err error, dur time.Duration) {
-	nw := execNameW()
+	nw := execNameDisplayW()
 	name := truncatePath(node.DisplayName, nw)
 	typ := typeLabel(node.ResourceType)
 

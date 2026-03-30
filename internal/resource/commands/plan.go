@@ -89,6 +89,12 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 
 // checkFileConditions evaluates all files: deps and returns a skip reason
 // if any condition is not satisfied. Empty string means all conditions pass.
+// FileConditionSkipReason returns a skip reason when a depends.files condition
+// fails, or empty string when all pass. Exported for distrobox plan notes.
+func FileConditionSkipReason(entry *config.CommandEntry) string {
+	return checkFileConditions(entry)
+}
+
 func checkFileConditions(entry *config.CommandEntry) string {
 	var reasons []string
 	for _, path := range entry.FileConditions() {

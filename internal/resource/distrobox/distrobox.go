@@ -135,10 +135,17 @@ func inBoxHash(e *config.DistroboxEntry) string {
 
 // ─── Binary injection ────────────────────────────────────────────────────────
 
-// ensureGuestBinary copies the running stay-go binary to ~/.local/bin/stay-go
-// if it is absent or outdated (size or mtime differs). Since distrobox shares
-// the host home directory, the copy is immediately visible inside the box.
-// Returns the path to the guest binary.
+// ensureGuestBinary always copies the running stay-go binary (os.Executable) to
+// ~/.local/bin/stay-go via a temp file + rename. We intentionally do not skip
+// when size/mtime match: different builds can share size and timestamps, and
+// EvalSymlinks can make the source path equal the target while the repo binary
+// is actually newer. Since distrobox shares the host home, the copy is visible
+// inside the box. Returns the absolute path to the guest binary.
+//
+// Plan/execute and --guest-knowledge always invoke this path after ensureGuestBinary.
+// When testing manually inside a box, do not run bare "stay-go" — PATH may resolve
+// to an older distro package (e.g. /usr/bin/stay-go) that is not this copy.
+// Use the returned path explicitly, e.g. distrobox enter -n NAME -- /home/you/.local/bin/stay-go --version
 func (r *Resource) ensureGuestBinary() (string, error) {
 	binPath, err := os.Executable()
 	if err != nil {
@@ -153,15 +160,9 @@ func (r *Resource) ensureGuestBinary() (string, error) {
 	targetDir := filepath.Join(home, ".local", "bin")
 	targetBin := filepath.Join(targetDir, "stay-go")
 
-	// Skip copy if target is already identical (same size + mtime).
 	srcInfo, err := os.Stat(binPath)
 	if err != nil {
 		return "", fmt.Errorf("stat source binary: %w", err)
-	}
-	if dstInfo, err := os.Stat(targetBin); err == nil {
-		if dstInfo.Size() == srcInfo.Size() && dstInfo.ModTime().Equal(srcInfo.ModTime()) {
-			return targetBin, nil
-		}
 	}
 
 	if err := os.MkdirAll(targetDir, 0o755); err != nil {
@@ -186,7 +187,7 @@ func (r *Resource) ensureGuestBinary() (string, error) {
 	}
 	dst.Close()
 
-	// Preserve the source mtime so subsequent checks can skip the copy.
+	// Preserve the source mtime (cosmetic; we no longer skip copy on mtime).
 	_ = os.Chtimes(tmpBin, srcInfo.ModTime(), srcInfo.ModTime())
 
 	if err := os.Rename(tmpBin, targetBin); err != nil {
@@ -235,58 +236,6 @@ func (r *Resource) writeBoxConfig(entry *config.DistroboxEntry) error {
 }
 
 // ─── distrobox create args ────────────────────────────────────────────────────
-
-// ─── Plan notes ───────────────────────────────────────────────────────────────
-
-// buildApplyNotes returns the ↳ continuation lines for an in-box apply node.
-// Each line lists one category (packages / commands / exports) with its items,
-// truncating long package lists to keep output readable.
-func buildApplyNotes(entry *config.DistroboxEntry) []string {
-	var notes []string
-	if len(entry.Packages) > 0 {
-		names := packageNames(entry.Packages)
-		prefixed := make([]string, len(names))
-		for i, n := range names {
-			prefixed[i] = "+" + n
-		}
-		notes = append(notes, formatNoteList("packages", prefixed))
-	}
-	if len(entry.Commands) > 0 {
-		names := make([]string, len(entry.Commands))
-		for i, c := range entry.Commands {
-			names[i] = "+" + c.Name
-		}
-		notes = append(notes, "commands: "+strings.Join(names, ", "))
-	}
-	if len(entry.Exports) > 0 {
-		notes = append(notes, "exports: "+strings.Join(entry.Exports, ", "))
-	}
-	return notes
-}
-
-func packageNames(pkgs []config.PackageEntry) []string {
-	names := make([]string, len(pkgs))
-	for i, p := range pkgs {
-		names[i] = p.Name
-	}
-	return names
-}
-
-// formatNoteList formats "label: a, b, c … +N more" truncating at ~72 chars.
-func formatNoteList(label string, items []string) string {
-	const maxLen = 72
-	prefix := label + ": "
-	var kept []string
-	for _, item := range items {
-		candidate := prefix + strings.Join(append(kept, item), ", ")
-		if len(kept) > 0 && len(candidate) > maxLen {
-			return prefix + strings.Join(kept, ", ") +
-				fmt.Sprintf(" … +%d more", len(items)-len(kept))
-		}
-		kept = append(kept, item)
-	}
-	return prefix + strings.Join(kept, ", ")
-}
 
 // needsHomeSudo reports whether creating this entry requires sudo — only when
 // home_sudo is set and Home is an absolute path outside the user's home dir.

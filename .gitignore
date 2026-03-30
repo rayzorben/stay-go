@@ -1,2 +1,5 @@
 config/data/**
 bin/**
+
+# Local daily build counter (see scripts/compute-build-version.sh)
+.build-version

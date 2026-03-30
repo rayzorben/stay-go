@@ -11,6 +11,7 @@
 //	-c, --config   path to config file (default: config/default.yaml)
 //	-d, --debug    stream all command output to the terminal
 //	-n, --dry-run  print the plan without executing
+//	    --version  print build version (YYYYMMDD.nn when built via make)
 //	    --state    path to state file (default: ~/.local/share/stay-go/state.json)
 package main
 
@@ -31,16 +32,20 @@ import (
 	"github.com/rayben/stay-go/internal/resource/commands"
 	rcontainers "github.com/rayben/stay-go/internal/resource/containers"
 	rdistrobox "github.com/rayben/stay-go/internal/resource/distrobox"
-	rjson "github.com/rayben/stay-go/internal/resource/json"
 	rfiles "github.com/rayben/stay-go/internal/resource/files"
-	rsecrets "github.com/rayben/stay-go/internal/resource/secrets"
 	"github.com/rayben/stay-go/internal/resource/groups"
+	rjson "github.com/rayben/stay-go/internal/resource/json"
 	"github.com/rayben/stay-go/internal/resource/packages"
 	"github.com/rayben/stay-go/internal/resource/scripts"
+	rsecrets "github.com/rayben/stay-go/internal/resource/secrets"
 	"github.com/rayben/stay-go/internal/resource/services"
 	"github.com/rayben/stay-go/internal/resource/users"
 	"github.com/rayben/stay-go/internal/state"
 )
+
+// version is set at link time by the Makefile (YYYYMMDD.nn). Default "dev" when
+// built with plain `go build` without -ldflags.
+var version = "dev"
 
 // showFlag is a custom flag.Value that accepts --show (all) or --show=scope.
 // IsBoolFlag lets the flag package accept --show without a value; Set receives
@@ -69,6 +74,7 @@ func main() {
 		quietPlan      bool
 		guestKnowledge bool
 		show           showFlag
+		showVersion    bool
 	)
 
 	flag.StringVar(&configDir, "config", "config", "path to config directory")
@@ -83,9 +89,15 @@ func main() {
 	flag.BoolVar(&autoYes, "y", false, "auto-confirm (shorthand)")
 	flag.BoolVar(&quietPlan, "quiet-plan", false, "suppress plan table, summary, and final report (used internally by distrobox resource)")
 	flag.BoolVar(&guestKnowledge, "guest-knowledge", false, "gather installed-package knowledge and output as JSON (internal: used by distrobox resource)")
+	flag.BoolVar(&showVersion, "version", false, "print version and exit")
 
 	flag.Usage = usage
 	flag.Parse()
+
+	if showVersion {
+		fmt.Println(version)
+		os.Exit(0)
+	}
 
 	// Load and merge config. Host/user layers are declared as !include directives
 	// in default.yaml using ${env:USER} and $(hostname) expressions.
@@ -164,7 +176,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `stay-go — declarative system configuration manager
+	fmt.Fprintf(os.Stderr, `stay-go %s — declarative system configuration manager
 
 Usage:
   stay-go [flags]
@@ -175,6 +187,7 @@ Flags:
   -d, --debug [scope]   stream command output; scope: all (default), users,
                         packages, groups, services, variables
   -n, --dry-run         show plan without executing
+      --version         print build version and exit
 
 Config is loaded from three layers inside the config directory:
   config/default.yaml           common (all hosts and users)
@@ -183,7 +196,7 @@ Config is loaded from three layers inside the config directory:
 
 Higher-specificity layers override common entries with the same name.
 Each entry is tagged with its source level and tracked accordingly.
-`, state.DefaultPath())
+`, version, state.DefaultPath())
 }
 
 // currentUsername returns the current user's login name, falling back to the

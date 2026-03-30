@@ -2,14 +2,11 @@ package distrobox
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/rayben/stay-go/internal/config"
 	"github.com/rayben/stay-go/internal/engine"
-	"github.com/rayben/stay-go/internal/executor"
 	"github.com/rayben/stay-go/internal/state"
 )
 
@@ -62,8 +59,13 @@ func (r *Resource) BuildPlan(ctx context.Context, knowledge map[string]bool, st 
 			continue
 		}
 
+		// Install the running host binary into ~/.local/bin once per in-box plan
+		// so hash-only UPDATEs still refresh the guest copy before apply or tests.
+		guestBin, guestBinErr := r.ensureGuestBinary()
+
 		aid := applyNodeID(entry.Name)
 		applyHash := inBoxHash(entry)
+		boxSt, _ := state.Load(r.boxStatePath(entry.Name))
 
 		var applyAction engine.ActionType
 		var applyDesc string
@@ -71,63 +73,37 @@ func (r *Resource) BuildPlan(ctx context.Context, knowledge map[string]bool, st 
 
 		switch action {
 		case engine.ActionAdd:
-			// Box is being created — all in-box resources are new.
 			applyAction = engine.ActionAdd
-			applyNotes = buildApplyNotes(entry)
+			deltas := r.guestWorkDeltas(entry, nil, false, boxSt)
+			applyNotes = formatGuestWorkNotes(entry, deltas, len(entry.Packages) == 0, true, engine.ActionAdd)
 
 		case engine.ActionUpdate:
-			// Box is being recreated — in-box state effectively resets.
 			applyAction = engine.ActionAdd
 			applyDesc = "box recreated"
-			applyNotes = buildApplyNotes(entry)
+			deltas := r.guestWorkDeltas(entry, nil, false, boxSt)
+			applyNotes = formatGuestWorkNotes(entry, deltas, len(entry.Packages) == 0, true, engine.ActionAdd)
 
 		case engine.ActionRemove:
-			// Box is going away — no in-box apply needed.
 			continue
 
 		default:
-			// Box exists and is stable: determine apply action normally.
-			// The apply node is always "in knowledge" when the box exists.
+			guestPkg, guestOk := r.guestPkgKnowledge(ctx, entry, guestBin, guestBinErr)
 			applyAction = engine.DetermineAction(aid, knowledge[id], applyHash, st)
 			applyAction, _ = engine.CheckLevelChange(aid, entry.Level, applyAction, st)
 			if applyAction == engine.ActionAdopt {
 				applyAction = engine.ActionAdd
 				applyDesc = summarizeInBoxConfig(entry)
-				applyNotes = buildApplyNotes(entry)
 			}
-
-				// Missing-resource check: even if the config hash is unchanged,
-			// some resources inside the box may not be applied (failed install,
-			// manual removal, etc.). Treat any missing item as ADD — the same
-			// logic the engine uses for the host (NO/YES/YES → ADD).
-			if applyAction == engine.ActionTrack {
-				missingPkgs, missingCmds := r.detectMissing(ctx, entry)
-				if len(missingPkgs) > 0 || len(missingCmds) > 0 {
-					applyAction = engine.ActionUpdate
-					// No description — the notes below show the specifics.
-					var notes []string
-					if len(missingPkgs) > 0 {
-						items := make([]string, len(missingPkgs))
-						for i, p := range missingPkgs {
-							items[i] = "+" + p
-						}
-						notes = append(notes, formatNoteList("packages", items))
-					}
-					if len(missingCmds) > 0 {
-						items := make([]string, len(missingCmds))
-						for i, c := range missingCmds {
-							items[i] = "+" + c
-						}
-						notes = append(notes, "commands: "+strings.Join(items, ", "))
-					}
-					applyNotes = notes
-				}
+			deltas := r.guestWorkDeltas(entry, guestPkg, guestOk, boxSt)
+			if applyAction == engine.ActionTrack && guestWorkPending(deltas) {
+				applyAction = engine.ActionUpdate
 			}
-
-			// Config hash changed (not drift): show only what changed vs box state.
-			if applyAction == engine.ActionUpdate && applyNotes == nil {
-				applyNotes = r.diffApplyNotes(entry)
+			includeExports := applyAction == engine.ActionAdd || applyAction == engine.ActionUpdate
+			exportAct := engine.ActionUpdate
+			if applyAction == engine.ActionAdd {
+				exportAct = engine.ActionAdd
 			}
+			applyNotes = formatGuestWorkNotes(entry, deltas, guestOk, includeExports, exportAct)
 		}
 
 		applyNode := &engine.PlanNode{
@@ -171,140 +147,6 @@ func (r *Resource) BuildPlan(ctx context.Context, knowledge map[string]bool, st 
 	}
 
 	return nodes, nil
-}
-
-// ─── Missing-resource detection ───────────────────────────────────────────────
-
-// detectMissing checks whether configured in-box resources are actually present,
-// applying the same KNOWLEDGE/STATE/CONFIG matrix the engine uses on the host:
-//
-//	NO / YES / YES → ADD   (not installed / not run, but in config and state)
-//
-// Packages are checked via --guest-knowledge (what is installed inside the box).
-// Commands are checked via the per-box state file (has the command ever run).
-//
-// Errors are non-fatal: a failed check is treated as "nothing missing" so that
-// transient issues (box stopped, binary absent) do not manufacture spurious work.
-func (r *Resource) detectMissing(ctx context.Context, entry *config.DistroboxEntry) (missingPkgs []string, missingCmds []string) {
-	// ── Packages: query the box for what is installed ─────────────────────────
-	if len(entry.Packages) > 0 {
-		if err := r.writeBoxConfig(entry); err == nil {
-			if guestBin, err := r.ensureGuestBinary(); err == nil {
-				result, err := r.exec.Run(ctx, executor.Options{},
-					"distrobox", "enter", "-n", entry.Name, "--",
-					guestBin, "--guest-knowledge", "-c", r.boxConfigDir(entry.Name),
-				)
-				if err == nil && result.ExitCode == 0 {
-					var knowledge map[string]bool
-					for _, line := range strings.Split(result.Stdout, "\n") {
-						line = strings.TrimSpace(line)
-						if strings.HasPrefix(line, "{") {
-							if err := json.Unmarshal([]byte(line), &knowledge); err == nil {
-								break
-							}
-						}
-					}
-					for _, pkg := range entry.Packages {
-						if !knowledge["packages/"+pkg.Name] {
-							missingPkgs = append(missingPkgs, pkg.Name)
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// ── Commands: check the per-box state file ────────────────────────────────
-	if len(entry.Commands) > 0 {
-		boxSt, err := state.Load(r.boxStatePath(entry.Name))
-		if err != nil {
-			// No box state at all — every command is pending.
-			for _, cmd := range entry.Commands {
-				missingCmds = append(missingCmds, cmd.Name)
-			}
-		} else {
-			for _, cmd := range entry.Commands {
-				if _, inState := boxSt.Get("commands/" + cmd.Name); !inState {
-					missingCmds = append(missingCmds, cmd.Name)
-				}
-			}
-		}
-	}
-
-	return missingPkgs, missingCmds
-}
-
-// diffApplyNotes computes targeted diff notes for an in-box UPDATE by comparing
-// the current config against what the box state last tracked. Only changed
-// packages and commands are shown (with + / - prefixes). Falls back to
-// buildApplyNotes when box state is unavailable or the diff is empty.
-func (r *Resource) diffApplyNotes(entry *config.DistroboxEntry) []string {
-	boxSt, err := state.Load(r.boxStatePath(entry.Name))
-	if err != nil {
-		return buildApplyNotes(entry)
-	}
-
-	var notes []string
-
-	// Package diff: what's in box state vs current config.
-	prevPkgs := make(map[string]bool)
-	for id := range boxSt.Nodes {
-		if strings.HasPrefix(id, "packages/") {
-			prevPkgs[strings.TrimPrefix(id, "packages/")] = true
-		}
-	}
-	currPkgs := make(map[string]bool)
-	for _, p := range entry.Packages {
-		currPkgs[p.Name] = true
-	}
-	var pkgDiff []string
-	for name := range prevPkgs {
-		if !currPkgs[name] {
-			pkgDiff = append(pkgDiff, "-"+name)
-		}
-	}
-	for _, p := range entry.Packages {
-		if !prevPkgs[p.Name] {
-			pkgDiff = append(pkgDiff, "+"+p.Name)
-		}
-	}
-	if len(pkgDiff) > 0 {
-		sort.Strings(pkgDiff)
-		notes = append(notes, formatNoteList("packages", pkgDiff))
-	}
-
-	// Command diff: what's in box state vs current config.
-	prevCmds := make(map[string]bool)
-	for id := range boxSt.Nodes {
-		if strings.HasPrefix(id, "commands/") {
-			prevCmds[strings.TrimPrefix(id, "commands/")] = true
-		}
-	}
-	currCmds := make(map[string]bool)
-	for _, c := range entry.Commands {
-		currCmds[c.Name] = true
-	}
-	var cmdDiff []string
-	for name := range prevCmds {
-		if !currCmds[name] {
-			cmdDiff = append(cmdDiff, "-"+name)
-		}
-	}
-	for _, c := range entry.Commands {
-		if !prevCmds[c.Name] {
-			cmdDiff = append(cmdDiff, "+"+c.Name)
-		}
-	}
-	if len(cmdDiff) > 0 {
-		sort.Strings(cmdDiff)
-		notes = append(notes, "commands: "+strings.Join(cmdDiff, ", "))
-	}
-
-	if len(notes) == 0 {
-		// Hash changed but diff is empty (e.g. only exports changed) — show full summary.
-		return buildApplyNotes(entry)
-	}
-	return notes
 }
 
 // ─── Description helpers ─────────────────────────────────────────────────────

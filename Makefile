@@ -1,12 +1,14 @@
 BINARY   := stay-go
 BUILD_DIR := bin
 MODULE   := github.com/rayben/stay-go
+VERSION_FILE := .build-version
 
 .PHONY: build run test lint clean install
 
-## build: compile the binary to bin/stay-go
+## build: compile the binary to bin/stay-go (embeds YYYYMMDD.nn from .build-version)
 build:
-	go build -o $(BUILD_DIR)/$(BINARY) ./cmd/stay-go
+	@V=$$( sh scripts/compute-build-version.sh "$(VERSION_FILE)" ); \
+	go build -ldflags "-X main.version=$$V" -o $(BUILD_DIR)/$(BINARY) ./cmd/stay-go
 
 ## run: build and run with the default config
 run: build
