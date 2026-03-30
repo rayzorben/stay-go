@@ -18,6 +18,9 @@ packages:
   - distrobox
   - discord
   - zen-browser
+  - winboat
+  - docker-compose
+  - freerdp
 
 scripts:
   - script: ${config_root}/scripts/configure-zoxide.sh
