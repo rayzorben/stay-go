@@ -51,6 +51,16 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 		}
 
 		action := engine.DetermineAction(id, knowledge[id], hash, st)
+		// Additive inline content counts as "in knowledge" only when the file
+		// already contains the current snippet. After a config edit the new text
+		// is not in the file yet, so DetermineAction returns ADD even though this
+		// node is already tracked — upgrade to UPDATE so Execute removes the
+		// previous snippet and appends the new one.
+		if kind == kindInline && entry.Add && action == engine.ActionAdd {
+			if e, ok := st.Get(id); ok && e.Hash != hash {
+				action = engine.ActionUpdate
+			}
+		}
 		// ADOPT means "target exists but not tracked" — promote to ADD so the
 		// file is properly placed under stay-go management.
 		if action == engine.ActionAdopt {
@@ -69,6 +79,15 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 			notes = []string{levelDesc}
 		}
 
+		var stateData map[string]interface{}
+		if kind == kindInline && entry.Add {
+			stateData = map[string]interface{}{
+				stateKeyAdditive: true,
+				stateKeySnippet:  entry.Content,
+				stateKeySudo:     entry.Sudo,
+			}
+		}
+
 		r.nodeConfigs[id] = entry
 		nodes = append(nodes, &engine.PlanNode{
 			ID:           id,
@@ -80,6 +99,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 			NeedsSudo:    entry.Sudo,
 			Level:        level,
 			Notes:        notes,
+			StateData:    stateData,
 		})
 	}
 
@@ -96,6 +116,7 @@ func computeHash(entry *config.FileEntry, kind sourceKind, cfg *config.Config) (
 		Mode    string
 		SSHKey  []string
 		Symlink bool
+		Add     bool
 	}
 	source := entry.Source
 	switch kind {
@@ -125,6 +146,7 @@ func computeHash(entry *config.FileEntry, kind sourceKind, cfg *config.Config) (
 		Mode:    entry.Mode,
 		SSHKey:  entry.SSHKey,
 		Symlink: entry.Symlink,
+		Add:     entry.Add,
 	}), ""
 }
 
@@ -150,6 +172,9 @@ func buildFileNotes(action engine.ActionType, kind sourceKind, entry *config.Fil
 	case kindSecret:
 		return []string{"write secret to " + entry.Target}
 	case kindInline:
+		if entry.Add {
+			return []string{"ensure content present in " + entry.Target}
+		}
 		return []string{"write inline content to " + entry.Target}
 	}
 	return nil

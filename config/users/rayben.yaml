@@ -13,6 +13,7 @@ packages:
   - libappindicator
   - dropbox
   - distrobox
+  - ttf-ms-win11-auto
 
 scripts:
   - script: ${config_root}/scripts/configure-zoxide.sh
@@ -118,6 +119,13 @@ files:
     mode: "+x"
     depends:
       - packages: [gron]
+  - content: |
+
+      // added by stay
+      include "rules.kdl"
+      include "spawn.kdl"
+    target: ~/.config/niri/config.kdl
+    add: true
 
 containers:
   - name: redis

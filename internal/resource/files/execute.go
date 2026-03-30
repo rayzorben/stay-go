@@ -25,20 +25,33 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 		if entry == nil {
 			return fmt.Errorf("no config found for file %q", node.DisplayName)
 		}
-		if err := r.apply(ctx, entry); err != nil {
+		if err := r.apply(ctx, node, entry, st); err != nil {
 			return err
 		}
-		st.Set(node.ID, node.ConfigHash, node.Level, nil)
+		st.Set(node.ID, node.ConfigHash, node.Level, node.StateData)
 
 	case engine.ActionRemove:
-		// State-only removal — leaves files on disk untouched (safe default).
+		ent, ok := st.Get(node.ID)
+		if ok {
+			if add, _ := ent.Data[stateKeyAdditive].(bool); add {
+				snippet, _ := ent.Data[stateKeySnippet].(string)
+				sudo := false
+				if v, ok := ent.Data[stateKeySudo].(bool); ok {
+					sudo = v
+				}
+				if err := removeSnippetFromFile(ctx, r.exec, node.DisplayName, snippet, sudo); err != nil {
+					return fmt.Errorf("removing managed snippet from %q: %w", node.DisplayName, err)
+				}
+			}
+		}
 		st.Delete(node.ID)
 	}
 	return nil
 }
 
 // apply performs the actual file placement for the given entry.
-func (r *Resource) apply(ctx context.Context, entry *config.FileEntry) error {
+// st is used for additive UPDATE: remove the last-applied snippet before appending the new one.
+func (r *Resource) apply(ctx context.Context, node *engine.PlanNode, entry *config.FileEntry, st *state.State) error {
 	target := entry.Target
 	sudo := entry.Sudo
 	kind := detectKind(entry)
@@ -46,6 +59,23 @@ func (r *Resource) apply(ctx context.Context, entry *config.FileEntry) error {
 	switch kind {
 
 	case kindInline:
+		if entry.Add {
+			perm := os.FileMode(0o644)
+			// Config snippet changed: drop what we last wrote, then ensure the new snippet is present.
+			if node.Action == engine.ActionUpdate {
+				if ent, ok := st.Get(node.ID); ok && ent.Data != nil {
+					if old, ok := ent.Data[stateKeySnippet].(string); ok && old != "" && old != entry.Content {
+						if err := removeSnippetFromFile(ctx, r.exec, target, old, sudo); err != nil {
+							return fmt.Errorf("replacing additive snippet in %q: %w", target, err)
+						}
+					}
+				}
+			}
+			if err := appendSnippetIfMissing(ctx, r.exec, target, entry.Content, perm, sudo); err != nil {
+				return fmt.Errorf("additive write %q: %w", target, err)
+			}
+			break
+		}
 		if err := mkdirAll(ctx, r.exec, filepath.Dir(target), 0o755, sudo); err != nil {
 			return fmt.Errorf("creating directory for %q: %w", target, err)
 		}

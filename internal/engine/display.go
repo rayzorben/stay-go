@@ -53,24 +53,6 @@ func actionColor(a ActionType) func(string) string {
 	}
 }
 
-// itemSymbol returns the single character shown next to each plan item.
-func itemSymbol(a ActionType) string {
-	switch a {
-	case ActionAdd, ActionAdopt:
-		return "+"
-	case ActionUpdate:
-		return "~"
-	case ActionLevel:
-		return "="
-	case ActionRemove:
-		return "-"
-	case ActionSkip:
-		return "!"
-	default:
-		return "·"
-	}
-}
-
 // ─── Resource type labels ─────────────────────────────────────────────────────
 
 var resourceLabel = map[string]string{
@@ -112,7 +94,7 @@ var canonicalIndex = func() map[string]int {
 
 // ─── Action groups ────────────────────────────────────────────────────────────
 
-// groupID classifies actions into one of four display sections.
+// groupID classifies actions for stable display sort order.
 type groupID int
 
 const (
@@ -123,20 +105,7 @@ const (
 	grpSkipped  groupID = 4
 )
 
-type groupDef struct {
-	label string
-	color func(string) string
-}
-
-var planGroups = [5]groupDef{
-	grpAdding:   {"adding", actionColor(ActionAdd)},
-	grpUpdating: {"updating", actionColor(ActionUpdate)},
-	grpMoved:    {"moved", actionColor(ActionLevel)},
-	grpRemoving: {"removing", actionColor(ActionRemove)},
-	grpSkipped:  {"skipped", actionColor(ActionSkip)},
-}
-
-// nodeGroupID maps an ActionType to its display section.
+// nodeGroupID maps an ActionType to its sort group (display order only).
 // Returns (group, true) or (0, false) for hidden ActionTrack nodes.
 func nodeGroupID(a ActionType) (groupID, bool) {
 	switch a {
@@ -157,19 +126,75 @@ func nodeGroupID(a ActionType) (groupID, bool) {
 
 // ─── Low-level rendering primitives ──────────────────────────────────────────
 
-// sectionHeader writes: `  ─── {label} {─────...}\n`
-// The label is rendered in its section colour; surrounding dashes are dim.
-func sectionHeader(w io.Writer, label string, color func(string) string, tw int) {
-	// Visible text structure: "  ─── " (6) + label + " " + trailing dashes
-	const preamble = "  ─── "
-	trailing := tw - len(preamble) - len(label) - 1
-	if trailing < 1 {
-		trailing = 1
+// planTableHeader writes dim column titles and a light rule beneath them.
+func planTableHeader(w io.Writer, lw, nw, typW, aw int) {
+	hdrCell := func(label string, width int) string {
+		p := fmt.Sprintf("%-*s", width, label)
+		return ansiBold + ansiDim + p + ansiReset
 	}
-	fmt.Fprintf(w, "%s%s%s%s %s%s%s\n",
-		ansiDim, preamble, ansiReset,
-		color(label),
-		ansiDim, strings.Repeat("─", trailing), ansiReset,
+	fmt.Fprintf(w, "  %s  %s  %s  %s\n",
+		hdrCell("level", lw), hdrCell("resource", nw), hdrCell("type", typW), hdrCell("action", aw))
+	// ASCII '-' so column rules match header/text width on terminals that treat
+	// U+2500 (─) as double-width (ambiguous East Asian width).
+	fmt.Fprintf(w, "  %s%s%s  %s%s%s  %s%s%s  %s%s%s\n",
+		ansiDim, strings.Repeat("-", lw), ansiReset,
+		ansiDim, strings.Repeat("-", nw), ansiReset,
+		ansiDim, strings.Repeat("-", typW), ansiReset,
+		ansiDim, strings.Repeat("-", aw), ansiReset,
+	)
+}
+
+// compactActionLabel returns a short verb for the action column (plain ASCII width).
+func compactActionLabel(a ActionType) string {
+	switch a {
+	case ActionAdd, ActionAdopt:
+		return "+ add"
+	case ActionUpdate:
+		return "~ update"
+	case ActionLevel:
+		return "= level"
+	case ActionRemove:
+		return "- remove"
+	case ActionSkip:
+		return "! skip"
+	default:
+		return "· …"
+	}
+}
+
+// actionColumnWidth is the fixed display width reserved for compactActionLabel.
+func actionColumnWidth() int {
+	w := 0
+	for _, a := range []ActionType{
+		ActionAdd, ActionAdopt, ActionUpdate, ActionLevel, ActionRemove, ActionSkip,
+	} {
+		if l := len(compactActionLabel(a)); l > w {
+			w = l
+		}
+	}
+	if l := len("action"); l > w {
+		w = l
+	}
+	return w
+}
+
+// planDetailLine writes a continuation aligned under the resource column.
+func planDetailLine(w io.Writer, levelColW int, text string, tw int) {
+	// "  " + level + "  " + "│ "
+	const pipe = "│ "
+	indent := 2 + levelColW + 2
+	prefixVis := indent + len(pipe)
+	maxText := tw - prefixVis
+	if maxText < 8 {
+		maxText = 8
+	}
+	if len(text) > maxText {
+		text = text[:maxText-1] + "…"
+	}
+	fmt.Fprintf(w, "%s%s%s%s%s%s%s\n",
+		strings.Repeat(" ", indent),
+		ansiDim, pipe, ansiReset,
+		ansiDim, text, ansiReset,
 	)
 }
 
@@ -229,16 +254,12 @@ func formatDur(d time.Duration) string {
 
 // ─── Plan display ─────────────────────────────────────────────────────────────
 
-// DisplayPlan writes the grouped plan to w and updates displayMetrics.
+// DisplayPlan writes the plan table to w and updates displayMetrics.
 //
-// Layout per item:
-//
-//	  {sym}  {name}  [{cyan}type{dim} · {level}]  {dim}description{reset}
-//	     └ {note}
-//
-// Type and level are labelled inline so their roles are obvious. Description
-// is appended on the same line when space allows. Summary of all counts
-// (including zeros) is printed at the bottom, right before the confirm prompt.
+// Rows are ordered by action kind (add → update → level → remove → skip), then
+// resource type and name. Columns are level | resource | type | action; extra
+// detail (description, skip reason, notes) follows on indented lines under
+// resource. Summary counts are printed at the bottom before the confirm prompt.
 func DisplayPlan(w io.Writer, nodes []*PlanNode) {
 	if len(nodes) == 0 {
 		return
@@ -269,30 +290,54 @@ func DisplayPlan(w io.Writer, nodes []*PlanNode) {
 		return
 	}
 
-	// Compute max type width for execution row metrics.
-	typeW := 0
+	// Type column width (shared with execution display for alignment).
+	typColW := len("type")
 	for _, v := range visible {
-		if l := len(v.typ); l > typeW {
-			typeW = l
+		if l := len(v.typ); l > typColW {
+			typColW = l
 		}
 	}
-	displayMetrics.typeW = typeW
+	const maxTypeCol = 12
+	if typColW > maxTypeCol {
+		typColW = maxTypeCol
+	}
 
-	// Pre-compute execution row name width using real terminal size.
-	// Fall back to a conservative 80 when size can't be determined (e.g. inside
-	// a distrobox where the PTY may not propagate dimensions correctly).
-	{
-		etw, _, err := term.GetSize(int(os.Stdout.Fd()))
-		if err != nil || etw < 40 {
-			etw = 80
+	aw := actionColumnWidth()
+	levelW := len("level")
+	for _, v := range visible {
+		if l := len(v.level); l > levelW {
+			levelW = l
 		}
-		const execOverhead = 5 + 2 + 2 + 12 // "  ·  " + gaps + status
-		nw := etw - execOverhead - typeW
-		if nw < 10 {
-			nw = 10
-		}
-		displayMetrics.nameW = nw
 	}
+	const maxLevelCol = 22
+	if levelW > maxLevelCol {
+		levelW = maxLevelCol
+	}
+	// Row: "  " + level + "  " + name + "  " + type + "  " + action
+	// → 8 + levelW + nw + typColW + aw
+	const minNW = 12
+	nw := tw - 8 - levelW - typColW - aw
+	if nw < minNW {
+		nw = minNW
+		room := tw - 8 - nw - aw
+		for levelW+typColW > room {
+			if levelW > 5 {
+				levelW--
+				continue
+			}
+			if typColW > len("type") {
+				typColW--
+				continue
+			}
+			break
+		}
+		nw = tw - 8 - levelW - typColW - aw
+		if nw < 8 {
+			nw = 8
+		}
+	}
+	displayMetrics.typeW = typColW
+	displayMetrics.nameW = nw
 
 	// Sort: by group (fixed order), then canonical resource type, then name.
 	sort.SliceStable(visible, func(i, j int) bool {
@@ -308,90 +353,66 @@ func DisplayPlan(w io.Writer, nodes []*PlanNode) {
 		return vi.n.DisplayName < vj.n.DisplayName
 	})
 
-	const prefixVis = 5 // "  {sym}  "
-
 	fmt.Fprintln(w)
+
+	planTableHeader(w, levelW, nw, typColW, aw)
 
 	curGrp := groupID(-1)
 	for _, v := range visible {
 		if v.grp != curGrp {
+			if curGrp != -1 {
+				fmt.Fprintln(w)
+			}
 			curGrp = v.grp
-			g := planGroups[curGrp]
-			fmt.Fprintln(w)
-			sectionHeader(w, g.label, g.color, tw)
-			fmt.Fprintln(w)
 		}
 
 		n := v.n
 		aColor := actionColor(n.Action)
 
-		// ── Meta block: [type · level] ────────────────────────────────────────
-		// type in cyan; level in yellow for user-scoped entries, dim for common.
-		levelColor := ansiDim
+		levelPlain := v.level
+		if len(levelPlain) > levelW {
+			levelPlain = levelPlain[:levelW-1] + "…"
+		}
+		levelField := fmt.Sprintf("%-*s", levelW, levelPlain)
 		if strings.HasPrefix(v.level, "user") {
-			levelColor = ansiYellow
+			levelField = ansiYellow + levelField + ansiReset
+		} else {
+			levelField = ansiDim + levelField + ansiReset
 		}
-		metaLen := 1 + len(v.typ) + 3 + len(v.level) + 1 // "[type · level]" visible chars
-		meta := ansiDim + "[" + ansiReset +
-			ansiCyan + v.typ + ansiReset +
-			ansiDim + " · " + ansiReset +
-			levelColor + v.level +
-			ansiDim + "]" + ansiReset
 
-		// ── Name: coloured by action, truncated to leave room for meta ────────
-		maxNameLen := tw - prefixVis - 2 - metaLen
-		if maxNameLen < 10 {
-			maxNameLen = 10
+		name := truncatePath(n.DisplayName, nw)
+		nameField := fmt.Sprintf("%-*s", nw, name)
+
+		typePlain := v.typ
+		if len(typePlain) > typColW {
+			typePlain = typePlain[:typColW-1] + "…"
 		}
-		name := truncatePath(n.DisplayName, maxNameLen)
+		typeField := ansiCyan + fmt.Sprintf("%-*s", typColW, typePlain) + ansiReset
 
-		// ── Inline description ────────────────────────────────────────────────
-		// Space left on the line after "  {sym}  {name}  {meta}".
-		lineUsed := prefixVis + len(name) + 2 + metaLen
-		descBudget := tw - lineUsed - 2
+		actPlain := fmt.Sprintf("%-*s", aw, compactActionLabel(n.Action))
+		act := aColor(actPlain)
 
-		var inlineText string
-		var subLineParts []string
+		fmt.Fprintf(w, "  %s  %s  %s  %s\n", levelField, nameField, typeField, act)
 
-		if n.Action == ActionSkip && n.SkipReason != "" {
-			parts := strings.Split(n.SkipReason, "; ")
-			if len(parts) == 1 {
-				inlineText = parts[0]
-			} else {
-				// Multi-part skip reasons always go to sub-lines for clarity.
-				subLineParts = parts
+		switch {
+		case n.Action == ActionSkip && n.SkipReason != "":
+			if n.Description != "" {
+				planDetailLine(w, levelW, n.Description, tw)
 			}
-		} else if n.Description != "" {
-			inlineText = n.Description
-		}
-
-		inlineDesc := ""
-		if inlineText != "" && descBudget >= 12 {
-			if len(inlineText) <= descBudget {
-				inlineDesc = "  " + ansiDim + inlineText + ansiReset
-			} else {
-				inlineDesc = "  " + ansiDim + inlineText[:descBudget-1] + "…" + ansiReset
+			for _, part := range strings.Split(n.SkipReason, "; ") {
+				part = strings.TrimSpace(part)
+				if part != "" {
+					planDetailLine(w, levelW, part, tw)
+				}
 			}
-		} else if inlineText != "" {
-			subLineParts = append(subLineParts, inlineText)
-		}
-
-		fmt.Fprintf(w, "  %s  %s  %s%s\n",
-			aColor(itemSymbol(n.Action)),
-			aColor(name),
-			meta,
-			inlineDesc,
-		)
-
-		for _, part := range subLineParts {
-			noteLine(w, part, tw)
+		case n.Description != "":
+			planDetailLine(w, levelW, n.Description, tw)
 		}
 		for _, note := range n.Notes {
-			noteLine(w, note, tw)
+			planDetailLine(w, levelW, note, tw)
 		}
 	}
 
-	// Bottom divider + summary, positioned right before the confirmation prompt.
 	fmt.Fprintln(w)
 	divider(w, tw)
 	fmt.Fprintln(w)

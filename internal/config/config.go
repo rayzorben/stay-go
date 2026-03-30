@@ -17,17 +17,17 @@ import (
 
 // Config is the top-level structure for the desired system state.
 type Config struct {
-	Vars       map[string]string  `yaml:"variables"`
-	Packages   []PackageEntry     `yaml:"packages"`
-	Groups     []GroupEntry       `yaml:"groups"`
-	Users      []UserEntry        `yaml:"users"`
-	Services   []ServiceEntry     `yaml:"services"`
-	Scripts    []ScriptEntry      `yaml:"scripts"`
-	Files      []FileEntry        `yaml:"files"`
-	Commands   []CommandEntry     `yaml:"commands"`
-	Secrets    SecretsMap         `yaml:"secrets"`
-	Containers []ContainerEntry   `yaml:"containers"`
-	Distrobox  []DistroboxEntry   `yaml:"distrobox"`
+	Vars       map[string]string `yaml:"variables"`
+	Packages   []PackageEntry    `yaml:"packages"`
+	Groups     []GroupEntry      `yaml:"groups"`
+	Users      []UserEntry       `yaml:"users"`
+	Services   []ServiceEntry    `yaml:"services"`
+	Scripts    []ScriptEntry     `yaml:"scripts"`
+	Files      []FileEntry       `yaml:"files"`
+	Commands   []CommandEntry    `yaml:"commands"`
+	Secrets    SecretsMap        `yaml:"secrets"`
+	Containers []ContainerEntry  `yaml:"containers"`
+	Distrobox  []DistroboxEntry  `yaml:"distrobox"`
 
 	Json []JsonEntry `yaml:"json"`
 
@@ -78,8 +78,11 @@ func (e *CommandEntry) FileConditions() []string {
 
 // FileEntry defines a file, directory clone, or download to place on disk.
 type FileEntry struct {
-	Source  string                `yaml:"source,omitempty"`  // path, ${secrets.*}, git URL, or http URL
-	Content string                `yaml:"content,omitempty"` // inline file content (alternative to source)
+	Source  string `yaml:"source,omitempty"`  // path, ${secrets.*}, git URL, or http URL
+	Content string `yaml:"content,omitempty"` // inline file content (alternative to source)
+	// Add, when true with Content set, means: ensure Content appears in the target
+	// file (append if missing); on removal from config, strip that snippet from the file.
+	Add     bool                  `yaml:"add,omitempty"`
 	Target  string                `yaml:"target"`            // destination path (~ expanded)
 	Mode    string                `yaml:"mode,omitempty"`    // e.g. "0600", "+x"
 	Symlink bool                  `yaml:"symlink,omitempty"` // create symlink instead of copy (local only)
@@ -263,31 +266,31 @@ func (s *ServiceEntry) DependsOnIDs() []string {
 // ContainerEntry defines the desired state of a container managed by Docker or Podman.
 // Field names mirror docker-compose conventions.
 type ContainerEntry struct {
-	Name        string            `yaml:"name,omitempty"`
-	Image       string            `yaml:"image"`
-	Runtime     string            `yaml:"runtime,omitempty"`      // docker or podman; auto-detected if empty
-	Ports       []string          `yaml:"ports,omitempty"`        // "hostPort:containerPort"
-	Volumes     []string          `yaml:"volumes,omitempty"`      // "host:container[:options]"
-	Environment []string          `yaml:"environment,omitempty"`  // "KEY=value"
-	EnvFile     []string          `yaml:"env_file,omitempty"`     // paths to env files
-	Labels      map[string]string `yaml:"labels,omitempty"`
-	Restart     string            `yaml:"restart,omitempty"`      // no, always, unless-stopped, on-failure
-	NetworkMode string            `yaml:"network_mode,omitempty"` // host, bridge, none, container:<name>
-	Networks    []string          `yaml:"networks,omitempty"`
-	Command     []string          `yaml:"command,omitempty"`
-	Entrypoint  string            `yaml:"entrypoint,omitempty"`
-	User        string            `yaml:"user,omitempty"`
-	Privileged  bool              `yaml:"privileged,omitempty"`
-	CapAdd      []string          `yaml:"cap_add,omitempty"`
-	CapDrop     []string          `yaml:"cap_drop,omitempty"`
-	Devices     []string          `yaml:"devices,omitempty"`
-	DNS         []string          `yaml:"dns,omitempty"`
-	ExtraHosts  []string          `yaml:"extra_hosts,omitempty"` // "hostname:ip"
-	Hostname    string            `yaml:"hostname,omitempty"`
-	Pull        string            `yaml:"pull,omitempty"` // always, missing (default), never
-	Sudo        bool              `yaml:"sudo,omitempty"`
+	Name        string                `yaml:"name,omitempty"`
+	Image       string                `yaml:"image"`
+	Runtime     string                `yaml:"runtime,omitempty"`     // docker or podman; auto-detected if empty
+	Ports       []string              `yaml:"ports,omitempty"`       // "hostPort:containerPort"
+	Volumes     []string              `yaml:"volumes,omitempty"`     // "host:container[:options]"
+	Environment []string              `yaml:"environment,omitempty"` // "KEY=value"
+	EnvFile     []string              `yaml:"env_file,omitempty"`    // paths to env files
+	Labels      map[string]string     `yaml:"labels,omitempty"`
+	Restart     string                `yaml:"restart,omitempty"`      // no, always, unless-stopped, on-failure
+	NetworkMode string                `yaml:"network_mode,omitempty"` // host, bridge, none, container:<name>
+	Networks    []string              `yaml:"networks,omitempty"`
+	Command     []string              `yaml:"command,omitempty"`
+	Entrypoint  string                `yaml:"entrypoint,omitempty"`
+	User        string                `yaml:"user,omitempty"`
+	Privileged  bool                  `yaml:"privileged,omitempty"`
+	CapAdd      []string              `yaml:"cap_add,omitempty"`
+	CapDrop     []string              `yaml:"cap_drop,omitempty"`
+	Devices     []string              `yaml:"devices,omitempty"`
+	DNS         []string              `yaml:"dns,omitempty"`
+	ExtraHosts  []string              `yaml:"extra_hosts,omitempty"` // "hostname:ip"
+	Hostname    string                `yaml:"hostname,omitempty"`
+	Pull        string                `yaml:"pull,omitempty"` // always, missing (default), never
+	Sudo        bool                  `yaml:"sudo,omitempty"`
 	Depends     []map[string][]string `yaml:"depends,omitempty"`
-	Level       string            `yaml:"-"` // set by LoadAll, not parsed from YAML
+	Level       string                `yaml:"-"` // set by LoadAll, not parsed from YAML
 }
 
 // ContainerName returns the effective container name: the explicit name field,
@@ -363,7 +366,7 @@ func (d *DistroboxEntry) DependsOnIDs() []string {
 // application and restored on removal.
 type JsonEntry struct {
 	File    string                 `yaml:"file"`
-	Values  map[string]interface{} `yaml:"-"`       // populated by UnmarshalYAML
+	Values  map[string]interface{} `yaml:"-"` // populated by UnmarshalYAML
 	Depends []map[string][]string  `yaml:"depends,omitempty"`
 	Level   string                 `yaml:"-"` // set by LoadAll, not parsed from YAML
 }
