@@ -14,9 +14,7 @@ packages:
   - niri
   - neovim
   - git
-  - docker
   - dropbox
-  - dsearch-bin
   - xdg-desktop-portal-gnome
   - xdg-desktop-portal-gtk
   - gnome-keyring
@@ -29,7 +27,11 @@ packages:
   - qt5-graphicaleffects
   - qt5-multimedia
   - ghostty
-  
+  - package: docker
+    services: [docker]
+  - package: dsearch-bin
+    services: [{service: dsearch, user: true}] 
+
 groups:
   - wheel
   - docker
@@ -41,17 +43,10 @@ users:
     groups: ['wheel', 'docker']
 
 services:
-  - service: docker
-    depends:
-      - packages: ['docker']
-  - service: dsearch
-    user: true
-    depends:
-      - packages: ['dsearch-bin']
   - service: sddm
     depends: 
       - packages: ['sddm']
-    now: false # TODO: add support for not now
+    now: false
   - service: hyprpolkitagent
     user: true
     depends:

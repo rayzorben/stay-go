@@ -21,10 +21,10 @@ type Config struct {
 	Packages   []PackageEntry    `yaml:"packages"`
 	Groups     []GroupEntry      `yaml:"groups"`
 	Users      []UserEntry       `yaml:"users"`
-	Services   []ServiceEntry    `yaml:"services"`
+	Services   serviceList       `yaml:"services"`
 	Scripts    []ScriptEntry     `yaml:"scripts"`
 	Files      []FileEntry       `yaml:"files"`
-	Commands   []CommandEntry    `yaml:"commands"`
+	Commands   CommandList       `yaml:"commands"`
 	Secrets    SecretsMap        `yaml:"secrets"`
 	Containers []ContainerEntry  `yaml:"containers"`
 	Distrobox  []DistroboxEntry  `yaml:"distrobox"`
@@ -73,6 +73,82 @@ func (e *CommandEntry) FileConditions() []string {
 			return files
 		}
 	}
+	return nil
+}
+
+// CommandList is the commands: sequence, accepting either a shorthand string
+// ("sh foo.sh") or a full mapping. A string becomes both Name and Command.
+type CommandList []CommandEntry
+
+// UnmarshalYAML decodes each element as a scalar (name+command) or mapping.
+func (c *CommandList) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.SequenceNode {
+		return fmt.Errorf("commands: expected sequence")
+	}
+	var out []CommandEntry
+	for _, n := range value.Content {
+		switch n.Kind {
+		case yaml.ScalarNode:
+			cmd := strings.TrimSpace(n.Value)
+			if cmd == "" {
+				continue
+			}
+			out = append(out, CommandEntry{Name: cmd, Command: cmd})
+		case yaml.MappingNode:
+			var e CommandEntry
+			if err := n.Decode(&e); err != nil {
+				return fmt.Errorf("commands: %w", err)
+			}
+			if e.Name == "" && e.Command != "" {
+				e.Name = e.Command
+			}
+			if e.Command == "" && e.Name != "" {
+				e.Command = e.Name
+			}
+			if e.Name == "" {
+				return fmt.Errorf("commands: mapping needs name or command")
+			}
+			out = append(out, e)
+		default:
+			return fmt.Errorf("commands: each entry must be a string or mapping")
+		}
+	}
+	*c = out
+	return nil
+}
+
+// serviceList is the services: sequence: each item may be a service name string
+// or a full ServiceEntry mapping.
+type serviceList []ServiceEntry
+
+// UnmarshalYAML decodes each element as a scalar (service name) or mapping.
+func (s *serviceList) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.SequenceNode {
+		return fmt.Errorf("services: expected sequence")
+	}
+	var out []ServiceEntry
+	for _, n := range value.Content {
+		switch n.Kind {
+		case yaml.ScalarNode:
+			name := strings.TrimSpace(n.Value)
+			if name == "" {
+				continue
+			}
+			out = append(out, ServiceEntry{Service: name})
+		case yaml.MappingNode:
+			var e ServiceEntry
+			if err := n.Decode(&e); err != nil {
+				return fmt.Errorf("services: %w", err)
+			}
+			if e.Service == "" {
+				return fmt.Errorf("services: mapping needs \"service\"")
+			}
+			out = append(out, e)
+		default:
+			return fmt.Errorf("services: each entry must be a string or mapping")
+		}
+	}
+	*s = out
 	return nil
 }
 
@@ -176,12 +252,36 @@ func (g *GroupEntry) UnmarshalYAML(value *yaml.Node) error {
 }
 
 // PackageEntry represents a single package to manage. Supports both scalar
-// ("neovim") and mapping ({ name: neovim }) forms in YAML.
+// ("neovim") and mapping ({ name: neovim } or { package: docker }) forms in YAML.
 // A leading "!" (e.g. "!foo") marks the package for forced removal.
+//
+// Optional services: each entry is expanded into top-level Services with an
+// implicit depends on this package (see NormalizeExpandedForms).
 type PackageEntry struct {
-	Name   string
-	Remove bool   // true when the name was prefixed with "!"
-	Level  string `yaml:"-"` // set by LoadAll, not parsed from YAML
+	Name     string
+	Remove   bool
+	Services []ServiceEntry `yaml:"-"` // mapping form only; cleared after normalization
+	Level    string         `yaml:"-"` // set by LoadAll, not parsed from YAML
+}
+
+// inlinePackageService decodes a service under packages: as a string or full object.
+type inlinePackageService ServiceEntry
+
+func (s *inlinePackageService) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		*s = inlinePackageService(ServiceEntry{Service: strings.TrimSpace(value.Value)})
+		return nil
+	case yaml.MappingNode:
+		var e ServiceEntry
+		if err := value.Decode(&e); err != nil {
+			return fmt.Errorf("decoding package service: %w", err)
+		}
+		*s = inlinePackageService(e)
+		return nil
+	default:
+		return fmt.Errorf("package service: expected scalar or mapping, got kind %v", value.Kind)
+	}
 }
 
 // UnmarshalYAML implements yaml.Unmarshaler to accept both scalar and map forms.
@@ -200,12 +300,27 @@ func (p *PackageEntry) UnmarshalYAML(value *yaml.Node) error {
 		return nil
 	case yaml.MappingNode:
 		var m struct {
-			Name string `yaml:"name"`
+			Name     string                 `yaml:"name"`
+			Package  string                 `yaml:"package"`
+			Services []inlinePackageService `yaml:"services,omitempty"`
 		}
 		if err := value.Decode(&m); err != nil {
 			return fmt.Errorf("decoding package entry: %w", err)
 		}
-		applyName(m.Name)
+		raw := m.Package
+		if raw == "" {
+			raw = m.Name
+		}
+		if raw == "" {
+			return fmt.Errorf("package entry: need \"name\" or \"package\"")
+		}
+		applyName(raw)
+		if len(m.Services) > 0 {
+			p.Services = make([]ServiceEntry, len(m.Services))
+			for i := range m.Services {
+				p.Services[i] = ServiceEntry(m.Services[i])
+			}
+		}
 		return nil
 	default:
 		return fmt.Errorf("unexpected YAML node kind %v for package entry", value.Kind)
@@ -441,7 +556,12 @@ func (e *JsonEntry) DependsOnIDs() []string {
 // Load reads and parses the YAML configuration file at path.
 // Top-level `key: !include "file"` directives are resolved and merged recursively.
 func Load(path string) (*Config, error) {
-	return loadLayer(path, "", make(map[string]bool))
+	cfg, err := loadLayer(path, "", make(map[string]bool))
+	if err != nil {
+		return nil, err
+	}
+	NormalizeExpandedForms(cfg)
+	return cfg, nil
 }
 
 // LoadAll loads config from default.yaml in configDir. Host- and user-specific
@@ -474,6 +594,7 @@ func LoadAll(configDir string) (*Config, error) {
 	// the fully-resolved vars to all string fields across the config.
 	resolved := ResolveVars(cfg.Vars)
 	ApplyVars(cfg, resolved)
+	NormalizeExpandedForms(cfg)
 	cfg.Vars = resolved
 
 	return cfg, nil

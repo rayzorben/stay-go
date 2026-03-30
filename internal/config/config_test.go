@@ -34,6 +34,98 @@ packages:
 	}
 }
 
+func TestLoadPackagePropertyForm(t *testing.T) {
+	raw := `
+packages:
+  - package: docker
+`
+	cfg := loadString(t, raw)
+	if len(cfg.Packages) != 1 || cfg.Packages[0].Name != "docker" {
+		t.Errorf("package: key not parsed: %+v", cfg.Packages)
+	}
+}
+
+func TestNormalizePackageEmbeddedServices(t *testing.T) {
+	raw := `
+packages:
+  - package: docker
+    services: [docker]
+  - package: dsearch-bin
+    services:
+      - service: dsearch
+        user: true
+`
+	cfg := loadString(t, raw)
+	if len(cfg.Packages) != 2 {
+		t.Fatalf("packages: %d", len(cfg.Packages))
+	}
+	if len(cfg.Services) != 2 {
+		t.Fatalf("want 2 expanded services, got %d: %+v", len(cfg.Services), cfg.Services)
+	}
+	var sawDocker, sawDsearch bool
+	for _, s := range cfg.Services {
+		switch s.Service {
+		case "docker":
+			sawDocker = true
+			ids := s.DependsOnIDs()
+			if len(ids) != 1 || ids[0] != "packages/docker" {
+				t.Errorf("docker depends: %v", ids)
+			}
+		case "dsearch":
+			sawDsearch = true
+			if !s.User {
+				t.Error("want user-scoped dsearch")
+			}
+			ids := s.DependsOnIDs()
+			if len(ids) != 1 || ids[0] != "packages/dsearch-bin" {
+				t.Errorf("dsearch depends: %v", ids)
+			}
+		}
+	}
+	if !sawDocker || !sawDsearch {
+		t.Errorf("missing services: docker=%v dsearch=%v", sawDocker, sawDsearch)
+	}
+}
+
+func TestCommandsShorthand(t *testing.T) {
+	raw := `
+commands:
+  - echo hello
+  - name: full
+    command: /bin/true
+`
+	cfg := loadString(t, raw)
+	if len(cfg.Commands) != 2 {
+		t.Fatalf("commands: %d", len(cfg.Commands))
+	}
+	if cfg.Commands[0].Name != "echo hello" || cfg.Commands[0].Command != "echo hello" {
+		t.Errorf("shorthand: %+v", cfg.Commands[0])
+	}
+	if cfg.Commands[1].Name != "full" || cfg.Commands[1].Command != "/bin/true" {
+		t.Errorf("full form: %+v", cfg.Commands[1])
+	}
+}
+
+func TestServicesShorthand(t *testing.T) {
+	raw := `
+services:
+  - sshd
+  - service: docker
+    depends:
+      - packages: [docker]
+`
+	cfg := loadString(t, raw)
+	if len(cfg.Services) != 2 {
+		t.Fatalf("services: %d", len(cfg.Services))
+	}
+	if cfg.Services[0].Service != "sshd" {
+		t.Errorf("first: %+v", cfg.Services[0])
+	}
+	if cfg.Services[1].Service != "docker" {
+		t.Errorf("second: %+v", cfg.Services[1])
+	}
+}
+
 func TestLoadUsers(t *testing.T) {
 	raw := `
 users:

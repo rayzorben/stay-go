@@ -61,6 +61,16 @@ func ApplyVars(cfg *Config, vars map[string]string) {
 
 	for i := range cfg.Packages {
 		cfg.Packages[i].Name = r(cfg.Packages[i].Name)
+		for j := range cfg.Packages[i].Services {
+			cfg.Packages[i].Services[j].Service = r(cfg.Packages[i].Services[j].Service)
+			for k, dep := range cfg.Packages[i].Services[j].Depends {
+				for k2, vals := range dep {
+					for l, v := range vals {
+						cfg.Packages[i].Services[j].Depends[k][k2][l] = r(v)
+					}
+				}
+			}
+		}
 	}
 	for i := range cfg.Groups {
 		cfg.Groups[i].Name = r(cfg.Groups[i].Name)
@@ -80,6 +90,7 @@ func ApplyVars(cfg *Config, vars map[string]string) {
 		cfg.Scripts[i].Script = r(cfg.Scripts[i].Script)
 	}
 	for i := range cfg.Commands {
+		cfg.Commands[i].Name = r(cfg.Commands[i].Name)
 		cfg.Commands[i].Command = r(cfg.Commands[i].Command)
 		cfg.Commands[i].Rollback = r(cfg.Commands[i].Rollback)
 		for j, dep := range cfg.Commands[i].Depends {
@@ -134,6 +145,16 @@ func ApplyVars(cfg *Config, vars map[string]string) {
 		cfg.Distrobox[i].Home = r(cfg.Distrobox[i].Home)
 		for j := range cfg.Distrobox[i].Packages {
 			cfg.Distrobox[i].Packages[j].Name = r(cfg.Distrobox[i].Packages[j].Name)
+			for k := range cfg.Distrobox[i].Packages[j].Services {
+				cfg.Distrobox[i].Packages[j].Services[k].Service = r(cfg.Distrobox[i].Packages[j].Services[k].Service)
+				for di, dep := range cfg.Distrobox[i].Packages[j].Services[k].Depends {
+					for dk, vals := range dep {
+						for dl, v := range vals {
+							cfg.Distrobox[i].Packages[j].Services[k].Depends[di][dk][dl] = r(v)
+						}
+					}
+				}
+			}
 		}
 		for j := range cfg.Distrobox[i].Commands {
 			cfg.Distrobox[i].Commands[j].Command = r(cfg.Distrobox[i].Commands[j].Command)

@@ -227,8 +227,9 @@ func mergeConfigs(base, override *Config) *Config {
 	result.Users = mergeByKey(base.Users, override.Users,
 		func(u UserEntry) string { return u.Username })
 
-	result.Services = mergeByKey(base.Services, override.Services,
-		func(s ServiceEntry) string { return s.Service })
+	result.Services = serviceList(mergeByKey(
+		[]ServiceEntry(base.Services), []ServiceEntry(override.Services),
+		func(s ServiceEntry) string { return ServiceMergeKey(s) }))
 
 	result.Scripts = mergeByKey(base.Scripts, override.Scripts,
 		func(s ScriptEntry) string { return s.Script })
@@ -236,8 +237,9 @@ func mergeConfigs(base, override *Config) *Config {
 	result.Files = mergeByKey(base.Files, override.Files,
 		func(f FileEntry) string { return f.Target })
 
-	result.Commands = mergeByKey(base.Commands, override.Commands,
-		func(c CommandEntry) string { return c.Name })
+	result.Commands = CommandList(mergeByKey(
+		[]CommandEntry(base.Commands), []CommandEntry(override.Commands),
+		func(c CommandEntry) string { return c.Name }))
 
 	result.Containers = mergeByKey(base.Containers, override.Containers,
 		func(c ContainerEntry) string { return c.ContainerName() })
