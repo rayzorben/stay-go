@@ -26,6 +26,8 @@ packages:
   - slurp
   - wayfreeze
   - satty
+  - package: forticlient-vpn
+    services: [forticlient]
 
 services:
   - service: gcr-ssh-agent.socket
@@ -51,6 +53,10 @@ commands:
     command: |
       sed -i 's/%wheel ALL=(ALL) ALL/%wheel ALL=(ALL) NOPASSWD: ALL/' /etc/sudoers.d/10-installer
     sudo: true
+    
+  - name: test
+    command: |
+      echo "test"
     
 secrets:
   ssh_id_ed25519: !encrypted x4Ymy7QRZy+muTonTD21H4vODMLPPGAZNg+IxlBU760tJD/Y03dmqKcFv2cInY7HpqgJcT4TqPm9u5wgGQFqJdH5Tk/1baJMaeVoVYl/c8sPeIlGLHt4k2V3ZiKOyOzFyJqNTxChLsd8F0wAxS9L3UMoyIRjPFfJG9kPeq23K/gN58j/jw6XDli3k3m0GgrCvDSDPo/9s9iPclOcQsr4/MSbOAWfjakkBIOwfiYXcQH4J5n/zLv5m9X9p0TZ9GLJaLtuKglRHNZj6tgOkQkpCZUIFBNdCZDWJt7OnqAE6c3DvoyjZud/ac/BDRT6VjliKxGNdC+yyoqc/OUwZqLS91/tt8SJvNEhPw3VIObX+BlatC9ztgaEqe/dpAYMLYts0Bqb0ec0X/JDgePSxHrWP+54F4fVd82Okcky/1qv/igrAgdve1gmw17iCol+WQJ7b3Ctmi9EsVC9mH/lg9U8narPCp0PdMp5zENq/3oWhOxcqy3j8gjZy6tw9k2kKfeUhh7Ieg8jEzVxqCkLPPCibxZqbOroCMMGrKzajdI8mgOIT9z1z8FFJeTHbUN0EgYNANYthVT1dZQIvwdSlfhOxMSqJ8oqrzIkuQmGEVzsTmhZdzjFGTpo2HDqNlukBI190b5Z5sKvAKiA79JEKzKD7/VfGkRdpWpxntVkiQ==
@@ -155,11 +161,14 @@ containers:
       - services: [docker]
 
 ghostty: !include "./commands/ghostty.yaml"
-      
+
+variables:
+  sedanos_home: /home/distrobox/sedanos
+
 distrobox:
   - name: sedanos
     image: docker.io/cachyos/cachyos-v3:latest
-    home: /home/distrobox/sedanos
+    home: ${sedanos_home}
     home_sudo: true
     exports:
       - microsoft-edge-stable
@@ -188,6 +197,11 @@ distrobox:
       - name: Install uv
         command: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
+      - name: link dev folder
+        command: |
+          ln -sf ~/Dropbox/PC/sedanos/development ${sedanos_home}/development
+        depends:
+          - folders: ["~/Dropbox/PC/sedanos/development"]
 
 json:
   - file: ~/.config/DankMaterialShell/settings.json

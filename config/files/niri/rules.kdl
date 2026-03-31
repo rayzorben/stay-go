@@ -6,6 +6,11 @@ workspace "vis"
 workspace "ssi"
 
 window-rule {
+    match title="RemoteApp Marker Window"
+    open-on-workspace "9"
+}
+
+window-rule {
     match app-id="satty"
     open-floating true
 }
