@@ -73,7 +73,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 	}
 
 	// Append REMOVE nodes for services tracked in state but removed from config.
-	nodes = append(nodes, engine.StateRemovals("services", configSet, st)...)
+	nodes = append(nodes, engine.StateRemovals("services", configSet, knowledge, st)...)
 	return nodes, nil
 }
 

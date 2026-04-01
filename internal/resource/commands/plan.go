@@ -50,8 +50,8 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 
 		action, levelDesc := engine.CheckLevelChange(id, level, action, st)
 
-		// Evaluate file conditions. Any failing condition skips the node.
-		skipReason := checkFileConditions(entry)
+		// Evaluate file and folder conditions. Any failing condition skips the node.
+		skipReason := commandPlanSkipReason(entry)
 
 		desc := describeCommandChange(action)
 		if levelDesc != "" {
@@ -83,16 +83,29 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 		})
 	}
 
-	nodes = append(nodes, engine.StateRemovals("commands", configSet, st)...)
+	nodes = append(nodes, engine.StateRemovals("commands", configSet, knowledge, st)...)
 	return nodes, nil
 }
 
 // checkFileConditions evaluates all files: deps and returns a skip reason
 // if any condition is not satisfied. Empty string means all conditions pass.
 // FileConditionSkipReason returns a skip reason when a depends.files condition
-// fails, or empty string when all pass. Exported for distrobox plan notes.
+// fails, or empty string when all pass.
 func FileConditionSkipReason(entry *config.CommandEntry) string {
 	return checkFileConditions(entry)
+}
+
+// CommandPlanSkipReason returns a skip reason from depends.files and depends.folders
+// (same semantics as scripts), or empty when all pass. Exported for distrobox plan notes.
+func CommandPlanSkipReason(entry *config.CommandEntry) string {
+	return commandPlanSkipReason(entry)
+}
+
+func commandPlanSkipReason(entry *config.CommandEntry) string {
+	if r := checkFileConditions(entry); r != "" {
+		return r
+	}
+	return checkFolderConditions(entry)
 }
 
 func checkFileConditions(entry *config.CommandEntry) string {
@@ -106,6 +119,23 @@ func checkFileConditions(entry *config.CommandEntry) string {
 			reasons = append(reasons, "file exists: "+p)
 		} else if !negate && !exists {
 			reasons = append(reasons, "file absent: "+p)
+		}
+	}
+	return strings.Join(reasons, "; ")
+}
+
+// checkFolderConditions mirrors scripts: paths come from depends.folders after var expansion.
+func checkFolderConditions(entry *config.CommandEntry) string {
+	var reasons []string
+	for _, path := range entry.FolderConditions() {
+		negate := strings.HasPrefix(path, "!")
+		p := strings.TrimPrefix(path, "!")
+		_, err := os.Stat(p)
+		exists := err == nil
+		if negate && exists {
+			reasons = append(reasons, "folder exists: "+p)
+		} else if !negate && !exists {
+			reasons = append(reasons, "folder absent: "+p)
 		}
 	}
 	return strings.Join(reasons, "; ")

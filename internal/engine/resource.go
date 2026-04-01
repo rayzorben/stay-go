@@ -112,6 +112,12 @@ type PlanNode struct {
 	// the packages, commands, and exports that will be applied in-box).
 	Notes []string
 
+	// AbsentFromSystem is set on ActionRemove nodes when the item is confirmed
+	// not to exist on the live system (knowledge says absent). The engine will
+	// skip the system command and delete the node directly from state rather
+	// than failing with a "not found" error.
+	AbsentFromSystem bool
+
 	// ExecutionErr is set by the engine if Execute returns an error.
 	ExecutionErr error
 }
@@ -205,8 +211,12 @@ func CheckLevelChange(id, newLevel string, action ActionType, st *state.State) (
 
 // StateRemovals returns ActionRemove PlanNodes for every node tracked in state
 // under resourceType that is no longer present in configSet (name → true).
+// knowledge is the live-system map (nodeID → present); when a node is confirmed
+// absent from the system (knowledge != nil && !knowledge[id]), AbsentFromSystem
+// is set so the engine skips the system command and just cleans up state.
+// Pass nil for knowledge in display-only contexts (e.g. distrobox delta notes).
 // This is shared by all resources to avoid duplicating the removal detection loop.
-func StateRemovals(resourceType string, configSet map[string]bool, st *state.State) []*PlanNode {
+func StateRemovals(resourceType string, configSet map[string]bool, knowledge map[string]bool, st *state.State) []*PlanNode {
 	prefix := resourceType + "/"
 	var nodes []*PlanNode
 	for id := range st.Nodes {
@@ -220,11 +230,12 @@ func StateRemovals(resourceType string, configSet map[string]bool, st *state.Sta
 				level = entry.Level
 			}
 			nodes = append(nodes, &PlanNode{
-				ID:           id,
-				ResourceType: resourceType,
-				DisplayName:  name,
-				Action:       ActionRemove,
-				Level:        level,
+				ID:               id,
+				ResourceType:     resourceType,
+				DisplayName:      name,
+				Action:           ActionRemove,
+				Level:            level,
+				AbsentFromSystem: knowledge != nil && !knowledge[id],
 			})
 		}
 	}

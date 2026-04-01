@@ -1,18 +1,56 @@
+# stay-go configuration
+#
+# This file is the common base layer loaded on every host and user.
+# Host- and user-specific layers are merged in via !include directives below.
+# Entries in this file carry level "common". Included files inherit their level
+# from the key name (e.g. "user_config" → level "user_config").
+#
+# Layer resolution order (last wins for conflicting entries):
+#   default.yaml  →  hosts/<hostname>.yaml  →  users/<user>.yaml
+#
+# ─── Include directives ───────────────────────────────────────────────────────
+# !include resolves ${config_root}, ${env:VAR}, $(command), and ~ at load time.
+# Missing files are silently skipped.
 user_config: !include "${config_root}/users/${env:USER}.yaml"
 host_config: !include "${config_root}/hosts/$(hostname).yaml"
 
+# ─── variables ────────────────────────────────────────────────────────────────
+# Defines named values referenced as ${var_name} anywhere in config strings.
+# Variables may reference each other recurisvely (resolved up to 15 passes).
+#
+# Implicit variables always available (no need to declare here):
+#   ${config_root}  — absolute path to the config directory
+#   ${env:NAME}     — value of environment variable NAME
+#   $(command)      — stdout of a shell command
+#   ~               — current user's home directory (expanded everywhere inline)
 variables:
   dropbox_folder: ~/Dropbox
   lucida_font: ${config_root}/files/fonts/LucidaProgrammerNerdFontMono-Regular.ttf
   ttf_fonts: /usr/share/fonts/TTF
   lucida_target: ${ttf_fonts}/LucidaProgrammerNerdFontMono-Regular.ttf
 
+# ─── packages ─────────────────────────────────────────────────────────────────
+# Declares packages that must be installed on the system.
+# Package manager is auto-detected (paru/yay/pacman/apt-get/dnf/zypper/apk/xbps).
+#
+# Scalar form (most common):
+#   - package-name
+#
+# Mapping form (all fields):
+#   - name: package-name        # (or "package: package-name") required
+#     services: [svc]           # optional: inline services that depend on this package.
+#                               # Each entry may be a string or a full service mapping.
+#                               # Creates an implicit depends: [{packages: [name]}] on each service.
+#
+# Force-removal prefix (rarely needed):
+#   - "!package-name"           # remove this package if present; untrack when gone
 packages:
   - qt6-wayland
   - qt5-wayland
   - sddm
   - niri
   - neovim
+  - vi
   - git
   - dropbox
   - xdg-desktop-portal-gnome
@@ -28,40 +66,112 @@ packages:
   - qt5-multimedia
   - ghostty
   - wl-clipboard
-
-# adding services to packages creates an implicit depends on that package
+  - xdg-desktop-portal
+  - xdg-desktop-portal-gtk
+  - xdg-desktop-portal-gnome
   - package: docker
     services: [docker]
   - package: dsearch-bin
-    services: [{service: dsearch, user: true}] 
+    services: [{service: dsearch, user: true}]
 
+# ─── groups ───────────────────────────────────────────────────────────────────
+# Declares system groups that must exist. stay-go creates missing groups but
+# does not modify or remove groups that already exist on the system.
+#
+# Scalar form:
+#   - group-name
+#
+# Mapping form (all fields):
+#   - name: group-name          # required
 groups:
   - wheel
   - docker
   - disk
 
+# ─── users ────────────────────────────────────────────────────────────────────
+# Declares system users and their desired properties. stay-go creates or
+# updates users with useradd/usermod and manages group membership with gpasswd.
+#
+# All fields:
+#   username: string            # required — login name
+#   name: string                # optional — full display name (GECOS field)
+#   shell: string               # optional — login shell path, e.g. /bin/fish
+#   home: string                # optional — home directory path (~ expanded)
+#   uid: string                 # optional — numeric UID (only applied on create)
+#   groups: [string]            # optional — supplementary groups to add the user to
+#                               #   (groups must exist; auto-dep on groups resource)
 users:
   - username: rayben
     name: Ray Bennett
     shell: /bin/fish
     groups: ['wheel', 'docker']
 
+# ─── services ─────────────────────────────────────────────────────────────────
+# Declares systemd services that must be enabled (and optionally started).
+# stay-go uses systemctl enable/disable/restart.
+#
+# Scalar form (enables & starts system service):
+#   - service-name
+#
+# Mapping form (all fields):
+#   service: string             # required — systemd unit name (without .service suffix)
+#   user: bool                  # optional — true = systemd --user service (default: false)
+#   enabled: bool               # optional — false = disable/stop instead of enable (default: true)
+#   now: bool                   # optional — false = enable without starting (default: true)
+#   depends: [{resource: [names]}]  # optional — dep nodes that must exist first
 services:
   - service: sddm
-    depends: 
+    depends:
       - packages: ['sddm']
     now: false
   - service: hyprpolkitagent
     user: true
     depends:
       - packages: ['hyprpolkitagent']
-      
 
+# ─── files ────────────────────────────────────────────────────────────────────
+# Declares files that must exist at a target path. Sources may be local paths,
+# inline content, git repos, or http/https URLs. Symlinks are supported.
+#
+# All fields:
+#   source: string              # optional — one of:
+#                               #   local path (relative to config_root or absolute)
+#                               #   git URL (git@host:repo.git or https://…)
+#                               #   http/https URL (downloaded to target)
+#                               #   ${secrets.name} (decrypted secret written to file)
+#   content: string             # optional — inline file content (alternative to source)
+#   add: bool                   # optional — with content: append snippet if absent,
+#                               #   strip on removal (default: false = full-file overwrite)
+#   target: string              # required — destination path (~ and vars expanded)
+#   mode: string                # optional — permission mode, e.g. "0600" or "+x"
+#   symlink: bool               # optional — create a symlink instead of copying (default: false)
+#                               #   only valid for local source paths
+#   sudo: bool                  # optional — write target with sudo (default: false)
+#   ssh_key: [string]           # optional — SSH private key paths for git SSH auth
+#   depends: [{resource: [names]}]  # optional — resource deps; use "file" key to depend
+#                               #   on another files entry by its target path
 files:
   - source: ${lucida_font}
     target: ${lucida_target}
     sudo: true
-    
+
+# ─── commands ─────────────────────────────────────────────────────────────────
+# Declares named inline shell commands that stay-go runs and tracks by content hash.
+# A command re-runs when its command string or rollback string changes (UPDATE).
+# On removal from config, rollback (if present) is executed before untracking.
+#
+# Scalar form (name and command are both the string):
+#   - sh some-command
+#
+# Mapping form (all fields):
+#   name: string                # required — unique identifier for tracking
+#   command: string             # required — shell command or multiline block
+#   rollback: string            # optional — command to run on REMOVE
+#   sudo: bool                  # optional — run command with sudo (default: false)
+#   depends: [{resource: [names]}]  # optional — resource or file/folder conditions:
+#     - packages: [names]
+#     - files: ["path"]         # skip if file does not exist; "!path" skip if it does
+#     - folders: ["path"]       # skip if folder does not exist; "!path" skip if it does
 commands:
   - name: install dms
     command: curl -fsSL https://install.danklinux.com | sh
@@ -72,6 +182,18 @@ commands:
     depends:
       - files: ['${lucida_target}']
 
+# ─── scripts ──────────────────────────────────────────────────────────────────
+# Declares shell scripts that stay-go runs and tracks by file content hash.
+# The script re-runs when the file changes on disk (UPDATE). On removal from
+# config, only state is cleared — no system undo is performed.
+#
+# All fields:
+#   script: string              # required — path to script file (vars expanded)
+#   sudo: bool                  # optional — run script with sudo (default: false)
+#   depends: [{resource: [names]}]  # optional — resource or folder conditions:
+#     - packages: [names]
+#     - services: [names]
+#     - folders: ["path"]       # skip if folder does not exist; "!path" skip if it does
 scripts:
   - script: ${config_root}/scripts/aerial-sddm-theme.sh
     sudo: true
@@ -79,6 +201,84 @@ scripts:
       - packages: [git, gst-libav, phonon-qt5-gstreamer, gst-plugins-good, qt5-quickcontrols, qt5-graphicaleffects, qt5-multimedia]
       - services: [sddm]
       - folders: ["!/usr/share/sddm/themes/aerial-sddm-theme"]
-  
+
+# ─── secrets ──────────────────────────────────────────────────────────────────
+# Stores age-encrypted secret values. Encrypted with `stay-go encrypt`.
+# Decrypted values are available as ${secrets.name} in any string field at
+# execute time (never at plan time, so secrets never appear in plan output).
+# 
+# To create secrets simply define them as key value pairs here and run stay-go. 
+# The value will be encrypted with a password prompted by the user or stored in
+# the keyring after the first time it is provided.
+#
+# Example: tailscale_auth_key: tskey-auth-kR9unencrypted219zSBL11
+#
+# All fields:
+#   name: !encrypted <base64>   # the encrypted value; name becomes the secret key
+#   _verify: !encrypted <...>   # required sentinel — verifies the correct age key
+#                               # is available before any secrets are decrypted
 secrets:
   _verify: !encrypted sn+HxIuQgQPiWUqaJZkumrQQWr+18XTZyAd6+9kYPLKj/ETTZ2X/RGw5CtUBPuFz4bBQqY8hTC7CJlWfzj8=
+
+# ─── containers ───────────────────────────────────────────────────────────────
+# Declares containers managed by Docker or Podman (auto-detected).
+# stay-go creates, recreates on config change, and removes containers.
+# Field names mirror docker-compose conventions.
+#
+# All fields:
+#   name: string                # optional — container name (derived from image if omitted)
+#   image: string               # required — image reference, e.g. redis:alpine
+#   runtime: string             # optional — "docker" or "podman" (auto-detected if omitted)
+#   ports: [string]             # optional — "hostPort:containerPort"
+#   volumes: [string]           # optional — "host:container[:options]"
+#   environment: [string]       # optional — "KEY=value" pairs
+#   env_file: [string]          # optional — paths to env files
+#   labels: {key: value}        # optional — container labels
+#   restart: string             # optional — no | always | unless-stopped | on-failure
+#   network_mode: string        # optional — host | bridge | none | container:<name>
+#   networks: [string]          # optional — named networks to attach
+#   command: [string]           # optional — override container CMD
+#   entrypoint: string          # optional — override container ENTRYPOINT
+#   user: string                # optional — run as this user inside the container
+#   privileged: bool            # optional — run in privileged mode (default: false)
+#   cap_add: [string]           # optional — Linux capabilities to add
+#   cap_drop: [string]          # optional — Linux capabilities to drop
+#   devices: [string]           # optional — device mappings
+#   dns: [string]               # optional — custom DNS servers
+#   extra_hosts: [string]       # optional — "hostname:ip" entries added to /etc/hosts
+#   hostname: string            # optional — container hostname
+#   pull: string                # optional — always | missing (default) | never
+#   sudo: bool                  # optional — run docker/podman with sudo (default: false)
+#   depends: [{resource: [names]}]  # optional
+
+# ─── distrobox ────────────────────────────────────────────────────────────────
+# Declares Distrobox containers managed by stay-go. Each entry produces two
+# plan nodes: one for the host-level container lifecycle, and one that runs
+# stay-go inside the box to apply in-box packages and commands.
+#
+# All fields:
+#   name: string                # required — distrobox container name
+#   image: string               # required — OCI image, e.g. docker.io/cachyos/cachyos-v3:latest
+#   init: bool                  # optional — run /sbin/init (systemd inside box, default: false)
+#   home: string                # optional — custom home directory for the box
+#   home_sudo: bool             # optional — create home with sudo if outside user home (default: false)
+#   exports: [string]           # optional — app names to export to host via distrobox-export
+#   depends: [{resource: [names]}]  # optional — host-level deps (e.g. services: [docker])
+#   packages: [PackageEntry]    # optional — packages to install inside the box
+#   commands:                   # optional — inline commands to run inside the box
+#     - name: string            #   same schema as top-level commands, including:
+#       command: string         #   rollback, sudo, and depends with files/folders conditions
+
+# ─── json ─────────────────────────────────────────────────────────────────────
+# Manages specific values within an existing JSON file without touching the rest.
+# Values are set using gron-style dot/bracket path notation. On removal from
+# config, original values saved at first-apply are restored.
+#
+# All fields:
+#   file: string                # required — path to the JSON file to manage (~ expanded)
+#   depends: [{resource: [names]}]  # optional
+#   json.<path>: value          # one or more json-path assignments, e.g.:
+#     json.foo.bar: true
+#     json.items[0].name: "hello"
+#     json.nested:              # mapping values are flattened to individual leaf paths
+#       key: value

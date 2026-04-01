@@ -52,9 +52,10 @@ func (r *Resource) guestPkgKnowledge(ctx context.Context, entry *config.Distrobo
 }
 
 type guestDelta struct {
-	kind   string // "packages" or "commands"
-	name   string
-	action engine.ActionType
+	kind       string // "packages" or "commands"
+	name       string
+	action     engine.ActionType
+	skipReason string // non-empty when action == ActionSkip
 }
 
 func deltaOrder(a engine.ActionType) int {
@@ -138,7 +139,7 @@ func (r *Resource) guestWorkDeltas(entry *config.DistroboxEntry, guestPkg map[st
 		out = append(out, guestDelta{kind: "packages", name: p.Name, action: act})
 	}
 
-	for _, n := range engine.StateRemovals("packages", installNames, boxSt) {
+	for _, n := range engine.StateRemovals("packages", installNames, nil, boxSt) {
 		if pendingPkgRem[n.DisplayName] {
 			continue
 		}
@@ -150,8 +151,8 @@ func (r *Resource) guestWorkDeltas(entry *config.DistroboxEntry, guestPkg map[st
 		c := &entry.Commands[i]
 		cmdNames[c.Name] = true
 		id := config.NodeID("commands", c.Name)
-		if reason := commands.FileConditionSkipReason(c); reason != "" {
-			out = append(out, guestDelta{kind: "commands", name: c.Name, action: engine.ActionSkip})
+		if reason := commands.CommandPlanSkipReason(c); reason != "" {
+			out = append(out, guestDelta{kind: "commands", name: c.Name, action: engine.ActionSkip, skipReason: reason})
 			continue
 		}
 		hash := commandConfigHash(c)
@@ -165,7 +166,7 @@ func (r *Resource) guestWorkDeltas(entry *config.DistroboxEntry, guestPkg map[st
 		}
 		out = append(out, guestDelta{kind: "commands", name: c.Name, action: act})
 	}
-	for _, n := range engine.StateRemovals("commands", cmdNames, boxSt) {
+	for _, n := range engine.StateRemovals("commands", cmdNames, nil, boxSt) {
 		out = append(out, guestDelta{kind: "commands", name: n.DisplayName, action: engine.ActionRemove})
 	}
 
@@ -260,6 +261,9 @@ func formatGuestWorkNotes(entry *config.DistroboxEntry, deltas []guestDelta, gue
 	var pkgTok, cmdTok []string
 	for _, d := range deltas {
 		tok := engine.ColoredPlanDelta(d.action, d.name)
+		if d.skipReason != "" {
+			tok += " (" + d.skipReason + ")"
+		}
 		switch d.kind {
 		case "commands":
 			cmdTok = append(cmdTok, tok)

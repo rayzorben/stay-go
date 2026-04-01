@@ -69,6 +69,7 @@ func main() {
 		configDir      string
 		statePath      string
 		debug          bool
+		verbose        bool
 		dryRun         bool
 		autoYes        bool
 		quietPlan      bool
@@ -80,8 +81,10 @@ func main() {
 	flag.StringVar(&configDir, "config", "config", "path to config directory")
 	flag.StringVar(&configDir, "c", "config", "path to config directory (shorthand)")
 	flag.StringVar(&statePath, "state", state.DefaultPath(), "path to state JSON file")
-	flag.BoolVar(&debug, "debug", false, "stream all command output to the terminal")
+	flag.BoolVar(&debug, "debug", false, "stream all command output to the terminal (truncates >5 lines)")
 	flag.BoolVar(&debug, "d", false, "stream all command output (shorthand)")
+	flag.BoolVar(&verbose, "verbose", false, "with --debug, stream all output without truncation")
+	flag.BoolVar(&verbose, "v", false, "with --debug, stream all output without truncation (shorthand)")
 	flag.Var(&show, "show", "print tracked state without executing: --show (all), --show=packages|groups|users|services|variables")
 	flag.BoolVar(&dryRun, "dry-run", false, "show plan without executing")
 	flag.BoolVar(&dryRun, "n", false, "show plan without executing (shorthand)")
@@ -119,7 +122,7 @@ func main() {
 	}
 
 	// Shared process executor.
-	exec := &executor.Executor{Debug: debug}
+	exec := &executor.Executor{Debug: debug, Verbose: verbose}
 
 	// --guest-knowledge: gather what packages are installed (runs inside a distrobox).
 	// Outputs a JSON map of nodeID → true and exits. Used internally by the distrobox resource.
@@ -184,8 +187,8 @@ Usage:
 Flags:
   -c, --config string   path to config directory (default "config")
       --state  string   path to state file (default %q)
-  -d, --debug [scope]   stream command output; scope: all (default), users,
-                        packages, groups, services, variables
+  -d, --debug           stream command output; outputs >5 lines are truncated
+      --verbose, -v     with --debug: stream all output without truncation
   -n, --dry-run         show plan without executing
       --version         print build version and exit
 

@@ -130,6 +130,9 @@ const (
 	grpMoved    groupID = 2
 	grpRemoving groupID = 3
 	grpSkipped  groupID = 4
+	// grpInSync is only used for distrobox nodes that are ActionTrack so the row
+	// (and continuation notes) still appear — otherwise TRACK is fully hidden.
+	grpInSync groupID = 5
 )
 
 // nodeGroupID maps an ActionType to its sort group (display order only).
@@ -149,6 +152,26 @@ func nodeGroupID(a ActionType) (groupID, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// planNodeDisplayGroup returns the display group for a plan row, or (0, false) to omit the row.
+func planNodeDisplayGroup(n *PlanNode) (groupID, bool) {
+	g, ok := nodeGroupID(n.Action)
+	if ok {
+		return g, true
+	}
+	if n.Action == ActionTrack && n.ResourceType == "distrobox" {
+		return grpInSync, true
+	}
+	return 0, false
+}
+
+// planDisplayActionLabel is like compactActionLabel but shows "= sync" for in-sync distrobox rows.
+func planDisplayActionLabel(n *PlanNode) string {
+	if n.Action == ActionTrack && n.ResourceType == "distrobox" {
+		return "= sync"
+	}
+	return compactActionLabel(n.Action)
 }
 
 // ─── Low-level rendering primitives ──────────────────────────────────────────
@@ -198,6 +221,9 @@ func actionColumnWidth() int {
 		if l := len(compactActionLabel(a)); l > w {
 			w = l
 		}
+	}
+	if l := len("= sync"); l > w {
+		w = l
 	}
 	if l := len("action"); l > w {
 		w = l
@@ -259,6 +285,45 @@ func truncateVisible(s string, maxVis int) string {
 	}
 	b.WriteString("…")
 	return b.String()
+}
+
+// planSkipDetailLine writes a skip-reason continuation line in yellow so it
+// stands out from ordinary dim detail lines.
+func planSkipDetailLine(w io.Writer, levelColW int, text string, tw int) {
+	const pipe = "│ "
+	indent := 2 + levelColW + 2
+	prefixVis := indent + len(pipe)
+	maxText := tw - prefixVis
+	if maxText < 8 {
+		maxText = 8
+	}
+	if len(text) > maxText {
+		text = text[:maxText-1] + "…"
+	}
+	fmt.Fprintf(w, "%s%s%s%s%s%s%s\n",
+		strings.Repeat(" ", indent),
+		ansiDim, pipe, ansiReset,
+		ansiYellow, text, ansiReset,
+	)
+}
+
+// skipNoteLine writes dim-yellow continuation lines beneath execution skip rows,
+// formatted identically to noteLine but in yellow to distinguish skip reasons
+// from error messages.
+func skipNoteLine(w io.Writer, text string, tw int) {
+	const firstPrefix = "     └ "
+	const contPrefix = "       "
+	const prefixCols = 7
+	maxRunes := noteMaxRunes(tw, prefixCols)
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		p := firstPrefix
+		if i > 0 {
+			p = contPrefix
+		}
+		line = truncateStringVisual(line, maxRunes)
+		fmt.Fprintf(w, "%s%s%s%s\n", ansiYellow, p, line, ansiReset)
+	}
 }
 
 // planDetailLine writes a continuation aligned under the resource column.
@@ -397,7 +462,7 @@ func DisplayPlan(w io.Writer, nodes []*PlanNode) {
 	}
 	var visible []vnode
 	for _, n := range nodes {
-		g, ok := nodeGroupID(n.Action)
+		g, ok := planNodeDisplayGroup(n)
 		if !ok {
 			continue
 		}
@@ -489,6 +554,9 @@ func DisplayPlan(w io.Writer, nodes []*PlanNode) {
 
 		n := v.n
 		aColor := actionColor(n.Action)
+		if n.Action == ActionTrack && n.ResourceType == "distrobox" {
+			aColor = func(s string) string { return ansiDim + s + ansiReset }
+		}
 
 		levelPlain := v.level
 		if len(levelPlain) > levelW {
@@ -510,7 +578,7 @@ func DisplayPlan(w io.Writer, nodes []*PlanNode) {
 		}
 		typeField := ansiCyan + fmt.Sprintf("%-*s", typColW, typePlain) + ansiReset
 
-		actPlain := fmt.Sprintf("%-*s", aw, compactActionLabel(n.Action))
+		actPlain := fmt.Sprintf("%-*s", aw, planDisplayActionLabel(n))
 		act := aColor(actPlain)
 
 		fmt.Fprintf(w, "  %s  %s  %s  %s\n", levelField, nameField, typeField, act)
@@ -523,7 +591,7 @@ func DisplayPlan(w io.Writer, nodes []*PlanNode) {
 			for _, part := range strings.Split(n.SkipReason, "; ") {
 				part = strings.TrimSpace(part)
 				if part != "" {
-					planDetailLine(w, levelW, part, tw)
+					planSkipDetailLine(w, levelW, part, tw)
 				}
 			}
 		case n.Description != "":
@@ -618,6 +686,8 @@ func DisplayExecutionResult(w io.Writer, node *PlanNode, err error, dur time.Dur
 
 	if err != nil {
 		noteLine(w, err.Error(), termWidth())
+	} else if node.Action == ActionSkip && node.SkipReason != "" {
+		skipNoteLine(w, node.SkipReason, termWidth())
 	}
 }
 

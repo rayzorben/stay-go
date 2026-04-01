@@ -49,12 +49,13 @@ type CommandEntry struct {
 }
 
 // DependsOnIDs converts the raw depends field into canonical resource node IDs,
-// skipping the special "files" key which is handled as a condition at plan time.
+// skipping the special "files" and "folders" keys which are handled at plan time
+// (same pattern as ScriptEntry).
 func (e *CommandEntry) DependsOnIDs() []string {
 	var ids []string
 	for _, dep := range e.Depends {
 		for resourceType, names := range dep {
-			if resourceType == "files" {
+			if resourceType == "files" || resourceType == "folders" {
 				continue
 			}
 			for _, name := range names {
@@ -63,6 +64,17 @@ func (e *CommandEntry) DependsOnIDs() []string {
 		}
 	}
 	return ids
+}
+
+// FolderConditions returns the folder conditions declared in depends (see scripts).
+// A path starting with "!" means the folder must NOT exist; otherwise it must exist.
+func (e *CommandEntry) FolderConditions() []string {
+	for _, dep := range e.Depends {
+		if folders, ok := dep["folders"]; ok {
+			return folders
+		}
+	}
+	return nil
 }
 
 // FileConditions returns the file existence conditions declared in depends.

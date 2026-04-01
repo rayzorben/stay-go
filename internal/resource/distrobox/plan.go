@@ -98,6 +98,14 @@ func (r *Resource) BuildPlan(ctx context.Context, knowledge map[string]bool, st 
 			if applyAction == engine.ActionTrack && guestWorkPending(deltas) {
 				applyAction = engine.ActionUpdate
 			}
+			// Inverse: UPDATE triggered purely by a config hash change (e.g. a
+			// package added to config that was already installed and adopted into
+			// boxSt on a previous run). If guest inventory is reliable and nothing
+			// is actually pending, downgrade to TRACK so the engine just saves the
+			// new hash silently instead of showing an unexplained "~ update".
+			if applyAction == engine.ActionUpdate && guestOk && !guestWorkPending(deltas) {
+				applyAction = engine.ActionTrack
+			}
 			includeExports := applyAction == engine.ActionAdd || applyAction == engine.ActionUpdate
 			exportAct := engine.ActionUpdate
 			if applyAction == engine.ActionAdd {
@@ -127,7 +135,7 @@ func (r *Resource) BuildPlan(ctx context.Context, knowledge map[string]bool, st 
 			Level:        entry.Level,
 			Description:  applyDesc,
 			Notes:        applyNotes,
-			StateData:    stateData,
+			StateData: stateData,
 		}
 		nodes = append(nodes, applyNode)
 		r.nodeConfigs[aid] = entry

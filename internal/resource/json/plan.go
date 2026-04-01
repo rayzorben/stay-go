@@ -103,7 +103,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 		})
 	}
 
-	nodes = append(nodes, engine.StateRemovals("json", configSet, st)...)
+	nodes = append(nodes, engine.StateRemovals("json", configSet, knowledge, st)...)
 	return nodes, nil
 }
 

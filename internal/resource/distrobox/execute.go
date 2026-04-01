@@ -138,8 +138,16 @@ func (r *Resource) executeApply(ctx context.Context, node *engine.PlanNode, entr
 	if r.exec.Debug {
 		guestArgs = append(guestArgs, "--debug")
 	}
+	if r.exec.Verbose {
+		guestArgs = append(guestArgs, "--verbose")
+	}
 	inBoxArgs := append([]string{"enter", "-n", entry.Name, "--", guestBin}, guestArgs...)
-	result, err := r.exec.Run(ctx, executor.Options{Stream: true}, "distrobox", inBoxArgs...)
+	// AllowInteractive allocates a PTY for the distrobox process so that sudo
+	// inside the container can open /dev/tty and prompt for a password.
+	// Without a PTY, the subprocess has no controlling terminal and sudo fails
+	// with "a terminal is required". Falls back to Stream when stdin is not a
+	// TTY (e.g. CI), which is the correct behaviour in non-interactive contexts.
+	result, err := r.exec.Run(ctx, executor.Options{Stream: true, AllowInteractive: true}, "distrobox", inBoxArgs...)
 	fmt.Fprintln(os.Stdout, strings.Repeat("─", sepWidth))
 	if err != nil {
 		return fmt.Errorf("applying in-box config for %q: %w\nstderr: %s", entry.Name, err, result.Stderr)

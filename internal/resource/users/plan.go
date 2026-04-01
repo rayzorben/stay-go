@@ -110,7 +110,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 	}
 
 	// Append REMOVE nodes for users tracked in state but removed from config.
-	nodes = append(nodes, engine.StateRemovals("users", configSet, st)...)
+	nodes = append(nodes, engine.StateRemovals("users", configSet, knowledge, st)...)
 	return nodes, nil
 }
 

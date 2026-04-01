@@ -19,6 +19,7 @@ package config
 import (
 	"os"
 	"os/exec"
+	"reflect"
 	"strings"
 )
 
@@ -55,112 +56,79 @@ func ResolveString(s string, vars map[string]string) string {
 	return resolveOne(s, vars, home)
 }
 
-// ApplyVars substitutes all ${key} and ~ tokens in every string field of cfg.
+// ApplyVars substitutes all ${key} and ~ tokens in every string field of cfg
+// by walking the entire value tree via reflection. Fields tagged `yaml:"-"` are
+// skipped (they are internal-only and must not be mutated here).
 func ApplyVars(cfg *Config, vars map[string]string) {
 	r := func(s string) string { return ResolveString(s, vars) }
+	applyVarsValue(reflect.ValueOf(cfg), r)
+}
 
-	for i := range cfg.Packages {
-		cfg.Packages[i].Name = r(cfg.Packages[i].Name)
-		for j := range cfg.Packages[i].Services {
-			cfg.Packages[i].Services[j].Service = r(cfg.Packages[i].Services[j].Service)
-			for k, dep := range cfg.Packages[i].Services[j].Depends {
-				for k2, vals := range dep {
-					for l, v := range vals {
-						cfg.Packages[i].Services[j].Depends[k][k2][l] = r(v)
-					}
-				}
+// applyVarsValue recursively walks v and calls r on every settable string.
+// Pointers and interfaces are followed. Structs skip fields tagged yaml:"-".
+// map[string][]string (the Depends shape) has its values resolved in place.
+func applyVarsValue(v reflect.Value, r func(string) string) {
+	switch v.Kind() {
+	case reflect.Ptr, reflect.Interface:
+		if !v.IsNil() {
+			applyVarsValue(v.Elem(), r)
+		}
+	case reflect.Struct:
+		t := v.Type()
+		for i := range v.NumField() {
+			ft := t.Field(i)
+			// Skip fields marked yaml:"-" — these are internal (Level, DecryptedSecrets, etc.)
+			if ft.Tag.Get("yaml") == "-" {
+				continue
+			}
+			applyVarsValue(v.Field(i), r)
+		}
+	case reflect.Slice:
+		for i := range v.Len() {
+			applyVarsValue(v.Index(i), r)
+		}
+	case reflect.Map:
+		for _, key := range v.MapKeys() {
+			elem := v.MapIndex(key)
+			resolved := applyVarsMapValue(elem, r)
+			if resolved.IsValid() {
+				v.SetMapIndex(key, resolved)
+			}
+		}
+	case reflect.String:
+		if v.CanSet() {
+			v.SetString(r(v.String()))
+		}
+	}
+}
+
+// applyVarsMapValue resolves variables in a map value (which is not addressable
+// and therefore not directly settable). Returns the new reflect.Value to set.
+func applyVarsMapValue(v reflect.Value, r func(string) string) reflect.Value {
+	switch v.Kind() {
+	case reflect.String:
+		return reflect.ValueOf(r(v.String()))
+	case reflect.Slice:
+		// e.g. map[string][]string — resolve each element and return a new slice.
+		out := reflect.MakeSlice(v.Type(), v.Len(), v.Len())
+		for i := range v.Len() {
+			elem := v.Index(i)
+			if elem.Kind() == reflect.String {
+				out.Index(i).SetString(r(elem.String()))
+			} else {
+				out.Index(i).Set(elem)
+			}
+		}
+		return out
+	case reflect.Interface:
+		if !v.IsNil() {
+			inner := applyVarsMapValue(v.Elem(), r)
+			if inner.IsValid() {
+				return inner
 			}
 		}
 	}
-	for i := range cfg.Groups {
-		cfg.Groups[i].Name = r(cfg.Groups[i].Name)
-	}
-	for i := range cfg.Users {
-		cfg.Users[i].Shell = r(cfg.Users[i].Shell)
-		cfg.Users[i].Home = r(cfg.Users[i].Home)
-		cfg.Users[i].UID = r(cfg.Users[i].UID)
-		for j, g := range cfg.Users[i].Groups {
-			cfg.Users[i].Groups[j] = r(g)
-		}
-	}
-	for i := range cfg.Services {
-		cfg.Services[i].Service = r(cfg.Services[i].Service)
-	}
-	for i := range cfg.Scripts {
-		cfg.Scripts[i].Script = r(cfg.Scripts[i].Script)
-	}
-	for i := range cfg.Commands {
-		cfg.Commands[i].Name = r(cfg.Commands[i].Name)
-		cfg.Commands[i].Command = r(cfg.Commands[i].Command)
-		cfg.Commands[i].Rollback = r(cfg.Commands[i].Rollback)
-		for j, dep := range cfg.Commands[i].Depends {
-			for k, vals := range dep {
-				for l, v := range vals {
-					cfg.Commands[i].Depends[j][k][l] = r(v)
-				}
-			}
-		}
-	}
-	for i := range cfg.Files {
-		// Source: ${secrets.*} refs are intentionally left untouched by resolveOne.
-		cfg.Files[i].Source = r(cfg.Files[i].Source)
-		cfg.Files[i].Target = r(cfg.Files[i].Target)
-		for j := range cfg.Files[i].SSHKey {
-			cfg.Files[i].SSHKey[j] = r(cfg.Files[i].SSHKey[j])
-		}
-		for j, dep := range cfg.Files[i].Depends {
-			for k, vals := range dep {
-				for l, v := range vals {
-					cfg.Files[i].Depends[j][k][l] = r(v)
-				}
-			}
-		}
-	}
-	for i := range cfg.Containers {
-		cfg.Containers[i].Image = r(cfg.Containers[i].Image)
-		cfg.Containers[i].Hostname = r(cfg.Containers[i].Hostname)
-		cfg.Containers[i].Entrypoint = r(cfg.Containers[i].Entrypoint)
-		for j := range cfg.Containers[i].Volumes {
-			cfg.Containers[i].Volumes[j] = r(cfg.Containers[i].Volumes[j])
-		}
-		for j := range cfg.Containers[i].Environment {
-			cfg.Containers[i].Environment[j] = r(cfg.Containers[i].Environment[j])
-		}
-		for j := range cfg.Containers[i].EnvFile {
-			cfg.Containers[i].EnvFile[j] = r(cfg.Containers[i].EnvFile[j])
-		}
-	}
-	for i := range cfg.Json {
-		cfg.Json[i].File = r(cfg.Json[i].File)
-		for j, dep := range cfg.Json[i].Depends {
-			for k, vals := range dep {
-				for l, v := range vals {
-					cfg.Json[i].Depends[j][k][l] = r(v)
-				}
-			}
-		}
-	}
-	for i := range cfg.Distrobox {
-		cfg.Distrobox[i].Image = r(cfg.Distrobox[i].Image)
-		cfg.Distrobox[i].Home = r(cfg.Distrobox[i].Home)
-		for j := range cfg.Distrobox[i].Packages {
-			cfg.Distrobox[i].Packages[j].Name = r(cfg.Distrobox[i].Packages[j].Name)
-			for k := range cfg.Distrobox[i].Packages[j].Services {
-				cfg.Distrobox[i].Packages[j].Services[k].Service = r(cfg.Distrobox[i].Packages[j].Services[k].Service)
-				for di, dep := range cfg.Distrobox[i].Packages[j].Services[k].Depends {
-					for dk, vals := range dep {
-						for dl, v := range vals {
-							cfg.Distrobox[i].Packages[j].Services[k].Depends[di][dk][dl] = r(v)
-						}
-					}
-				}
-			}
-		}
-		for j := range cfg.Distrobox[i].Commands {
-			cfg.Distrobox[i].Commands[j].Command = r(cfg.Distrobox[i].Commands[j].Command)
-			cfg.Distrobox[i].Commands[j].Rollback = r(cfg.Distrobox[i].Commands[j].Rollback)
-		}
-	}
+	return reflect.Value{}
 }
 
 // resolveEnvVars replaces ${env:NAME} tokens with the corresponding OS

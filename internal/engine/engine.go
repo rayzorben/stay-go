@@ -276,6 +276,15 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 				succeeded[node.ID] = false
 				continue
 			}
+			// REMOVE for a node confirmed absent from the system: skip the system
+			// command entirely and just clean up state. Avoids "not found" failures
+			// when a resource was removed from both config and the live system.
+			if node.Action == ActionRemove && node.AbsentFromSystem {
+				st.Delete(node.ID)
+				succeeded[node.ID] = true
+				DisplayExecutionResult(os.Stdout, node, nil, 0)
+				continue
+			}
 			DisplayExecutionProgress(os.Stdout, node, "")
 			if node.NeedsSudo {
 				// Commit the progress line — sudo will prompt via /dev/tty and
@@ -299,6 +308,11 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 			DisplayExecutionResult(os.Stdout, node, execErr, dur)
 
 		case ActionSkip:
+			// In quiet-plan mode (inside distrobox), the plan was suppressed, so
+			// show skipped nodes with their reason during the execution phase.
+			if e.opts.QuietPlan {
+				DisplayExecutionResult(os.Stdout, node, nil, 0)
+			}
 			succeeded[node.ID] = false
 		}
 	}

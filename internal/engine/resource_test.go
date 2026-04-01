@@ -48,7 +48,7 @@ func TestStateRemovals_Basic(t *testing.T) {
 	st.Set("users/alice", "h3", "", nil) // different resource type — should be ignored
 
 	configSet := map[string]bool{"neovim": true} // vim not in config
-	nodes := StateRemovals("packages", configSet, st)
+	nodes := StateRemovals("packages", configSet, nil, st)
 
 	if len(nodes) != 1 {
 		t.Fatalf("want 1 removal, got %d", len(nodes))
@@ -60,7 +60,7 @@ func TestStateRemovals_Basic(t *testing.T) {
 
 func TestStateRemovals_Empty(t *testing.T) {
 	st, _ := state.Load("/nonexistent")
-	nodes := StateRemovals("packages", map[string]bool{"neovim": true}, st)
+	nodes := StateRemovals("packages", map[string]bool{"neovim": true}, nil, st)
 	if len(nodes) != 0 {
 		t.Errorf("expected no removals, got %d", len(nodes))
 	}

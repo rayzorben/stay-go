@@ -26,8 +26,9 @@ packages:
   - slurp
   - wayfreeze
   - satty
-  - package: forticlient-vpn
-    services: [forticlient]
+  - networkmanager-openconnect
+  - cachyos-gaming-meta
+  - cachyos-gaming-applications
 
 services:
   - service: gcr-ssh-agent.socket
@@ -188,6 +189,10 @@ distrobox:
       - storageexplorer
       - jdk-openjdk
       - pulumi
+      - azure-cli
+      - vi
+      - vim
+      - neovim
 
     commands:
       - name: Install Databricks CLI
@@ -197,11 +202,16 @@ distrobox:
       - name: Install uv
         command: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
+      - name: azure devops
+        command: |
+          az extension add --name azure-devops
+        depends:
+          - packages: [azure-cli]
       - name: link dev folder
         command: |
-          ln -sf ~/Dropbox/PC/sedanos/development ${sedanos_home}/development
+          ln -sf /home/${env:USER}/Dropbox/PC/sedanos/development ${sedanos_home}/development
         depends:
-          - folders: ["~/Dropbox/PC/sedanos/development"]
+          - folders: ["/home/${env:USER}/Dropbox/PC/sedanos/development"]
 
 json:
   - file: ~/.config/DankMaterialShell/settings.json

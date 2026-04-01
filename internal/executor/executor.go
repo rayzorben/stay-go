@@ -22,6 +22,10 @@ import (
 // is streamed to the terminal in addition to being captured.
 type Executor struct {
 	Debug bool
+	// Verbose, when true alongside Debug, streams all command output without
+	// truncation. Without Verbose, Debug mode shows only the first and last line
+	// of outputs longer than 5 lines.
+	Verbose bool
 	// ProgressFn, when set, is called with each non-empty output line as the
 	// command runs. Used by the engine to show a live last-line indicator in the
 	// progress row. Not called in Debug or Stream mode (output is already visible).
@@ -100,9 +104,12 @@ func (e *Executor) Run(ctx context.Context, opts Options, name string, args ...s
 	}
 
 	var stdoutBuf, stderrBuf bytes.Buffer
-	if e.Debug || opts.Stream {
+	if (e.Debug && e.Verbose) || opts.Stream {
 		cmd.Stdout = io.MultiWriter(os.Stdout, &stdoutBuf)
 		cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
+	} else if e.Debug {
+		cmd.Stdout = &stdoutBuf
+		cmd.Stderr = &stderrBuf
 	} else if e.ProgressFn != nil {
 		llw := &lastLineWriter{fn: e.ProgressFn}
 		cmd.Stdout = io.MultiWriter(llw, &stdoutBuf)
@@ -120,7 +127,29 @@ func (e *Executor) Run(ctx context.Context, opts Options, name string, args ...s
 	if exitErr, ok := err.(*exec.ExitError); ok {
 		result.ExitCode = exitErr.ExitCode()
 	}
+
+	// In Debug (non-Verbose) mode, print captured output now, truncated if long.
+	if e.Debug && !e.Verbose {
+		if stdoutBuf.Len() > 0 {
+			fmt.Fprint(os.Stdout, truncateDebugOutput(result.Stdout))
+		}
+		if stderrBuf.Len() > 0 {
+			fmt.Fprint(os.Stderr, truncateDebugOutput(result.Stderr))
+		}
+	}
+
 	return result, err
+}
+
+// truncateDebugOutput truncates command output longer than 5 lines to just the
+// first and last line, separated by "...". Used in --debug mode to reduce noise.
+func truncateDebugOutput(s string) string {
+	s = strings.TrimRight(s, "\n")
+	lines := strings.Split(s, "\n")
+	if len(lines) <= 5 {
+		return s + "\n"
+	}
+	return lines[0] + "\n...\n" + lines[len(lines)-1] + "\n"
 }
 
 // isTerminalStdin reports whether os.Stdin is connected to a terminal.

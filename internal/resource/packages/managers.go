@@ -46,7 +46,7 @@ var managers = []PackageManager{
 		Binary:     "paru",
 		NeedsSudo:  false, // paru escalates internally when needed
 		ListCmd:    []string{"pacman", "-Qq"},
-		InstallCmd: []string{"paru", "-S", "--noconfirm", "--needed"},
+		InstallCmd: []string{"paru", "-Sy", "--noconfirm", "--needed"},
 		RemoveCmd:  []string{"paru", "-Rs", "--noconfirm"},
 	},
 	{
@@ -54,7 +54,7 @@ var managers = []PackageManager{
 		Binary:     "yay",
 		NeedsSudo:  false,
 		ListCmd:    []string{"pacman", "-Qq"},
-		InstallCmd: []string{"yay", "-S", "--noconfirm", "--needed"},
+		InstallCmd: []string{"yay", "-Sy", "--noconfirm", "--needed"},
 		RemoveCmd:  []string{"yay", "-Rs", "--noconfirm"},
 	},
 	{
@@ -62,7 +62,7 @@ var managers = []PackageManager{
 		Binary:     "pacman",
 		NeedsSudo:  true,
 		ListCmd:    []string{"pacman", "-Qq"},
-		InstallCmd: []string{"pacman", "-S", "--noconfirm", "--needed"},
+		InstallCmd: []string{"pacman", "-Sy", "--noconfirm", "--needed"},
 		RemoveCmd:  []string{"pacman", "-Rs", "--noconfirm"},
 	},
 	// ── Debian / Ubuntu ──────────────────────────────────────────────────────
