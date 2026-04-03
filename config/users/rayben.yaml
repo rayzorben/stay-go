@@ -40,6 +40,8 @@ scripts:
     depends:
       - packages: [zoxide, fzf]
       
+ghostty: !include "./commands/ghostty.yaml"
+
 commands:
   - name: git config
     command: |
@@ -192,7 +194,6 @@ containers:
     depends:
       - services: [docker]
 
-ghostty: !include "./commands/ghostty.yaml"
 
 variables:
   sedanos_home: /home/distrobox/sedanos
@@ -202,28 +203,20 @@ distrobox:
     image: docker.io/cachyos/cachyos-v3:latest
     home: ${sedanos_home}
     home_sudo: true
+    
+    extends: ${config_root}/users/distrobox-base.yaml
     exports:
-      - microsoft-edge-stable
       - code
       - cursor
       - StorageExplorer
 
     packages:
-      - paru
-      - microsoft-edge-stable-bin
-      - xdg-desktop-portal
-      - xdg-desktop-portal-gtk
-      - xdg-desktop-portal-gnome
-      - xdg-utils
       - visual-studio-code-bin
       - cursor-bin
       - azure-cli
       - storageexplorer
       - jdk-openjdk
       - azure-cli
-      - vi
-      - vim
-      - neovim
       - pulumi
       - nodejs
       - npm

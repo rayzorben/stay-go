@@ -1,4 +1,13 @@
 packages:
+  - paru
+  - microsoft-edge-stable-bin
+  - xdg-desktop-portal
+  - xdg-desktop-portal-gtk
+  - xdg-desktop-portal-gnome
+  - xdg-utils
+  - vi
+  - vim
+  - neovim
   
 exports:
   - microsoft-edge-stable

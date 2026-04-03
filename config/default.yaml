@@ -214,8 +214,10 @@ scripts:
 # Example: tailscale_auth_key: tskey-auth-kR9unencrypted219zSBL11
 #
 # All fields:
-#   name: !encrypted <base64>   # the encrypted value; name becomes the secret key
-#   _verify: !encrypted <...>   # required sentinel — verifies the correct age key
+#   name: !encrypted <base64>   # flat form: name becomes the secret key (${secrets.name})
+#   group:                      # nested form: keys are dot-joined (${secrets.group.name})
+#     name: !encrypted <base64>
+#   _verify: !encrypted <...>   # required sentinel — verifies the correct password
 #                               # is available before any secrets are decrypted
 secrets:
   _verify: !encrypted sn+HxIuQgQPiWUqaJZkumrQQWr+18XTZyAd6+9kYPLKj/ETTZ2X/RGw5CtUBPuFz4bBQqY8hTC7CJlWfzj8=
@@ -262,6 +264,12 @@ secrets:
 #   init: bool                  # optional — run /sbin/init (systemd inside box, default: false)
 #   home: string                # optional — custom home directory for the box
 #   home_sudo: bool             # optional — create home with sudo if outside user home (default: false)
+#   extends: string             # optional — path to a base YAML file (vars expanded); merges
+#                               #   packages, commands, and exports from that file under this
+#                               #   entry. Base items come first; entry-specific items override
+#                               #   (packages/commands matched by name) or append (exports deduped).
+#                               #   Only distrobox entries support extends; it is not available
+#                               #   on other resource types.
 #   exports: [string]           # optional — app names to export to host via distrobox-export
 #   depends: [{resource: [names]}]  # optional — host-level deps (e.g. services: [docker])
 #   packages: [PackageEntry]    # optional — packages to install inside the box

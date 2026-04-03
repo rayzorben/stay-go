@@ -466,6 +466,7 @@ type DistroboxEntry struct {
 	Init     bool                  `yaml:"init,omitempty"`      // run /sbin/init (systemd inside)
 	Home     string                `yaml:"home,omitempty"`      // custom home directory for the box
 	HomeSudo bool                  `yaml:"home_sudo,omitempty"` // sudo required to create Home
+	Extends  string                `yaml:"extends,omitempty"`   // path to a base file; merged under entry-specific fields
 	Packages []PackageEntry        `yaml:"packages,omitempty"`  // in-box packages
 	Commands []CommandEntry        `yaml:"commands,omitempty"`  // in-box inline commands
 	Exports  []string              `yaml:"exports,omitempty"`   // app names to export via distrobox-export
@@ -608,6 +609,10 @@ func LoadAll(configDir string) (*Config, error) {
 	ApplyVars(cfg, resolved)
 	NormalizeExpandedForms(cfg)
 	cfg.Vars = resolved
+
+	if err := applyDistroboxExtends(cfg, resolved); err != nil {
+		return nil, fmt.Errorf("distrobox extends: %w", err)
+	}
 
 	return cfg, nil
 }
