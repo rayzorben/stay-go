@@ -106,6 +106,10 @@ files:
     target: ~/.config/niri/spawn.kdl
     symlink: true
     
+  - source: ${config_root}/files/niri/binds.kdl
+    target: ~/.config/niri/binds.kdl
+    symlink: true
+    
   - source: ${config_root}/files/config/electron-flags.conf
     target: ~/.config/electron-flags.conf
     symlink: true
@@ -165,6 +169,7 @@ files:
       // added by stay
       include "rules.kdl"
       include "spawn.kdl"
+      include "binds.kdl"
     target: ~/.config/niri/config.kdl
     add: true
   - content: |
@@ -241,6 +246,9 @@ distrobox:
           ln -sf /home/${env:USER}/Dropbox/PC/sedanos/development ${sedanos_home}/development
         depends:
           - folders: ["/home/${env:USER}/Dropbox/PC/sedanos/development"]
+      - name: fish config
+        command: |
+          curl https://raw.githubusercontent.com/oh-my-fish/oh-my-fish/master/bin/install | fish
 
 json:
   - file: ~/.config/DankMaterialShell/settings.json
