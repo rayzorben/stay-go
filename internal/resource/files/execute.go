@@ -59,19 +59,20 @@ func (r *Resource) apply(ctx context.Context, node *engine.PlanNode, entry *conf
 	switch kind {
 
 	case kindInline:
+		content := config.ApplySecretsRaw(entry.Content, r.cfg.DecryptedSecrets)
 		if entry.Add {
 			perm := os.FileMode(0o644)
 			// Config snippet changed: drop what we last wrote, then ensure the new snippet is present.
 			if node.Action == engine.ActionUpdate {
 				if ent, ok := st.Get(node.ID); ok && ent.Data != nil {
-					if old, ok := ent.Data[stateKeySnippet].(string); ok && old != "" && old != entry.Content {
+					if old, ok := ent.Data[stateKeySnippet].(string); ok && old != "" && old != content {
 						if err := removeSnippetFromFile(ctx, r.exec, target, old, sudo); err != nil {
 							return fmt.Errorf("replacing additive snippet in %q: %w", target, err)
 						}
 					}
 				}
 			}
-			if err := appendSnippetIfMissing(ctx, r.exec, target, entry.Content, perm, sudo); err != nil {
+			if err := appendSnippetIfMissing(ctx, r.exec, target, content, perm, sudo); err != nil {
 				return fmt.Errorf("additive write %q: %w", target, err)
 			}
 			break
@@ -80,7 +81,7 @@ func (r *Resource) apply(ctx context.Context, node *engine.PlanNode, entry *conf
 			return fmt.Errorf("creating directory for %q: %w", target, err)
 		}
 		if sudo {
-			tmp, err := writeTempFile([]byte(entry.Content), 0o644)
+			tmp, err := writeTempFile([]byte(content), 0o644)
 			if err != nil {
 				return fmt.Errorf("writing temp for %q: %w", target, err)
 			}
@@ -89,7 +90,7 @@ func (r *Resource) apply(ctx context.Context, node *engine.PlanNode, entry *conf
 				return fmt.Errorf("writing %q: %w", target, err)
 			}
 		} else {
-			if err := atomicWriteFile(target, []byte(entry.Content), 0o644); err != nil {
+			if err := atomicWriteFile(target, []byte(content), 0o644); err != nil {
 				return fmt.Errorf("writing %q: %w", target, err)
 			}
 		}

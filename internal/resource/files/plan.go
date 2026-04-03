@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/rayben/stay-go/internal/config"
 	"github.com/rayben/stay-go/internal/engine"
@@ -26,6 +27,24 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 	for i := range r.cfg.Files {
 		entry := &r.cfg.Files[i]
 		target := entry.Target
+		if target == "" {
+			label := entry.Source
+			if entry.Content != "" {
+				snippet := strings.TrimSpace(entry.Content)
+				if len(snippet) > 40 {
+					snippet = snippet[:40] + "…"
+				}
+				label = fmt.Sprintf("(inline: %s)", snippet)
+			}
+			nodes = append(nodes, &engine.PlanNode{
+				ID:           fmt.Sprintf("files/__no_target_%d__", i),
+				ResourceType: "files",
+				DisplayName:  label,
+				Action:       engine.ActionSkip,
+				SkipReason:   "missing target",
+			})
+			continue
+		}
 		configSet[target] = true
 
 		id := nodeID(target)
@@ -68,10 +87,13 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 		}
 		action, levelDesc := engine.CheckLevelChange(id, level, action, st)
 
-		// Build dependency list: declared deps + implicit secret dep.
+		// Build dependency list: declared deps + implicit secret dep(s).
 		deps := entry.DependsOnIDs()
 		if kind == kindSecret {
 			deps = append(deps, config.NodeID("secrets", secretKey(entry.Source)))
+		}
+		for _, key := range config.SecretRefs(entry.Content) {
+			deps = append(deps, config.NodeID("secrets", key))
 		}
 
 		notes := buildFileNotes(action, kind, entry)
@@ -121,7 +143,7 @@ func computeHash(entry *config.FileEntry, kind sourceKind, cfg *config.Config) (
 	source := entry.Source
 	switch kind {
 	case kindInline:
-		source = entry.Content
+		source = config.ApplySecretsCiphertext(entry.Content, cfg.Secrets)
 	case kindSecret:
 		key := secretKey(entry.Source)
 		se, ok := cfg.Secrets[key]

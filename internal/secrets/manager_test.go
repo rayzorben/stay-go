@@ -41,7 +41,7 @@ commands:
 func TestEncryptInFilePreservesFormatting(t *testing.T) {
 	path := writeTemp(t, sampleYAML)
 
-	mgr := &Manager{password: "testpassword", unlocked: true}
+	mgr := &Manager{password: "testpassword", unlocked: true, newSetup: true}
 	if _, err := mgr.EncryptInFile(path, []string{"api_key", "db_pass"}); err != nil {
 		t.Fatalf("encryptInFile: %v", err)
 	}

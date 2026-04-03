@@ -173,51 +173,11 @@ func (m *Manager) EncryptInFile(path string, keys []string) (map[string]string, 
 	// Split into lines. yaml.Node.Line is 1-indexed; slice is 0-indexed.
 	lines := strings.Split(string(raw), "\n")
 
-	type replacement struct {
-		startLine int // 0-indexed, inclusive
-		endLine   int // 0-indexed, inclusive
-		newLine   string
-	}
-	var replacements []replacement
+	var replacements []encReplacement
 	ciphertexts := make(map[string]string, len(keys))
 
-	for i := 0; i+1 < len(secretsNode.Content); i += 2 {
-		keyNode := secretsNode.Content[i]
-		valNode := secretsNode.Content[i+1]
-
-		if !toEncrypt[keyNode.Value] {
-			continue
-		}
-
-		isBlock := valNode.Style == yaml.LiteralStyle || valNode.Style == yaml.FoldedStyle
-		if !isBlock && strings.Contains(valNode.Value, "\n") {
-			return nil, fmt.Errorf("secret %q: multi-line quoted strings are not supported; use a block scalar (|)", keyNode.Value)
-		}
-
-		ct, err := encrypt(valNode.Value, m.password)
-		if err != nil {
-			return nil, fmt.Errorf("encrypting secret %q: %w", keyNode.Value, err)
-		}
-		ciphertexts[keyNode.Value] = ct
-
-		keyLineIdx := keyNode.Line - 1
-		colIdx := valNode.Column - 1
-
-		if isBlock {
-			// For block scalars the value starts on the line after the key.
-			// Find the last line of the block.
-			keyIndent := countIndent(lines[keyLineIdx])
-			endLineIdx := findBlockEndLine(lines, keyLineIdx, keyIndent)
-			newLine := lines[keyLineIdx][:colIdx] + "!encrypted " + ct
-			replacements = append(replacements, replacement{keyLineIdx, endLineIdx, newLine})
-		} else {
-			lineIdx := valNode.Line - 1
-			if lineIdx < 0 || lineIdx >= len(lines) || colIdx < 0 || colIdx > len(lines[lineIdx]) {
-				return nil, fmt.Errorf("secret %q: unexpected position line=%d col=%d", keyNode.Value, valNode.Line, valNode.Column)
-			}
-			newLine := lines[lineIdx][:colIdx] + "!encrypted " + ct
-			replacements = append(replacements, replacement{lineIdx, lineIdx, newLine})
-		}
+	if err := m.collectEncryptReplacements(secretsNode, "", toEncrypt, lines, ciphertexts, &replacements); err != nil {
+		return nil, err
 	}
 
 	// Apply replacements bottom-to-top so line indices stay valid.
@@ -254,6 +214,68 @@ func (m *Manager) EncryptInFile(path string, keys []string) (map[string]string, 
 		return nil, err
 	}
 	return ciphertexts, nil
+}
+
+type encReplacement struct {
+	startLine int
+	endLine   int
+	newLine   string
+}
+
+// collectEncryptReplacements recursively walks a secrets mapping node,
+// finding leaf scalars whose dot-joined path is in toEncrypt, and appending
+// line replacements. prefix is empty at the top level.
+func (m *Manager) collectEncryptReplacements(node *yaml.Node, prefix string, toEncrypt map[string]bool, lines []string, ciphertexts map[string]string, replacements *[]encReplacement) error {
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		keyNode := node.Content[i]
+		valNode := node.Content[i+1]
+
+		dotKey := keyNode.Value
+		if prefix != "" {
+			dotKey = prefix + "." + keyNode.Value
+		}
+
+		// Nested group — recurse.
+		if valNode.Kind == yaml.MappingNode && valNode.Tag != "!encrypted" {
+			if err := m.collectEncryptReplacements(valNode, dotKey, toEncrypt, lines, ciphertexts, replacements); err != nil {
+				return err
+			}
+			continue
+		}
+
+		if !toEncrypt[dotKey] {
+			continue
+		}
+
+		isBlock := valNode.Style == yaml.LiteralStyle || valNode.Style == yaml.FoldedStyle
+		if !isBlock && strings.Contains(valNode.Value, "\n") {
+			return fmt.Errorf("secret %q: multi-line quoted strings are not supported; use a block scalar (|)", dotKey)
+		}
+
+		ct, err := encrypt(valNode.Value, m.password)
+		if err != nil {
+			return fmt.Errorf("encrypting secret %q: %w", dotKey, err)
+		}
+		ciphertexts[dotKey] = ct
+
+		keyLineIdx := keyNode.Line - 1
+		colIdx := valNode.Column - 1
+
+		if isBlock {
+			keyIndent := countIndent(lines[keyLineIdx])
+			endLineIdx := findBlockEndLine(lines, keyLineIdx, keyIndent)
+			newLine := lines[keyLineIdx][:colIdx] + "!encrypted " + ct
+			*replacements = append(*replacements, encReplacement{keyLineIdx, endLineIdx, newLine})
+		} else {
+			lineIdx := valNode.Line - 1
+			if lineIdx < 0 || lineIdx >= len(lines) || colIdx < 0 || colIdx > len(lines[lineIdx]) {
+				return fmt.Errorf("secret %q: unexpected position line=%d col=%d", dotKey, valNode.Line, valNode.Column)
+			}
+			newLine := lines[lineIdx][:colIdx] + "!encrypted " + ct
+			*replacements = append(*replacements, encReplacement{lineIdx, lineIdx, newLine})
+		}
+	}
+	return nil
 }
 
 // findMappingValue returns the value node for key in a yaml MappingNode, or nil.
