@@ -272,8 +272,22 @@ func (g *GroupEntry) UnmarshalYAML(value *yaml.Node) error {
 type PackageEntry struct {
 	Name     string
 	Remove   bool
-	Services []ServiceEntry `yaml:"-"` // mapping form only; cleared after normalization
-	Level    string         `yaml:"-"` // set by LoadAll, not parsed from YAML
+	Depends  []map[string][]string `yaml:"depends,omitempty"` // resource deps; must round-trip in YAML (e.g. distrobox guest config)
+	Services []ServiceEntry        `yaml:"-"`                 // mapping form only; cleared after normalization
+	Level    string                `yaml:"-"`                 // set by LoadAll, not parsed from YAML
+}
+
+// DependsOnIDs converts the raw depends field into canonical resource node IDs.
+func (p *PackageEntry) DependsOnIDs() []string {
+	var ids []string
+	for _, dep := range p.Depends {
+		for resourceType, names := range dep {
+			for _, name := range names {
+				ids = append(ids, resourceType+"/"+name)
+			}
+		}
+	}
+	return ids
 }
 
 // inlinePackageService decodes a service under packages: as a string or full object.
@@ -314,6 +328,7 @@ func (p *PackageEntry) UnmarshalYAML(value *yaml.Node) error {
 		var m struct {
 			Name     string                 `yaml:"name"`
 			Package  string                 `yaml:"package"`
+			Depends  []map[string][]string  `yaml:"depends,omitempty"`
 			Services []inlinePackageService `yaml:"services,omitempty"`
 		}
 		if err := value.Decode(&m); err != nil {
@@ -327,6 +342,7 @@ func (p *PackageEntry) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("package entry: need \"name\" or \"package\"")
 		}
 		applyName(raw)
+		p.Depends = m.Depends
 		if len(m.Services) > 0 {
 			p.Services = make([]ServiceEntry, len(m.Services))
 			for i := range m.Services {
@@ -466,6 +482,7 @@ type DistroboxEntry struct {
 	Init     bool                  `yaml:"init,omitempty"`      // run /sbin/init (systemd inside)
 	Home     string                `yaml:"home,omitempty"`      // custom home directory for the box
 	HomeSudo bool                  `yaml:"home_sudo,omitempty"` // sudo required to create Home
+	Root     bool                  `yaml:"root,omitempty"`      // pass --root to distrobox create (rootful container manager); default false
 	Extends  string                `yaml:"extends,omitempty"`   // path to a base file; merged under entry-specific fields
 	Packages []PackageEntry        `yaml:"packages,omitempty"`  // in-box packages
 	Commands []CommandEntry        `yaml:"commands,omitempty"`  // in-box inline commands

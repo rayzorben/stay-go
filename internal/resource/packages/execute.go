@@ -21,6 +21,20 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 
 	switch node.Action {
 	case engine.ActionAdd, engine.ActionUpdate:
+		if isPackageSyncNode(node.ID) {
+			if r.manager.UpdateCmd == nil {
+				st.Set(node.ID, node.ConfigHash, node.Level, nil)
+				return nil
+			}
+			opts := executor.Options{Sudo: r.manager.NeedsSudo, Env: r.manager.Env}
+			cmd := r.manager.UpdateCmd
+			result, err := r.exec.Run(ctx, opts, cmd[0], cmd[1:]...)
+			if err != nil {
+				return fmt.Errorf("syncing package index: %w\nstderr: %s", err, result.Stderr)
+			}
+			st.Set(node.ID, node.ConfigHash, node.Level, nil)
+			return nil
+		}
 		cmd := r.manager.InstallCmd
 		result, err := r.exec.Run(ctx, opts, cmd[0], append(cmd[1:], name)...)
 		if err != nil {

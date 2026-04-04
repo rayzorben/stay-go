@@ -2,6 +2,7 @@ package packages
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/rayben/stay-go/internal/config"
 	"github.com/rayben/stay-go/internal/engine"
@@ -22,6 +23,12 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 	}
 
 	var nodes []*engine.PlanNode
+
+	// Per-package index sync (e.g. apt-get update): one node per install package
+	// so ordering is always (that package's depends…) → sync → install. This
+	// avoids a single global sync running before unrelated commands, and keeps
+	// independent packages from waiting on another package's command deps.
+	needsSync := r.manager != nil && r.manager.UpdateCmd != nil
 
 	// Emit forced-removal ("!pkg") nodes first so they execute before installs,
 	// avoiding conflicts. Only emit a node when the package is actually installed.
@@ -63,6 +70,22 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 			desc = levelDesc
 		}
 
+		deps := append([]string(nil), p.DependsOnIDs()...)
+		if needsSync {
+			sid := packageSyncID(p.Name)
+			syncDeps := append([]string(nil), p.DependsOnIDs()...)
+			nodes = append(nodes, &engine.PlanNode{
+				ID:           sid,
+				ResourceType: "packages",
+				DisplayName:  fmt.Sprintf("%s update (%s)", r.manager.Name, p.Name),
+				Action:       engine.ActionAdd,
+				ConfigHash:   config.Hash(r.manager.UpdateCmd),
+				NeedsSudo:    r.manager.NeedsSudo,
+				DependsOn:    syncDeps,
+				Description:  "sync package index",
+			})
+			deps = append(deps, sid)
+		}
 		nodes = append(nodes, &engine.PlanNode{
 			ID:           id,
 			ResourceType: "packages",
@@ -72,6 +95,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 			NeedsSudo:    r.manager != nil && r.manager.NeedsSudo,
 			Level:        level,
 			Description:  desc,
+			DependsOn:    deps,
 			StateData:    map[string]interface{}{"name": p.Name},
 		})
 	}

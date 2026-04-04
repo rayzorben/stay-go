@@ -11,6 +11,7 @@ package packages
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/rayben/stay-go/internal/config"
 	"github.com/rayben/stay-go/internal/executor"
@@ -22,6 +23,20 @@ type Resource struct {
 	cfg     *config.Config
 	exec    *executor.Executor
 	manager *PackageManager // set on first call to ensureManager
+}
+
+// syncNodePrefix is the ID prefix for per-package index-sync plan nodes
+// ("packages/__sync__/<package name>"). Each install package gets its own sync
+// so apt-like updates run after that package's depends (e.g. a repo command)
+// and independent packages are not ordered after unrelated commands.
+const syncNodePrefix = "packages/__sync__/"
+
+func packageSyncID(packageName string) string {
+	return syncNodePrefix + packageName
+}
+
+func isPackageSyncNode(id string) bool {
+	return strings.HasPrefix(id, syncNodePrefix) && len(id) > len(syncNodePrefix)
 }
 
 // New creates a packages Resource.
@@ -44,3 +59,4 @@ func (r *Resource) ensureManager(ctx context.Context) error {
 	r.manager = m
 	return nil
 }
+

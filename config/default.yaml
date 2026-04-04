@@ -29,6 +29,26 @@ variables:
   ttf_fonts: /usr/share/fonts/TTF
   lucida_target: ${ttf_fonts}/LucidaProgrammerNerdFontMono-Regular.ttf
 
+# ─── secrets ──────────────────────────────────────────────────────────────────
+# Stores age-encrypted secret values. Encrypted with `stay-go encrypt`.
+# Decrypted values are available as ${secrets.name} in any string field at
+# execute time (never at plan time, so secrets never appear in plan output).
+#
+# To create secrets simply define them as key value pairs here and run stay-go.
+# The value will be encrypted with a password prompted by the user or stored in
+# the keyring after the first time it is provided.
+#
+# Example: tailscale_auth_key: tskey-auth-kR9unencrypted219zSBL11
+#
+# All fields:
+#   name: !encrypted <base64>   # flat form: name becomes the secret key (${secrets.name})
+#   group:                      # nested form: keys are dot-joined (${secrets.group.name})
+#     name: !encrypted <base64>
+#   _verify: !encrypted <...>   # required sentinel — verifies the correct password
+#                               # is available before any secrets are decrypted
+secrets:
+  _verify: !encrypted sn+HxIuQgQPiWUqaJZkumrQQWr+18XTZyAd6+9kYPLKj/ETTZ2X/RGw5CtUBPuFz4bBQqY8hTC7CJlWfzj8=
+
 # ─── packages ─────────────────────────────────────────────────────────────────
 # Declares packages that must be installed on the system.
 # Package manager is auto-detected (paru/yay/pacman/apt-get/dnf/zypper/apk/xbps).
@@ -202,26 +222,6 @@ scripts:
       - services: [sddm]
       - folders: ["!/usr/share/sddm/themes/aerial-sddm-theme"]
 
-# ─── secrets ──────────────────────────────────────────────────────────────────
-# Stores age-encrypted secret values. Encrypted with `stay-go encrypt`.
-# Decrypted values are available as ${secrets.name} in any string field at
-# execute time (never at plan time, so secrets never appear in plan output).
-# 
-# To create secrets simply define them as key value pairs here and run stay-go. 
-# The value will be encrypted with a password prompted by the user or stored in
-# the keyring after the first time it is provided.
-#
-# Example: tailscale_auth_key: tskey-auth-kR9unencrypted219zSBL11
-#
-# All fields:
-#   name: !encrypted <base64>   # flat form: name becomes the secret key (${secrets.name})
-#   group:                      # nested form: keys are dot-joined (${secrets.group.name})
-#     name: !encrypted <base64>
-#   _verify: !encrypted <...>   # required sentinel — verifies the correct password
-#                               # is available before any secrets are decrypted
-secrets:
-  _verify: !encrypted sn+HxIuQgQPiWUqaJZkumrQQWr+18XTZyAd6+9kYPLKj/ETTZ2X/RGw5CtUBPuFz4bBQqY8hTC7CJlWfzj8=
-
 # ─── containers ───────────────────────────────────────────────────────────────
 # Declares containers managed by Docker or Podman (auto-detected).
 # stay-go creates, recreates on config change, and removes containers.
@@ -264,6 +264,8 @@ secrets:
 #   init: bool                  # optional — run /sbin/init (systemd inside box, default: false)
 #   home: string                # optional — custom home directory for the box
 #   home_sudo: bool             # optional — create home with sudo if outside user home (default: false)
+#   root: bool                  # optional — rootful container (distrobox create --root); default false.
+#                               #   Do not enable unless you need it; stay-go never passes --root otherwise.
 #   extends: string             # optional — path to a base YAML file (vars expanded); merges
 #                               #   packages, commands, and exports from that file under this
 #                               #   entry. Base items come first; entry-specific items override

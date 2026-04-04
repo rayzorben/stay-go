@@ -52,6 +52,10 @@ func (r *Resource) executeBox(ctx context.Context, node *engine.PlanNode, entry 
 		if err != nil {
 			return fmt.Errorf("creating distrobox %q: %w\nstderr: %s", entry.Name, err, result.Stderr)
 		}
+		// A new or recreated container has a fresh root; drop any per-box state
+		// from a prior container (e.g. manual distrobox rm) so guest stay-go does
+		// not skip packages/commands that were recorded on the host only.
+		os.RemoveAll(r.boxStateDir(entry.Name)) //nolint:errcheck
 		st.Set(node.ID, node.ConfigHash, node.Level, node.StateData)
 
 	case engine.ActionRemove:

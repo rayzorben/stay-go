@@ -3,6 +3,7 @@ package distrobox
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/rayben/stay-go/internal/config"
@@ -66,6 +67,12 @@ func (r *Resource) BuildPlan(ctx context.Context, knowledge map[string]bool, st 
 		aid := applyNodeID(entry.Name)
 		applyHash := inBoxHash(entry)
 		boxSt, _ := state.Load(r.boxStatePath(entry.Name))
+		// Guest state on disk can outlive the container (manual removal). When the
+		// host will create or recreate the box, plan deltas must not trust it.
+		if action == engine.ActionAdd || action == engine.ActionUpdate {
+			h, _ := os.Hostname()
+			boxSt = &state.State{Hostname: h, Nodes: make(map[string]state.NodeEntry)}
+		}
 
 		var applyAction engine.ActionType
 		var applyDesc string

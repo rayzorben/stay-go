@@ -21,6 +21,9 @@
 //
 //	~/.local/share/stay-go/distrobox/<name>/state.json
 //
+// That directory is removed whenever the host creates or recreates the
+// container so stale guest state cannot survive manual distrobox removal.
+//
 // The sub-config (packages + commands for the box) is written as:
 //
 //	~/.local/share/stay-go/distrobox/<name>/default.yaml
@@ -114,6 +117,18 @@ func (r *Resource) boxConfigDir(name string) string {
 // distroboxHash returns a deterministic hash of the host-level container config.
 // Only fields that affect the box creation command are included.
 func distroboxHash(e *config.DistroboxEntry) string {
+	// Omit Root from the struct when false so existing state hashes stay stable
+	// (default has always been non-root; we only pass --root when root: true).
+	if e.Root {
+		return config.Hash(struct {
+			Name     string
+			Image    string
+			Init     bool
+			Home     string
+			HomeSudo bool
+			Root     bool
+		}{e.Name, e.Image, e.Init, e.Home, e.HomeSudo, true})
+	}
 	return config.Hash(struct {
 		Name     string
 		Image    string
@@ -252,6 +267,7 @@ func needsHomeSudo(e *config.DistroboxEntry) bool {
 }
 
 // buildCreateArgs constructs the argument slice for `distrobox create`.
+// Root defaults to false: stay-go does not pass --root unless the entry sets root: true.
 func buildCreateArgs(e *config.DistroboxEntry) []string {
 	args := []string{"create", "--yes", "--name", e.Name, "--image", e.Image}
 	if e.Init {
@@ -259,6 +275,9 @@ func buildCreateArgs(e *config.DistroboxEntry) []string {
 	}
 	if e.Home != "" {
 		args = append(args, "--home", e.Home)
+	}
+	if e.Root {
+		args = append(args, "--root")
 	}
 	return args
 }

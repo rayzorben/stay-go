@@ -1,6 +1,19 @@
 # The basis for this config is cachy-os with no desktop installed.
 # The default Niri install contains a different shell that is difficult to remove.
 
+variables:
+  sedanos_home: /home/distrobox/sedanos
+  visionet_home: /home/distrobox/visionet
+
+secrets:
+  ssh:
+    id_ed25519: !encrypted x4Ymy7QRZy+muTonTD21H4vODMLPPGAZNg+IxlBU760tJD/Y03dmqKcFv2cInY7HpqgJcT4TqPm9u5wgGQFqJdH5Tk/1baJMaeVoVYl/c8sPeIlGLHt4k2V3ZiKOyOzFyJqNTxChLsd8F0wAxS9L3UMoyIRjPFfJG9kPeq23K/gN58j/jw6XDli3k3m0GgrCvDSDPo/9s9iPclOcQsr4/MSbOAWfjakkBIOwfiYXcQH4J5n/zLv5m9X9p0TZ9GLJaLtuKglRHNZj6tgOkQkpCZUIFBNdCZDWJt7OnqAE6c3DvoyjZud/ac/BDRT6VjliKxGNdC+yyoqc/OUwZqLS91/tt8SJvNEhPw3VIObX+BlatC9ztgaEqe/dpAYMLYts0Bqb0ec0X/JDgePSxHrWP+54F4fVd82Okcky/1qv/igrAgdve1gmw17iCol+WQJ7b3Ctmi9EsVC9mH/lg9U8narPCp0PdMp5zENq/3oWhOxcqy3j8gjZy6tw9k2kKfeUhh7Ieg8jEzVxqCkLPPCibxZqbOroCMMGrKzajdI8mgOIT9z1z8FFJeTHbUN0EgYNANYthVT1dZQIvwdSlfhOxMSqJ8oqrzIkuQmGEVzsTmhZdzjFGTpo2HDqNlukBI190b5Z5sKvAKiA79JEKzKD7/VfGkRdpWpxntVkiQ==
+    id_rsa: !encrypted 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
+    config: !encrypted 7hr9oCjNw7sQQxa2iXpdz7Iznh4/1v119F4TCaMsX29JPABlg3pyfi0gqbw3UX1gL9zw/s7E1AgJgRmpxVHYTvFA48qM2wTIzUzp1Txq9EnTTLHT/2fcNM7hEDcVBMKh7/mH1XWg9uvAlwmYVEMxpLblJkIribq3HC3qx0FD3egN0ARPm0047Dgts+aPCuI+uGdR8fQS90oQYClQmlTmV2yR1EtUTXzBXCh4ikOYGGfKnZE+VX3PzZOnyeJa0+fu9p1qWT6b4ohJARQ6kB1tuPBHj1CrqSno6a1WUz0f8TEe/luVhwtlpgmL/47tM/qdlmfSWv39QhqgWyNnYooIeSQaCMF5kTKWqfolT21E85E2WWfaXF1ySHJ+MX7+CH/shhrIMVMKFBd15S2fssH+JuW6ZaV8tvNe7zzpF/LlRkKovY+G2obZZ89z9RiwHuIzE1Y=
+  databricks:
+    client_secret: !encrypted CLmAj/yRvCT61C9Ze3lZu/cbnVrFmnMwE7e2KkNNVKIRxpRHXNfKJYrT1cFiMoxKG+jwfqyWnBUY57TFwn5M1ahHYEhv7q+k9s3KBtkX2iSKehtu
+    production_pat: !encrypted c4gdGfaIHqUuh857LIEpP/2PjNt4k1xI5CNtjRgbeqdCFSrkz8d48MqNdfWplmsZF5KiaClhxpbuNKcIMnRne1l3wPzVW0NdakYtUoBLSjpS7w==
+
 packages:
   - zoxide
   - fzf
@@ -35,55 +48,8 @@ services:
   - service: gcr-ssh-agent.socket
     user: true
 
-scripts:
-  - script: ${config_root}/scripts/configure-zoxide.sh
-    depends:
-      - packages: [zoxide, fzf]
-      
-ghostty: !include "./commands/ghostty.yaml"
-
-commands:
-  - name: git config
-    command: |
-      git config --global user.name "Raymond Bennett"
-      git config --global user.email "raymond.bennett@gmail.com"
-    depends:
-      - packages: [git]
-    rollback: |
-      git config --global --unset user.name
-      git config --global --unset user.email
-
-  - name: wheel no password
-    command: |
-      sed -i 's/%wheel ALL=(ALL) ALL/%wheel ALL=(ALL) NOPASSWD: ALL/' /etc/sudoers.d/10-installer
-    sudo: true
-    
-  - name: windows fonts
-    command: |
-      pushd ~/Downloads/isos
-      7z e Win11_25H2_English_x64_v2.iso sources/install.wim -aoa
-      7z e install.wim 1/Windows/{Fonts/"*".{ttf,ttc},System32/Licenses/neutral/"*"/"*"/license.rtf} -o/tmp/fonts/ -aoa
-      mkdir -p /usr/local/share/fonts/WindowsFonts
-      cp /tmp/fonts/*.ttf /usr/local/share/fonts/WindowsFonts/
-      chmod -R 644 /usr/local/share/fonts/WindowsFonts/*
-      fc-cache --force
-      fc-cache-32 --force
-    sudo: true
-    depends:
-      - packages: [7zip]
-      - files: [~/Downloads/isos/Win11_25H2_English_x64_v2.iso]
-      - folders: ["!/usr/local/share/fonts/WindowsFonts"]
-    
-secrets:
-  ssh:
-    id_ed25519: !encrypted x4Ymy7QRZy+muTonTD21H4vODMLPPGAZNg+IxlBU760tJD/Y03dmqKcFv2cInY7HpqgJcT4TqPm9u5wgGQFqJdH5Tk/1baJMaeVoVYl/c8sPeIlGLHt4k2V3ZiKOyOzFyJqNTxChLsd8F0wAxS9L3UMoyIRjPFfJG9kPeq23K/gN58j/jw6XDli3k3m0GgrCvDSDPo/9s9iPclOcQsr4/MSbOAWfjakkBIOwfiYXcQH4J5n/zLv5m9X9p0TZ9GLJaLtuKglRHNZj6tgOkQkpCZUIFBNdCZDWJt7OnqAE6c3DvoyjZud/ac/BDRT6VjliKxGNdC+yyoqc/OUwZqLS91/tt8SJvNEhPw3VIObX+BlatC9ztgaEqe/dpAYMLYts0Bqb0ec0X/JDgePSxHrWP+54F4fVd82Okcky/1qv/igrAgdve1gmw17iCol+WQJ7b3Ctmi9EsVC9mH/lg9U8narPCp0PdMp5zENq/3oWhOxcqy3j8gjZy6tw9k2kKfeUhh7Ieg8jEzVxqCkLPPCibxZqbOroCMMGrKzajdI8mgOIT9z1z8FFJeTHbUN0EgYNANYthVT1dZQIvwdSlfhOxMSqJ8oqrzIkuQmGEVzsTmhZdzjFGTpo2HDqNlukBI190b5Z5sKvAKiA79JEKzKD7/VfGkRdpWpxntVkiQ==
-    id_rsa: !encrypted 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
-    config: !encrypted 7hr9oCjNw7sQQxa2iXpdz7Iznh4/1v119F4TCaMsX29JPABlg3pyfi0gqbw3UX1gL9zw/s7E1AgJgRmpxVHYTvFA48qM2wTIzUzp1Txq9EnTTLHT/2fcNM7hEDcVBMKh7/mH1XWg9uvAlwmYVEMxpLblJkIribq3HC3qx0FD3egN0ARPm0047Dgts+aPCuI+uGdR8fQS90oQYClQmlTmV2yR1EtUTXzBXCh4ikOYGGfKnZE+VX3PzZOnyeJa0+fu9p1qWT6b4ohJARQ6kB1tuPBHj1CrqSno6a1WUz0f8TEe/luVhwtlpgmL/47tM/qdlmfSWv39QhqgWyNnYooIeSQaCMF5kTKWqfolT21E85E2WWfaXF1ySHJ+MX7+CH/shhrIMVMKFBd15S2fssH+JuW6ZaV8tvNe7zzpF/LlRkKovY+G2obZZ89z9RiwHuIzE1Y=
-  databricks:
-    client_secret: !encrypted CLmAj/yRvCT61C9Ze3lZu/cbnVrFmnMwE7e2KkNNVKIRxpRHXNfKJYrT1cFiMoxKG+jwfqyWnBUY57TFwn5M1ahHYEhv7q+k9s3KBtkX2iSKehtu
-    production_pat: !encrypted c4gdGfaIHqUuh857LIEpP/2PjNt4k1xI5CNtjRgbeqdCFSrkz8d48MqNdfWplmsZF5KiaClhxpbuNKcIMnRne1l3wPzVW0NdakYtUoBLSjpS7w==
-
 files:
+  # SSH keys and config (written first; dotfiles clone depends on them)
   - source: ${secrets.ssh.id_ed25519}
     target: "~/.ssh/id_ed25519"
     mode: "0600"
@@ -95,23 +61,41 @@ files:
   - source: ${secrets.ssh.config}
     target: "~/.ssh/config"
 
+  # Dotfiles repo
+  - source: git@github.com:rayzorben/dotfiles.git
+    target: ~/dotfiles
+    ssh_key: ["~/.ssh/id_ed25519"]
+    depends:
+      - file: ["~/.ssh/id_ed25519"]
+
+  # Niri compositor config
   - source: ${config_root}/files/niri/screenshot.sh
     target: ~/.config/niri/screenshot.sh
     symlink: true
     mode: "+x"
-    
+
   - source: ${config_root}/files/niri/rules.kdl
     target: ~/.config/niri/rules.kdl
     symlink: true
-    
+
   - source: ${config_root}/files/niri/spawn.kdl
     target: ~/.config/niri/spawn.kdl
     symlink: true
-    
+
   - source: ${config_root}/files/niri/binds.kdl
     target: ~/.config/niri/binds.kdl
     symlink: true
-    
+
+  - content: |
+
+      // added by stay
+      include "rules.kdl"
+      include "spawn.kdl"
+      include "binds.kdl"
+    target: ~/.config/niri/config.kdl
+    add: true
+
+  # Application config files
   - source: ${config_root}/files/config/electron-flags.conf
     target: ~/.config/electron-flags.conf
     symlink: true
@@ -119,35 +103,41 @@ files:
   - source: ${config_root}/files/config/microsoft-edge-stable-flags.conf
     target: ~/.config/microsoft-edge-stable-flags.conf
     symlink: true
-    
-  - source: git@github.com:rayzorben/dotfiles.git
-    target: ~/dotfiles
-    ssh_key: ["~/.ssh/id_ed25519"]
-    depends:
-      - file: ["~/.ssh/id_ed25519"]
 
   - source: ${config_root}/files/config/firefox-user.js
     target: '~/.config/mozilla/firefox/$(awk -F= "/^\[Install/ {getline; print \$2}" ~/.config/mozilla/firefox/profiles.ini)/user.js'
     depends:
-        - packages: ['firefox']
+      - packages: ['firefox']
 
+  - content: |
+      [prod-man]
+      host = https://adb-7405608649113470.10.azuredatabricks.net
+      auth_type = azure-client-secret
+      azure_tenant_id = 10895ab2-90e3-4778-a157-855870900fb7
+      azure_client_id = ca971a3e-1cc2-41b4-a76c-db4bf4c9494d
+      azure_client_secret = ${secrets.databricks.client_secret}
+    target: ~/.databrickscfg
+    mode: "0600"
+
+  # Fish shell functions
   - content: |
       function watchdiff
         set file $argv[1]
         set backup ".$file.bak"
-        
+
         # Create the initial backup if it doesn't exist
         cp $file $backup
-        
+
         echo "Watching $file... (Ctrl+C to stop)"
-        
+
         # We use -p to postpone the first run until a change actually occurs
         echo $file | entr -s "diff -u $backup $file; cp $file $backup"
       end
     target: ~/.config/fish/functions/watchdiff.fish
     mode: "+x"
-    depends: 
+    depends:
       - packages: [entr]
+
   - content: |
       function watchjson
         set file $argv[1]
@@ -166,23 +156,45 @@ files:
     mode: "+x"
     depends:
       - packages: [gron]
-  - content: |
 
-      // added by stay
-      include "rules.kdl"
-      include "spawn.kdl"
-      include "binds.kdl"
-    target: ~/.config/niri/config.kdl
-    add: true
-  - content: |
-      [prod-man]
-      host = https://adb-7405608649113470.10.azuredatabricks.net
-      auth_type = azure-client-secret
-      azure_tenant_id = 10895ab2-90e3-4778-a157-855870900fb7
-      azure_client_id = ca971a3e-1cc2-41b4-a76c-db4bf4c9494d
-      azure_client_secret = ${secrets.databricks.client_secret}
-    target: ~/.databrickscfg
-    mode: "0600"
+ghostty: !include "./commands/ghostty.yaml"
+
+commands:
+  - name: git config
+    command: |
+      git config --global user.name "Raymond Bennett"
+      git config --global user.email "raymond.bennett@gmail.com"
+    depends:
+      - packages: [git]
+    rollback: |
+      git config --global --unset user.name
+      git config --global --unset user.email
+
+  - name: wheel no password
+    command: |
+      sed -i 's/%wheel ALL=(ALL) ALL/%wheel ALL=(ALL) NOPASSWD: ALL/' /etc/sudoers.d/10-installer
+    sudo: true
+
+  - name: windows fonts
+    command: |
+      pushd ~/Downloads/isos
+      7z e Win11_25H2_English_x64_v2.iso sources/install.wim -aoa
+      7z e install.wim 1/Windows/{Fonts/"*".{ttf,ttc},System32/Licenses/neutral/"*"/"*"/license.rtf} -o/tmp/fonts/ -aoa
+      mkdir -p /usr/local/share/fonts/WindowsFonts
+      cp /tmp/fonts/*.ttf /usr/local/share/fonts/WindowsFonts/
+      chmod -R 644 /usr/local/share/fonts/WindowsFonts/*
+      fc-cache --force
+      fc-cache-32 --force
+    sudo: true
+    depends:
+      - packages: [7zip]
+      - files: [~/Downloads/isos/Win11_25H2_English_x64_v2.iso]
+      - folders: ["!/usr/local/share/fonts/WindowsFonts"]
+
+scripts:
+  - script: ${config_root}/scripts/configure-zoxide.sh
+    depends:
+      - packages: [zoxide, fzf]
 
 containers:
   - name: redis
@@ -194,22 +206,16 @@ containers:
     depends:
       - services: [docker]
 
-
-variables:
-  sedanos_home: /home/distrobox/sedanos
-
 distrobox:
   - name: sedanos
     image: docker.io/cachyos/cachyos-v3:latest
     home: ${sedanos_home}
     home_sudo: true
-    
     extends: ${config_root}/users/distrobox-base.yaml
     exports:
       - code
       - cursor
       - StorageExplorer
-
     packages:
       - visual-studio-code-bin
       - cursor-bin
@@ -220,7 +226,6 @@ distrobox:
       - pulumi
       - nodejs
       - npm
-
     commands:
       - name: Install Databricks CLI
         command: |
@@ -242,6 +247,27 @@ distrobox:
       - name: fish config
         command: |
           curl https://raw.githubusercontent.com/oh-my-fish/oh-my-fish/master/bin/install | fish
+
+  - name: visionet
+    image: ubuntu:latest
+    home: ${visionet_home}
+    home_sudo: true
+    #extends: ${config_root}/users/distrobox-base.yaml
+    packages:
+      - package: microsoft-edge-stable
+        depends:
+          - commands: [microsoft-edge-repo]
+    exports:
+      - microsoft-edge-stable
+    commands:
+      - name: microsoft-edge-repo
+        command: |
+          pushd /tmp
+          curl https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > microsoft.gpg
+          install -o root -g root -m 644 microsoft.gpg /etc/apt/trusted.gpg.d/
+          sh -c 'echo "deb [arch=amd64] https://packages.microsoft.com/repos/edge stable main" > /etc/apt/sources.list.d/microsoft-edge-dev.list'
+          rm microsoft.gpg
+        sudo: true
 
 json:
   - file: ~/.config/DankMaterialShell/settings.json
@@ -273,4 +299,3 @@ json:
           - "focusedWindow"
           - {}
       cursorSettings.size: 28
-      

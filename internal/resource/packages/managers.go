@@ -21,6 +21,11 @@ type PackageManager struct {
 	// Env contains extra environment variables injected into every command
 	// (e.g. DEBIAN_FRONTEND=noninteractive for apt-get).
 	Env []string
+	// UpdateCmd, when non-nil, triggers a per-install-package index sync plan
+	// node (e.g. "apt-get update") after that package's depends and before
+	// install. Managers that embed sync in install (pacman -Sy, paru -Sy)
+	// leave this nil.
+	UpdateCmd []string
 	// ParseOutput optionally post-processes the raw list output.
 	// nil means treat each non-empty line as a package name.
 	ParseOutput func(raw string) []string
@@ -71,6 +76,7 @@ var managers = []PackageManager{
 		Binary:     "apt-get",
 		NeedsSudo:  true,
 		ListCmd:    []string{"dpkg-query", "-f", "${Package}\\n", "-W"},
+		UpdateCmd:  []string{"apt-get", "update", "-y"},
 		InstallCmd: []string{"apt-get", "install", "-y"},
 		RemoveCmd:  []string{"apt-get", "remove", "-y", "--autoremove"},
 		Env:        []string{"DEBIAN_FRONTEND=noninteractive"},
@@ -99,6 +105,7 @@ var managers = []PackageManager{
 		Binary:     "zypper",
 		NeedsSudo:  true,
 		ListCmd:    []string{"rpm", "-qa", "--queryformat", "%{NAME}\\n"},
+		UpdateCmd:  []string{"zypper", "refresh"},
 		InstallCmd: []string{"zypper", "install", "-y", "--no-confirm"},
 		RemoveCmd:  []string{"zypper", "remove", "-y"},
 	},
@@ -108,17 +115,19 @@ var managers = []PackageManager{
 		Binary:     "apk",
 		NeedsSudo:  true,
 		ListCmd:    []string{"apk", "info"},
+		UpdateCmd:  []string{"apk", "update"},
 		InstallCmd: []string{"apk", "add"},
 		RemoveCmd:  []string{"apk", "del"},
 	},
 	// ── Void Linux ────────────────────────────────────────────────────────────
 	{
-		Name:       "xbps-install",
-		Binary:     "xbps-install",
-		NeedsSudo:  true,
-		ListCmd:    []string{"xbps-query", "-l"},
-		InstallCmd: []string{"xbps-install", "-y"},
-		RemoveCmd:  []string{"xbps-remove", "-y"},
+		Name:        "xbps-install",
+		Binary:      "xbps-install",
+		NeedsSudo:   true,
+		ListCmd:     []string{"xbps-query", "-l"},
+		UpdateCmd:   []string{"xbps-install", "-S"},
+		InstallCmd:  []string{"xbps-install", "-y"},
+		RemoveCmd:   []string{"xbps-remove", "-y"},
 		ParseOutput: parseXBPS,
 	},
 }
