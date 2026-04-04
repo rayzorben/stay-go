@@ -17,7 +17,7 @@ import (
 
 // Config is the top-level structure for the desired system state.
 type Config struct {
-	Vars       map[string]string `yaml:"variables"`
+	Vars       VarsMap           `yaml:"variables"`
 	Packages   []PackageEntry    `yaml:"packages"`
 	Groups     []GroupEntry      `yaml:"groups"`
 	Users      []UserEntry       `yaml:"users"`

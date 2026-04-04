@@ -22,8 +22,10 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 	switch node.Action {
 	case engine.ActionAdd, engine.ActionUpdate:
 		if isPackageSyncNode(node.ID) {
+			// Sync nodes are ephemeral — never persisted to state.
+			// They are always re-emitted as ADD so tracking them would cause
+			// false removals on subsequent runs.
 			if r.manager.UpdateCmd == nil {
-				st.Set(node.ID, node.ConfigHash, node.Level, nil)
 				return nil
 			}
 			opts := executor.Options{Sudo: r.manager.NeedsSudo, Env: r.manager.Env}
@@ -32,7 +34,6 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 			if err != nil {
 				return fmt.Errorf("syncing package index: %w\nstderr: %s", err, result.Stderr)
 			}
-			st.Set(node.ID, node.ConfigHash, node.Level, nil)
 			return nil
 		}
 		cmd := r.manager.InstallCmd

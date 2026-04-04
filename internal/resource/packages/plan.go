@@ -101,11 +101,15 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 	}
 
 	// Append REMOVE nodes for packages tracked in state but removed from config.
+	// Exclude sync node IDs — they are ephemeral and must never appear in state.
 	removals := engine.StateRemovals("packages", configSet, knowledge, st)
 	for _, n := range removals {
+		if isPackageSyncNode(n.ID) {
+			continue
+		}
 		n.Description = describePackageChange(engine.ActionRemove, r.manager)
+		nodes = append(nodes, n)
 	}
-	nodes = append(nodes, removals...)
 	return nodes, nil
 }
 

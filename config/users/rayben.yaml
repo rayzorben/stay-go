@@ -2,8 +2,9 @@
 # The default Niri install contains a different shell that is difficult to remove.
 
 variables:
-  sedanos_home: /home/distrobox/sedanos
-  visionet_home: /home/distrobox/visionet
+  home:
+    sedanos: /home/distrobox/sedanos
+    visionet: /home/distrobox/visionet
 
 secrets:
   ssh:
@@ -209,7 +210,7 @@ containers:
 distrobox:
   - name: sedanos
     image: docker.io/cachyos/cachyos-v3:latest
-    home: ${sedanos_home}
+    home: ${home.sedanos}
     home_sudo: true
     extends: ${config_root}/users/distrobox-base.yaml
     exports:
@@ -241,7 +242,7 @@ distrobox:
           - packages: [azure-cli]
       - name: link dev folder
         command: |
-          ln -sf /home/${env:USER}/Dropbox/PC/sedanos/development ${sedanos_home}/development
+          ln -sf /home/${env:USER}/Dropbox/PC/sedanos/development ${home.sedanos}/development
         depends:
           - folders: ["/home/${env:USER}/Dropbox/PC/sedanos/development"]
       - name: fish config
@@ -250,7 +251,7 @@ distrobox:
 
   - name: visionet
     image: ubuntu:latest
-    home: ${visionet_home}
+    home: ${home.visionet}
     home_sudo: true
     #extends: ${config_root}/users/distrobox-base.yaml
     packages:

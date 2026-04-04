@@ -21,9 +21,55 @@ import (
 	"os/exec"
 	"reflect"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 const maxVarPasses = 15
+
+// VarsMap is the in-memory representation of a config variables: block.
+// Keys are dot-joined paths, supporting both flat and nested YAML:
+//
+//	Flat:   key: value              → key "key"
+//	Nested: group:\n  key: value   → key "group.key"
+//
+// Both forms may coexist within the same variables: block.
+type VarsMap map[string]string
+
+// UnmarshalYAML implements yaml.Unmarshaler. Scalar leaves are stored directly;
+// plain mapping nodes are recursed with a dot-joined prefix.
+func (m *VarsMap) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.MappingNode {
+		return nil
+	}
+	*m = make(VarsMap)
+	return unmarshalVarsGroup(value, "", *m)
+}
+
+// unmarshalVarsGroup recursively walks a variables mapping node, flattening
+// nested groups into dot-joined keys in out. prefix is empty at the top level.
+func unmarshalVarsGroup(node *yaml.Node, prefix string, out VarsMap) error {
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		keyNode := node.Content[i]
+		valNode := node.Content[i+1]
+
+		key := keyNode.Value
+		if prefix != "" {
+			key = prefix + "." + keyNode.Value
+		}
+
+		// A plain mapping is a nested group — recurse.
+		if valNode.Kind == yaml.MappingNode {
+			if err := unmarshalVarsGroup(valNode, key, out); err != nil {
+				return err
+			}
+			continue
+		}
+
+		out[key] = valNode.Value
+	}
+	return nil
+}
 
 // ResolveVars resolves all variable references within the vars map itself
 // (e.g. vars that reference other vars). Returns a new map with fully
