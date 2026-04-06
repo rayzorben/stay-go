@@ -44,6 +44,7 @@ packages:
   - cachyos-gaming-meta
   - cachyos-gaming-applications
   - 7zip
+  - spotify-launcher
 
 services:
   - service: gcr-ssh-agent.socket
