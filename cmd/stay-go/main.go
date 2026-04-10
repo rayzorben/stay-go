@@ -76,6 +76,7 @@ func main() {
 		quietPlan      bool
 		guestKnowledge bool
 		show           showFlag
+		showSkipped    bool
 		showVersion    bool
 	)
 
@@ -86,6 +87,8 @@ func main() {
 	flag.BoolVar(&debug, "d", false, "stream all command output (shorthand)")
 	flag.BoolVar(&verbose, "verbose", false, "with --debug, stream all output without truncation")
 	flag.BoolVar(&verbose, "v", false, "with --debug, stream all output without truncation (shorthand)")
+	flag.BoolVar(&showSkipped, "skipped", false, "show skipped packages in the plan")
+	flag.BoolVar(&showSkipped, "S", false, "show skipped packages in the plan (shorthand)")
 	flag.Var(&show, "show", "print tracked state without executing: --show (all), --show=packages|groups|users|services|variables")
 	flag.BoolVar(&dryRun, "dry-run", false, "show plan without executing")
 	flag.BoolVar(&dryRun, "n", false, "show plan without executing (shorthand)")
@@ -150,9 +153,10 @@ func main() {
 		ConfigPath: configDir,
 		StatePath:  statePath,
 		Debug:      debug,
-		DryRun:     dryRun,
-		AutoYes:    autoYes,
-		QuietPlan:  quietPlan,
+		DryRun:      dryRun,
+		AutoYes:     autoYes,
+		QuietPlan:   quietPlan,
+		ShowSkipped: showSkipped,
 	}
 	eng := engine.New(opts, exec)
 	eng.Register(packages.New(cfg, exec))

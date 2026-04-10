@@ -28,6 +28,8 @@ type Options struct {
 	// execution. Execution results are still streamed normally. Used when stay-go
 	// runs embedded inside a distrobox — the parent already showed the plan.
 	QuietPlan bool
+	// ShowSkipped determines whether skipped packages are printed in the plan.
+	ShowSkipped bool
 }
 
 // Engine orchestrates knowledge gathering, plan building, and execution
@@ -149,7 +151,7 @@ func (e *Engine) Run(ctx context.Context, st *state.State) error {
 		} else {
 			// ADOPT/SKIP nodes to display but no confirmation needed.
 			if !e.opts.QuietPlan {
-				DisplayPlan(os.Stdout, sorted)
+				DisplayPlan(os.Stdout, sorted, e.opts.ShowSkipped)
 			}
 		}
 		if e.opts.DryRun {
@@ -158,7 +160,7 @@ func (e *Engine) Run(ctx context.Context, st *state.State) error {
 		}
 	} else {
 		if !e.opts.QuietPlan {
-			DisplayPlan(os.Stdout, sorted)
+			DisplayPlan(os.Stdout, sorted, e.opts.ShowSkipped)
 		}
 
 		if e.opts.DryRun {
@@ -167,13 +169,36 @@ func (e *Engine) Run(ctx context.Context, st *state.State) error {
 		}
 
 		if !e.opts.AutoYes {
-			ok, err := Confirm(os.Stdout, os.Stdin)
-			if err != nil {
-				return fmt.Errorf("reading confirmation: %w", err)
-			}
-			if !ok {
-				fmt.Fprintf(os.Stdout, "\n  Aborted.\n\n")
-				return nil
+			showSkippedLocal := e.opts.ShowSkipped
+			for {
+				hasHiddenSkipped := false
+				if !showSkippedLocal {
+					for _, n := range sorted {
+						if !n.Hidden && n.Action == ActionSkip && n.ResourceType == "packages" {
+							hasHiddenSkipped = true
+							break
+						}
+					}
+				}
+
+				resp, err := Confirm(os.Stdout, os.Stdin, hasHiddenSkipped)
+				if err != nil {
+					return fmt.Errorf("reading confirmation: %w", err)
+				}
+				
+				if resp == ConfirmShowSkipped {
+					showSkippedLocal = true
+					fmt.Fprintln(os.Stdout)
+					if !e.opts.QuietPlan {
+						DisplayPlan(os.Stdout, sorted, showSkippedLocal)
+					}
+					continue
+				} else if resp == ConfirmAbort {
+					fmt.Fprintf(os.Stdout, "\n  Aborted.\n\n")
+					return nil
+				}
+				
+				break
 			}
 		}
 	}

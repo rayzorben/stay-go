@@ -450,7 +450,7 @@ func formatDur(d time.Duration) string {
 // resource type and name. Columns are level | resource | type | action; extra
 // detail (description, skip reason, notes) follows on indented lines under
 // resource. Summary counts are printed at the bottom before the confirm prompt.
-func DisplayPlan(w io.Writer, nodes []*PlanNode) {
+func DisplayPlan(w io.Writer, nodes []*PlanNode, showSkipped bool) {
 	if len(nodes) == 0 {
 		return
 	}
@@ -465,12 +465,17 @@ func DisplayPlan(w io.Writer, nodes []*PlanNode) {
 		level string
 	}
 	var visible []vnode
+	hiddenSkippedPkgs := 0
 	for _, n := range nodes {
 		if n.Hidden {
 			continue
 		}
 		g, ok := planNodeDisplayGroup(n)
 		if !ok {
+			continue
+		}
+		if !showSkipped && n.Action == ActionSkip && n.ResourceType == "packages" {
+			hiddenSkippedPkgs++
 			continue
 		}
 		lv := n.Level
@@ -613,6 +618,9 @@ func DisplayPlan(w io.Writer, nodes []*PlanNode) {
 	divider(w, tw)
 	fmt.Fprintln(w)
 	writeSummaryLine(w, nodes)
+	if hiddenSkippedPkgs > 0 {
+		fmt.Fprintf(w, "  %s·  %d packages skipped. Pass --skipped or -S to view.%s\n", ansiDim, hiddenSkippedPkgs, ansiReset)
+	}
 	fmt.Fprintln(w)
 }
 
@@ -700,19 +708,38 @@ func DisplayExecutionResult(w io.Writer, node *PlanNode, err error, dur time.Dur
 
 // ─── Confirmation prompt ──────────────────────────────────────────────────────
 
-// Confirm prints the prompt and reads a Y/n response.
-// Returns true if the user presses Enter or types y/Y/yes.
-func Confirm(w io.Writer, r io.Reader) (bool, error) {
-	fmt.Fprint(w, "  Proceed? [Y/n]: ")
+// ConfirmResponse represents the user's choice at the confirmation prompt.
+type ConfirmResponse int
+
+const (
+	ConfirmProceed ConfirmResponse = iota
+	ConfirmAbort
+	ConfirmShowSkipped
+)
+
+// Confirm prints the prompt and reads a response.
+// Returns the corresponding ConfirmResponse (proceed, abort, or show_skipped).
+func Confirm(w io.Writer, r io.Reader, hasHidden bool) (ConfirmResponse, error) {
+	if hasHidden {
+		fmt.Fprint(w, "  Proceed? [Y/n] (or 's' to show skipped): ")
+	} else {
+		fmt.Fprint(w, "  Proceed? [Y/n]: ")
+	}
 	scanner := bufio.NewScanner(r)
 	if !scanner.Scan() {
 		if err := scanner.Err(); err != nil {
-			return false, err
+			return ConfirmAbort, err
 		}
-		return false, nil // EOF
+		return ConfirmAbort, nil // EOF
 	}
 	resp := strings.TrimSpace(strings.ToLower(scanner.Text()))
-	return resp == "" || resp == "y" || resp == "yes", nil
+	if hasHidden && (resp == "s" || resp == "show") {
+		return ConfirmShowSkipped, nil
+	}
+	if resp == "" || resp == "y" || resp == "yes" {
+		return ConfirmProceed, nil
+	}
+	return ConfirmAbort, nil
 }
 
 // ─── Terminal helpers ─────────────────────────────────────────────────────────
