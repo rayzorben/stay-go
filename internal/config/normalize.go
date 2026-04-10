@@ -6,19 +6,11 @@ import (
 
 // NormalizeExpandedForms turns shorthand config into the canonical shapes the
 // rest of stay-go expects: package-embedded services become top-level service
-// entries with an implicit depends on that package, and nested package service
-// lists are cleared (including under distrobox, which does not use them).
+// entries with an implicit depends on that package.
+// Distrobox package services are intentionally left intact so that writeBoxConfig
+// can expand them into the in-box guest config.
 func NormalizeExpandedForms(cfg *Config) {
 	expandPackageEmbeddedServices(cfg)
-	stripDistroboxPackageServices(cfg)
-}
-
-func stripDistroboxPackageServices(cfg *Config) {
-	for i := range cfg.Distrobox {
-		for j := range cfg.Distrobox[i].Packages {
-			cfg.Distrobox[i].Packages[j].Services = nil
-		}
-	}
 }
 
 func expandPackageEmbeddedServices(cfg *Config) {
@@ -75,6 +67,13 @@ func mergeDependsLists(a, b []map[string][]string) []map[string][]string {
 		}
 	}
 	return out
+}
+
+// AppendResourceDep appends a single resource dep entry (e.g. "packages"/"foo")
+// to a depends list, merging into an existing entry for that resource type when
+// one already exists and deduplicating the name.
+func AppendResourceDep(deps []map[string][]string, resType, name string) []map[string][]string {
+	return appendOneResourceDepAll(deps, resType, name)
 }
 
 func appendOneResourceDepAll(deps []map[string][]string, resType, name string) []map[string][]string {

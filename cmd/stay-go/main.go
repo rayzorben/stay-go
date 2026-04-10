@@ -32,6 +32,7 @@ import (
 	"github.com/rayben/stay-go/internal/resource/commands"
 	rcontainers "github.com/rayben/stay-go/internal/resource/containers"
 	rdistrobox "github.com/rayben/stay-go/internal/resource/distrobox"
+	rflatpak "github.com/rayben/stay-go/internal/resource/flatpak"
 	rfiles "github.com/rayben/stay-go/internal/resource/files"
 	"github.com/rayben/stay-go/internal/resource/groups"
 	rjson "github.com/rayben/stay-go/internal/resource/json"
@@ -163,6 +164,7 @@ func main() {
 	eng.Register(rsecrets.New(cfg))
 	eng.Register(commands.New(cfg, exec))
 	eng.Register(rcontainers.New(cfg, exec))
+	eng.Register(rflatpak.New(cfg, exec))
 	eng.Register(rdistrobox.New(cfg, exec))
 	eng.Register(rjson.New(cfg, exec))
 

@@ -187,6 +187,12 @@ func stampLevel(cfg *Config, level string) {
 	for i := range cfg.Json {
 		cfg.Json[i].Level = level
 	}
+	for i := range cfg.Flatpak.Remotes {
+		cfg.Flatpak.Remotes[i].Level = level
+	}
+	for i := range cfg.Flatpak.Apps {
+		cfg.Flatpak.Apps[i].Level = level
+	}
 	for k := range cfg.Secrets {
 		e := cfg.Secrets[k]
 		e.Level = level

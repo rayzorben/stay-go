@@ -92,6 +92,7 @@ var resourceLabel = map[string]string{
 	"commands":   "command",
 	"secrets":    "secret",
 	"containers": "container",
+	"flatpak":    "flatpak",
 	"distrobox":  "distrobox",
 	"json":       "json",
 }
@@ -108,7 +109,7 @@ func typeLabel(resourceType string) string {
 // canonicalOrder defines the display order for resource types.
 var canonicalOrder = []string{
 	"packages", "groups", "users", "services", "scripts",
-	"files", "commands", "secrets", "containers", "distrobox", "json",
+	"files", "commands", "secrets", "containers", "flatpak", "distrobox", "json",
 }
 
 var canonicalIndex = func() map[string]int {
@@ -410,6 +411,9 @@ func truncateStringVisual(s string, maxRunes int) string {
 func writeSummaryLine(w io.Writer, nodes []*PlanNode) {
 	counts := make(map[ActionType]int, 8)
 	for _, n := range nodes {
+		if n.Hidden {
+			continue
+		}
 		counts[n.Action]++
 	}
 	add := counts[ActionAdd] + counts[ActionAdopt]
@@ -462,6 +466,9 @@ func DisplayPlan(w io.Writer, nodes []*PlanNode) {
 	}
 	var visible []vnode
 	for _, n := range nodes {
+		if n.Hidden {
+			continue
+		}
 		g, ok := planNodeDisplayGroup(n)
 		if !ok {
 			continue

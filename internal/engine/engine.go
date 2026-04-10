@@ -272,7 +272,9 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 			if !e.depsSucceeded(node, succeeded) {
 				node.Action = ActionSkip
 				node.SkipReason = "dependency failed during execution"
-				DisplayExecutionResult(os.Stdout, node, nil, 0)
+				if !node.Hidden {
+					DisplayExecutionResult(os.Stdout, node, nil, 0)
+				}
 				succeeded[node.ID] = false
 				continue
 			}
@@ -282,15 +284,19 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 			if node.Action == ActionRemove && node.AbsentFromSystem {
 				st.Delete(node.ID)
 				succeeded[node.ID] = true
-				DisplayExecutionResult(os.Stdout, node, nil, 0)
+				if !node.Hidden {
+					DisplayExecutionResult(os.Stdout, node, nil, 0)
+				}
 				continue
 			}
-			DisplayExecutionProgress(os.Stdout, node, "")
-			if node.NeedsSudo {
+			if !node.Hidden {
+				DisplayExecutionProgress(os.Stdout, node, "")
+			}
+			if node.NeedsSudo && !node.Hidden {
 				// Commit the progress line — sudo will prompt via /dev/tty and
 				// we need a clean line for the password prompt to appear on.
 				fmt.Fprintln(os.Stdout)
-			} else {
+			} else if !node.NeedsSudo && !node.Hidden {
 				e.exec.ProgressFn = func(line string) {
 					DisplayExecutionProgress(os.Stdout, node, line)
 				}
@@ -305,7 +311,9 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 			if execErr != nil {
 				hasFailed = true
 			}
-			DisplayExecutionResult(os.Stdout, node, execErr, dur)
+			if !node.Hidden {
+				DisplayExecutionResult(os.Stdout, node, execErr, dur)
+			}
 
 		case ActionSkip:
 			// In quiet-plan mode (inside distrobox), the plan was suppressed, so

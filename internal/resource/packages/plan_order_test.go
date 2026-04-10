@@ -10,14 +10,14 @@ import (
 	"github.com/rayben/stay-go/internal/state"
 )
 
-// TestBuildPlan_perPackageSyncEdges checks each install package gets its own
-// index-sync node wired after that package's resource deps (e.g. commands)
-// and before the install node — without forcing unrelated packages to wait
-// on another package's commands.
-func TestBuildPlan_perPackageSyncEdges(t *testing.T) {
+// TestBuildPlan_sharedSyncNodes checks that packages with the same dependency
+// set share a single sync node, and packages with different deps get separate
+// sync nodes — so apt-get update runs once per dep group, not once per package.
+func TestBuildPlan_sharedSyncNodes(t *testing.T) {
 	cfg := &config.Config{
 		Packages: []config.PackageEntry{
 			{Name: "curl"},
+			{Name: "wget"},
 			{
 				Name:    "edge",
 				Depends: []map[string][]string{{"commands": {"repo"}}},
@@ -37,16 +37,23 @@ func TestBuildPlan_perPackageSyncEdges(t *testing.T) {
 	for _, n := range nodes {
 		byID[n.ID] = n
 	}
-	syncCurl := byID[packageSyncID("curl")]
+
+	// curl and wget share the no-deps sync node.
+	syncNodeps := byID[packageSyncGroupID("")]
 	pkgCurl := byID[config.NodeID("packages", "curl")]
-	syncEdge := byID[packageSyncID("edge")]
+	pkgWget := byID[config.NodeID("packages", "wget")]
+
+	// edge gets its own sync node because it has a different dep set.
+	syncEdge := byID[packageSyncGroupID("commands/repo")]
 	pkgEdge := byID[config.NodeID("packages", "edge")]
+
 	for _, label := range []struct {
 		n   *engine.PlanNode
 		msg string
 	}{
-		{syncCurl, "curl sync"},
+		{syncNodeps, "no-deps sync"},
 		{pkgCurl, "curl package"},
+		{pkgWget, "wget package"},
 		{syncEdge, "edge sync"},
 		{pkgEdge, "edge package"},
 	} {
@@ -54,20 +61,50 @@ func TestBuildPlan_perPackageSyncEdges(t *testing.T) {
 			t.Fatalf("missing node: %s", label.msg)
 		}
 	}
-	if len(syncCurl.DependsOn) != 0 {
-		t.Errorf("curl sync: want no deps, got %v", syncCurl.DependsOn)
+
+	// Exactly two sync nodes total (one for nodeps group, one for edge group).
+	var syncNodes []*engine.PlanNode
+	for _, n := range nodes {
+		if isPackageSyncNode(n.ID) {
+			syncNodes = append(syncNodes, n)
+		}
 	}
-	wantEdgeSync := []string{"commands/repo"}
-	if !slices.Equal(syncEdge.DependsOn, wantEdgeSync) {
-		t.Errorf("edge sync deps: want %v, got %v", wantEdgeSync, syncEdge.DependsOn)
+	if len(syncNodes) != 2 {
+		t.Errorf("want 2 sync nodes, got %d", len(syncNodes))
 	}
-	wantCurlPkg := []string{packageSyncID("curl")}
-	if !slices.Equal(pkgCurl.DependsOn, wantCurlPkg) {
-		t.Errorf("curl package deps: want %v, got %v", wantCurlPkg, pkgCurl.DependsOn)
+
+	// Sync nodes are hidden.
+	if !syncNodeps.Hidden {
+		t.Error("no-deps sync node should be Hidden")
 	}
-	wantEdgePkg := []string{"commands/repo", packageSyncID("edge")}
+	if !syncEdge.Hidden {
+		t.Error("edge sync node should be Hidden")
+	}
+
+	// No-deps sync has no dependencies.
+	if len(syncNodeps.DependsOn) != 0 {
+		t.Errorf("no-deps sync: want no deps, got %v", syncNodeps.DependsOn)
+	}
+
+	// Edge sync depends on the command dep.
+	wantEdgeSyncDeps := []string{"commands/repo"}
+	if !slices.Equal(syncEdge.DependsOn, wantEdgeSyncDeps) {
+		t.Errorf("edge sync deps: want %v, got %v", wantEdgeSyncDeps, syncEdge.DependsOn)
+	}
+
+	// curl and wget both depend on the shared no-deps sync.
+	wantNodepsPkg := []string{packageSyncGroupID("")}
+	if !slices.Equal(pkgCurl.DependsOn, wantNodepsPkg) {
+		t.Errorf("curl deps: want %v, got %v", wantNodepsPkg, pkgCurl.DependsOn)
+	}
+	if !slices.Equal(pkgWget.DependsOn, wantNodepsPkg) {
+		t.Errorf("wget deps: want %v, got %v", wantNodepsPkg, pkgWget.DependsOn)
+	}
+
+	// edge depends on its own sync (after commands/repo).
+	wantEdgePkg := []string{"commands/repo", packageSyncGroupID("commands/repo")}
 	if !slices.Equal(pkgEdge.DependsOn, wantEdgePkg) {
-		t.Errorf("edge package deps: want %v, got %v", wantEdgePkg, pkgEdge.DependsOn)
+		t.Errorf("edge deps: want %v, got %v", wantEdgePkg, pkgEdge.DependsOn)
 	}
 }
 

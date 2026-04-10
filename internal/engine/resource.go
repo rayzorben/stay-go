@@ -120,6 +120,12 @@ type PlanNode struct {
 
 	// ExecutionErr is set by the engine if Execute returns an error.
 	ExecutionErr error
+
+	// Hidden marks this node as an internal implementation detail that should
+	// not appear in plan or execution output. The node still executes normally.
+	// Used for package index sync nodes (e.g. apt-get update) so they don't
+	// clutter the display with one row per package.
+	Hidden bool
 }
 
 // KnowledgeEntry describes a single item currently present on the live system.

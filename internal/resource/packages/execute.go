@@ -28,16 +28,23 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 			if r.manager.UpdateCmd == nil {
 				return nil
 			}
-			opts := executor.Options{Sudo: r.manager.NeedsSudo, Env: r.manager.Env}
+			syncOpts := executor.Options{Sudo: r.manager.NeedsSudo, Env: r.manager.Env}
 			cmd := r.manager.UpdateCmd
-			result, err := r.exec.Run(ctx, opts, cmd[0], cmd[1:]...)
+			result, err := r.exec.Run(ctx, syncOpts, cmd[0], cmd[1:]...)
 			if err != nil {
 				return fmt.Errorf("syncing package index: %w\nstderr: %s", err, result.Stderr)
 			}
 			return nil
 		}
 		cmd := r.manager.InstallCmd
-		result, err := r.exec.Run(ctx, opts, cmd[0], append(cmd[1:], name)...)
+		// For managers that run a separate index sync (apt-get, zypper, apk, xbps),
+		// stream the install output so the user sees live progress rather than silence.
+		installOpts := executor.Options{
+			Sudo:   r.manager.NeedsSudo,
+			Env:    r.manager.Env,
+			Stream: r.manager.UpdateCmd != nil,
+		}
+		result, err := r.exec.Run(ctx, installOpts, cmd[0], append(cmd[1:], name)...)
 		if err != nil {
 			return fmt.Errorf("installing package %q: %w\nstderr: %s", name, err, result.Stderr)
 		}

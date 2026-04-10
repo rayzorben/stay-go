@@ -2,7 +2,8 @@ package packages
 
 import (
 	"context"
-	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/rayben/stay-go/internal/config"
 	"github.com/rayben/stay-go/internal/engine"
@@ -24,11 +25,13 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 
 	var nodes []*engine.PlanNode
 
-	// Per-package index sync (e.g. apt-get update): one node per install package
-	// so ordering is always (that package's depends…) → sync → install. This
-	// avoids a single global sync running before unrelated commands, and keeps
-	// independent packages from waiting on another package's command deps.
+	// Index sync (e.g. apt-get update): one shared node per unique dependency set.
+	// Packages that share the same deps (including no deps) share a single sync
+	// node, so apt-get update runs at most once per "level" of the dep graph rather
+	// than once per package. The sync node is Hidden so it doesn't clutter output.
 	needsSync := r.manager != nil && r.manager.UpdateCmd != nil
+	// syncByKey maps a sorted dep fingerprint to the already-created sync node ID.
+	syncByKey := make(map[string]string)
 
 	// Emit forced-removal ("!pkg") nodes first so they execute before installs,
 	// avoiding conflicts. Only emit a node when the package is actually installed.
@@ -72,18 +75,28 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 
 		deps := append([]string(nil), p.DependsOnIDs()...)
 		if needsSync {
-			sid := packageSyncID(p.Name)
+			// Build a stable fingerprint from the sorted package-level deps.
+			// Packages that share the same dep set share one sync node.
 			syncDeps := append([]string(nil), p.DependsOnIDs()...)
-			nodes = append(nodes, &engine.PlanNode{
-				ID:           sid,
-				ResourceType: "packages",
-				DisplayName:  fmt.Sprintf("%s update (%s)", r.manager.Name, p.Name),
-				Action:       engine.ActionAdd,
-				ConfigHash:   config.Hash(r.manager.UpdateCmd),
-				NeedsSudo:    r.manager.NeedsSudo,
-				DependsOn:    syncDeps,
-				Description:  "sync package index",
-			})
+			sort.Strings(syncDeps)
+			depsKey := strings.Join(syncDeps, "\x00")
+
+			sid, exists := syncByKey[depsKey]
+			if !exists {
+				sid = packageSyncGroupID(depsKey)
+				syncByKey[depsKey] = sid
+				nodes = append(nodes, &engine.PlanNode{
+					ID:           sid,
+					ResourceType: "packages",
+					DisplayName:  r.manager.Name + " update",
+					Action:       engine.ActionAdd,
+					ConfigHash:   config.Hash(r.manager.UpdateCmd),
+					NeedsSudo:    r.manager.NeedsSudo,
+					DependsOn:    syncDeps,
+					Description:  "sync package index",
+					Hidden:       true,
+				})
+			}
 			deps = append(deps, sid)
 		}
 		nodes = append(nodes, &engine.PlanNode{

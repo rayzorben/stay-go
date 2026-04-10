@@ -25,14 +25,20 @@ type Resource struct {
 	manager *PackageManager // set on first call to ensureManager
 }
 
-// syncNodePrefix is the ID prefix for per-package index-sync plan nodes
-// ("packages/__sync__/<package name>"). Each install package gets its own sync
-// so apt-like updates run after that package's depends (e.g. a repo command)
-// and independent packages are not ordered after unrelated commands.
+// syncNodePrefix is the ID prefix for package index-sync plan nodes
+// (e.g. "packages/__sync__/nodeps" or "packages/__sync__/<hash>").
+// Packages that share the same set of dependencies share a single sync node so
+// that apt-get update (or equivalent) only runs once per dependency group.
 const syncNodePrefix = "packages/__sync__/"
 
-func packageSyncID(packageName string) string {
-	return syncNodePrefix + packageName
+// packageSyncGroupID returns a stable sync node ID for the given dependency-set
+// key. depsKey is the sorted, null-separated concatenation of all dep IDs that
+// the group of packages shares. An empty key means "no dependencies".
+func packageSyncGroupID(depsKey string) string {
+	if depsKey == "" {
+		return syncNodePrefix + "nodeps"
+	}
+	return syncNodePrefix + config.Hash(depsKey)
 }
 
 func isPackageSyncNode(id string) bool {

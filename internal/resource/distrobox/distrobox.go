@@ -215,13 +215,14 @@ func (r *Resource) ensureGuestBinary() (string, error) {
 // ─── Sub-config writing ───────────────────────────────────────────────────────
 
 // guestConfig is the minimal YAML written for an in-box stay-go invocation.
-// It contains only the resource types that stay-go manages inside a distrobox.
+// It contains the resource types that stay-go manages inside a distrobox.
 type guestConfig struct {
 	Packages []config.PackageEntry `yaml:"packages,omitempty"`
+	Services []config.ServiceEntry `yaml:"services,omitempty"`
 	Commands []config.CommandEntry `yaml:"commands,omitempty"`
 }
 
-// writeBoxConfig serialises the in-box packages and commands to
+// writeBoxConfig serialises the in-box packages, services, and commands to
 // <stateDir>/<name>/default.yaml so that LoadAll can load it as a config dir.
 func (r *Resource) writeBoxConfig(entry *config.DistroboxEntry) error {
 	dir := r.boxStateDir(entry.Name)
@@ -229,8 +230,24 @@ func (r *Resource) writeBoxConfig(entry *config.DistroboxEntry) error {
 		return fmt.Errorf("creating box state dir: %w", err)
 	}
 
+	// Expand package-embedded services (e.g. xdg-desktop-portal) into top-level
+	// service entries with an implicit depends on their package, so the in-box
+	// stay-go enables them after the package is installed.
+	var services []config.ServiceEntry
+	for _, p := range entry.Packages {
+		for _, svc := range p.Services {
+			se := svc
+			se.Depends = config.AppendResourceDep(se.Depends, "packages", p.Name)
+			if se.Level == "" {
+				se.Level = p.Level
+			}
+			services = append(services, se)
+		}
+	}
+
 	cfg := guestConfig{
 		Packages: entry.Packages,
+		Services: services,
 		Commands: entry.Commands,
 	}
 	data, err := yaml.Marshal(cfg)

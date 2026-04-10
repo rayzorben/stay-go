@@ -27,6 +27,7 @@ type Config struct {
 	Commands   CommandList       `yaml:"commands"`
 	Secrets    SecretsMap        `yaml:"secrets"`
 	Containers []ContainerEntry  `yaml:"containers"`
+	Flatpak    FlatpakConfig     `yaml:"flatpak"`
 	Distrobox  []DistroboxEntry  `yaml:"distrobox"`
 
 	Json []JsonEntry `yaml:"json"`
@@ -495,6 +496,40 @@ type DistroboxEntry struct {
 func (d *DistroboxEntry) DependsOnIDs() []string {
 	var ids []string
 	for _, dep := range d.Depends {
+		for resourceType, names := range dep {
+			for _, name := range names {
+				ids = append(ids, resourceType+"/"+name)
+			}
+		}
+	}
+	return ids
+}
+
+// FlatpakConfig holds all Flatpak-managed remotes and applications.
+type FlatpakConfig struct {
+	Remotes []FlatpakRemoteEntry `yaml:"remotes,omitempty"`
+	Apps    []FlatpakAppEntry    `yaml:"apps,omitempty"`
+}
+
+// FlatpakRemoteEntry defines a Flatpak remote repository to manage.
+type FlatpakRemoteEntry struct {
+	Name  string `yaml:"name"`
+	URL   string `yaml:"url"`
+	Level string `yaml:"-"` // set by LoadAll, not parsed from YAML
+}
+
+// FlatpakAppEntry defines a Flatpak application to manage.
+type FlatpakAppEntry struct {
+	AppID   string                `yaml:"app"`
+	Remote  string                `yaml:"remote,omitempty"` // defaults to "flathub"
+	Depends []map[string][]string `yaml:"depends,omitempty"`
+	Level   string                `yaml:"-"` // set by LoadAll, not parsed from YAML
+}
+
+// DependsOnIDs converts the raw depends field into canonical resource node IDs.
+func (a *FlatpakAppEntry) DependsOnIDs() []string {
+	var ids []string
+	for _, dep := range a.Depends {
 		for resourceType, names := range dep {
 			for _, name := range names {
 				ids = append(ids, resourceType+"/"+name)

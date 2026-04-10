@@ -29,6 +29,7 @@ packages:
   - stremio
   - libappindicator
   - dropbox
+  - nautilus-dropbox
   - distrobox
   - discord
   - zen-browser
@@ -45,6 +46,7 @@ packages:
   - cachyos-gaming-applications
   - 7zip
   - spotify-launcher
+  - antigravity
 
 services:
   - service: gcr-ssh-agent.socket
@@ -97,6 +99,13 @@ files:
     target: ~/.config/niri/config.kdl
     add: true
 
+  - content: |
+      
+      # stay
+      copy-on-select = true
+    target: ~/.config/ghostty/config
+    add: true
+
   # Application config files
   - source: ${config_root}/files/config/electron-flags.conf
     target: ~/.config/electron-flags.conf
@@ -114,6 +123,13 @@ files:
   - content: |
       [prod-man]
       host = https://adb-7405608649113470.10.azuredatabricks.net
+      auth_type = azure-client-secret
+      azure_tenant_id = 10895ab2-90e3-4778-a157-855870900fb7
+      azure_client_id = ca971a3e-1cc2-41b4-a76c-db4bf4c9494d
+      azure_client_secret = ${secrets.databricks.client_secret}
+
+      [test-man]
+      host = https://adb-7405619906526803.3.azuredatabricks.net 
       auth_type = azure-client-secret
       azure_tenant_id = 10895ab2-90e3-4778-a157-855870900fb7
       azure_client_id = ca971a3e-1cc2-41b4-a76c-db4bf4c9494d
@@ -198,6 +214,14 @@ scripts:
     depends:
       - packages: [zoxide, fzf]
 
+flatpak:
+  remotes:
+    - name: flathub
+      url: https://dl.flathub.org/repo/flathub.flatpakrepo
+
+  apps:
+    - app: com.usebottles.bottles
+
 containers:
   - name: redis
     image: redis:alpine
@@ -228,6 +252,7 @@ distrobox:
       - pulumi
       - nodejs
       - npm
+      - opentofu
     commands:
       - name: Install Databricks CLI
         command: |
@@ -259,6 +284,11 @@ distrobox:
       - package: microsoft-edge-stable
         depends:
           - commands: [microsoft-edge-repo]
+      - package: xdg-desktop-portal
+        services: [{service: xdg-desktop-portal, user: true}]
+      - package: xdg-desktop-portal-gtk
+        services: [{service: xdg-desktop-portal-gtk, user: true}]
+
     exports:
       - microsoft-edge-stable
     commands:
@@ -299,5 +329,9 @@ json:
         leftWidgets:
           - "workspaceSwitcher"
           - "focusedWindow"
+          - {}
+        centerWidgets:
+          - "clock"
+          - "weather"
           - {}
       cursorSettings.size: 28
