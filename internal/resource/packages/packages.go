@@ -13,8 +13,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/rayben/stay-go/internal/config"
-	"github.com/rayben/stay-go/internal/executor"
+	"github.com/rayzorben/stay-go/internal/config"
+	"github.com/rayzorben/stay-go/internal/executor"
 )
 
 // Resource implements engine.Resource for package management.

@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/rayben/stay-go/internal/secrets"
+	"github.com/rayzorben/stay-go/internal/secrets"
 	"gopkg.in/yaml.v3"
 )
 

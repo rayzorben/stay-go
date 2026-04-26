@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/rayben/stay-go/internal/engine"
-	"github.com/rayben/stay-go/internal/executor"
+	"github.com/rayzorben/stay-go/internal/engine"
+	"github.com/rayzorben/stay-go/internal/executor"
 )
 
 // GatherKnowledge returns KnowledgeEntries for all installed Flatpak remotes

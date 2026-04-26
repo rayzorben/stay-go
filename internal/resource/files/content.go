@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/rayben/stay-go/internal/executor"
+	"github.com/rayzorben/stay-go/internal/executor"
 )
 
 // state keys for additive (append-if-missing) inline files — read on REMOVE.

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/rayben/stay-go/internal/state"
+	"github.com/rayzorben/stay-go/internal/state"
 )
 
 func TestLoadMissingFile(t *testing.T) {

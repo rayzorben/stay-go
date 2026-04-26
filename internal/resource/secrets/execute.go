@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/rayben/stay-go/internal/config"
-	"github.com/rayben/stay-go/internal/engine"
-	secretspkg "github.com/rayben/stay-go/internal/secrets"
-	"github.com/rayben/stay-go/internal/state"
+	"github.com/rayzorben/stay-go/internal/config"
+	"github.com/rayzorben/stay-go/internal/engine"
+	secretspkg "github.com/rayzorben/stay-go/internal/secrets"
+	"github.com/rayzorben/stay-go/internal/state"
 )
 
 // Execute carries out a single secrets plan node.

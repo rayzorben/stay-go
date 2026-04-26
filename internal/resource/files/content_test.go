@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/rayben/stay-go/internal/executor"
+	"github.com/rayzorben/stay-go/internal/executor"
 )
 
 func TestFileContainsSnippet(t *testing.T) {

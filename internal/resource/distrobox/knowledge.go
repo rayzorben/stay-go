@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/rayben/stay-go/internal/engine"
-	"github.com/rayben/stay-go/internal/executor"
+	"github.com/rayzorben/stay-go/internal/engine"
+	"github.com/rayzorben/stay-go/internal/executor"
 )
 
 // GatherKnowledge reports which configured distrobox containers currently exist

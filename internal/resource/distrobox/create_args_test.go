@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/rayben/stay-go/internal/config"
+	"github.com/rayzorben/stay-go/internal/config"
 )
 
 func TestBuildCreateArgsRootDefault(t *testing.T) {

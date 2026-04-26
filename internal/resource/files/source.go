@@ -3,7 +3,7 @@ package files
 import (
 	"strings"
 
-	"github.com/rayben/stay-go/internal/config"
+	"github.com/rayzorben/stay-go/internal/config"
 )
 
 // sourceKind classifies the type of source in a FileEntry.

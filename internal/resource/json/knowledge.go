@@ -4,8 +4,8 @@ import (
 	"context"
 	"os"
 
-	"github.com/rayben/stay-go/internal/config"
-	"github.com/rayben/stay-go/internal/engine"
+	"github.com/rayzorben/stay-go/internal/config"
+	"github.com/rayzorben/stay-go/internal/engine"
 )
 
 // GatherKnowledge reports all configured json entries whose target files exist

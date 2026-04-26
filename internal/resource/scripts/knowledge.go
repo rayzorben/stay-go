@@ -3,7 +3,7 @@ package scripts
 import (
 	"context"
 
-	"github.com/rayben/stay-go/internal/engine"
+	"github.com/rayzorben/stay-go/internal/engine"
 )
 
 // GatherKnowledge reports all configured scripts as "present in knowledge".

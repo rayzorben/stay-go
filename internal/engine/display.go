@@ -12,7 +12,7 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/rayben/stay-go/internal/state"
+	"github.com/rayzorben/stay-go/internal/state"
 )
 
 // ─── ANSI escape codes ────────────────────────────────────────────────────────

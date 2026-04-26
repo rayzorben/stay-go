@@ -1,4 +1,4 @@
-module github.com/rayben/stay-go
+module github.com/rayzorben/stay-go
 
 go 1.25.0
 

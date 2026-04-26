@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/rayben/stay-go/internal/config"
-	"github.com/rayben/stay-go/internal/engine"
-	"github.com/rayben/stay-go/internal/state"
+	"github.com/rayzorben/stay-go/internal/config"
+	"github.com/rayzorben/stay-go/internal/engine"
+	"github.com/rayzorben/stay-go/internal/state"
 )
 
 func TestBuildPlan_AdditiveSnippetChangeUsesUpdate(t *testing.T) {

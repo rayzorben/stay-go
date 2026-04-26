@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 
-	"github.com/rayben/stay-go/internal/engine"
+	"github.com/rayzorben/stay-go/internal/engine"
 )
 
 // GatherKnowledge checks whether each configured target satisfies desired state.

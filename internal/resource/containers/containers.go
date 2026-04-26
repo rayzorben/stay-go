@@ -11,8 +11,8 @@ package containers
 import (
 	"os/exec"
 
-	"github.com/rayben/stay-go/internal/config"
-	"github.com/rayben/stay-go/internal/executor"
+	"github.com/rayzorben/stay-go/internal/config"
+	"github.com/rayzorben/stay-go/internal/executor"
 )
 
 // Resource implements engine.Resource for Docker/Podman container management.

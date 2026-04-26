@@ -9,8 +9,8 @@
 package secrets
 
 import (
-	"github.com/rayben/stay-go/internal/config"
-	secretspkg "github.com/rayben/stay-go/internal/secrets"
+	"github.com/rayzorben/stay-go/internal/config"
+	secretspkg "github.com/rayzorben/stay-go/internal/secrets"
 )
 
 // Resource implements engine.Resource for encrypted secrets.

@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rayben/stay-go/internal/executor"
-	"github.com/rayben/stay-go/internal/state"
+	"github.com/rayzorben/stay-go/internal/executor"
+	"github.com/rayzorben/stay-go/internal/state"
 )
 
 // Options configures the engine's behaviour.

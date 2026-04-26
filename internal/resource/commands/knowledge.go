@@ -3,8 +3,8 @@ package commands
 import (
 	"context"
 
-	"github.com/rayben/stay-go/internal/config"
-	"github.com/rayben/stay-go/internal/engine"
+	"github.com/rayzorben/stay-go/internal/config"
+	"github.com/rayzorben/stay-go/internal/engine"
 )
 
 // GatherKnowledge reports all configured commands as present on the system.

@@ -3,9 +3,9 @@ package secrets
 import (
 	"context"
 
-	"github.com/rayben/stay-go/internal/config"
-	"github.com/rayben/stay-go/internal/engine"
-	secretspkg "github.com/rayben/stay-go/internal/secrets"
+	"github.com/rayzorben/stay-go/internal/config"
+	"github.com/rayzorben/stay-go/internal/engine"
+	secretspkg "github.com/rayzorben/stay-go/internal/secrets"
 )
 
 // GatherKnowledge reports all configured secret keys as "present" (same

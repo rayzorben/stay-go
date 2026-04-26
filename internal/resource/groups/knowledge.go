@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/rayben/stay-go/internal/config"
-	"github.com/rayben/stay-go/internal/engine"
+	"github.com/rayzorben/stay-go/internal/config"
+	"github.com/rayzorben/stay-go/internal/engine"
 )
 
 // GatherKnowledge reads /etc/group and returns a KnowledgeEntry for every

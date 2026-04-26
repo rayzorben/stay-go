@@ -3,7 +3,7 @@ package engine
 import (
 	"testing"
 
-	"github.com/rayben/stay-go/internal/state"
+	"github.com/rayzorben/stay-go/internal/state"
 )
 
 func TestDetermineAction_Add(t *testing.T) {

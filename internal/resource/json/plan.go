@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/rayben/stay-go/internal/config"
-	"github.com/rayben/stay-go/internal/engine"
-	"github.com/rayben/stay-go/internal/state"
+	"github.com/rayzorben/stay-go/internal/config"
+	"github.com/rayzorben/stay-go/internal/engine"
+	"github.com/rayzorben/stay-go/internal/state"
 )
 
 // BuildPlan computes PlanNodes for managed JSON file value overrides.

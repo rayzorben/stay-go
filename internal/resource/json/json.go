@@ -15,8 +15,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/rayben/stay-go/internal/config"
-	"github.com/rayben/stay-go/internal/executor"
+	"github.com/rayzorben/stay-go/internal/config"
+	"github.com/rayzorben/stay-go/internal/executor"
 )
 
 // Resource manages JSON file value overrides: it applies desired values at

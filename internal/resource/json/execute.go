@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/rayben/stay-go/internal/engine"
-	"github.com/rayben/stay-go/internal/state"
+	"github.com/rayzorben/stay-go/internal/engine"
+	"github.com/rayzorben/stay-go/internal/state"
 )
 
 // Execute applies or reverts JSON value overrides for a single plan node.

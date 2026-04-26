@@ -3,7 +3,7 @@ package commands
 import (
 	"testing"
 
-	"github.com/rayben/stay-go/internal/config"
+	"github.com/rayzorben/stay-go/internal/config"
 )
 
 func TestCommandEntryDependsOnSkipsFolders(t *testing.T) {
