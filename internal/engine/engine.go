@@ -174,7 +174,7 @@ func (e *Engine) Run(ctx context.Context, st *state.State) error {
 				hasHiddenSkipped := false
 				if !showSkippedLocal {
 					for _, n := range sorted {
-						if !n.Hidden && n.Action == ActionSkip && n.ResourceType == "packages" {
+						if !n.Hidden && n.Action == ActionSkip {
 							hasHiddenSkipped = true
 							break
 						}

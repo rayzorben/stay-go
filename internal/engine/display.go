@@ -474,7 +474,7 @@ func DisplayPlan(w io.Writer, nodes []*PlanNode, showSkipped bool) {
 		if !ok {
 			continue
 		}
-		if !showSkipped && n.Action == ActionSkip && n.ResourceType == "packages" {
+		if !showSkipped && n.Action == ActionSkip {
 			hiddenSkippedPkgs++
 			continue
 		}
@@ -619,7 +619,7 @@ func DisplayPlan(w io.Writer, nodes []*PlanNode, showSkipped bool) {
 	fmt.Fprintln(w)
 	writeSummaryLine(w, nodes)
 	if hiddenSkippedPkgs > 0 {
-		fmt.Fprintf(w, "  %s·  %d packages skipped. Pass --skipped or -S to view.%s\n", ansiDim, hiddenSkippedPkgs, ansiReset)
+		fmt.Fprintf(w, "  %s·  %d items skipped. Pass --skipped or -S to view.%s\n", ansiDim, hiddenSkippedPkgs, ansiReset)
 	}
 	fmt.Fprintln(w)
 }

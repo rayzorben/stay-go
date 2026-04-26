@@ -5,6 +5,7 @@ variables:
   home:
     sedanos: /home/distrobox/sedanos
     visionet: /home/distrobox/visionet
+    stoneridge: /home/distrobox/stoneridge
 
 secrets:
   ssh:
@@ -14,8 +15,12 @@ secrets:
   databricks:
     client_secret: !encrypted CLmAj/yRvCT61C9Ze3lZu/cbnVrFmnMwE7e2KkNNVKIRxpRHXNfKJYrT1cFiMoxKG+jwfqyWnBUY57TFwn5M1ahHYEhv7q+k9s3KBtkX2iSKehtu
     production_pat: !encrypted c4gdGfaIHqUuh857LIEpP/2PjNt4k1xI5CNtjRgbeqdCFSrkz8d48MqNdfWplmsZF5KiaClhxpbuNKcIMnRne1l3wPzVW0NdakYtUoBLSjpS7w==
+    test_client_secret: !encrypted 3Qlb79G+Nul/5iuBKNUFUu6XMAFRBUwERcBmFnq/AE7OhjY+R6t7lw+AQEhENW7mRDkyTWAYb0eJSS12a1s34Gl4LSgNdugtKZoc8XZPctQ=
+  tailscale_key: !encrypted /MmhlkwH/6N6CSpTaBF20RkArtTJPIEBjOljykiYBwyZmH6zVCMabXDSCJL6yZDqaQuvPlfRiis+SZiDSXWIYqPtQQUBIkh95aGeuIElJeglr85sMR0oTPl5i+dwPfGD9fUgJmux6rnVhw==
 
 packages:
+  - ttf-mona-sans
+  - tailscale
   - zoxide
   - fzf
   - cursor-bin
@@ -46,11 +51,12 @@ packages:
   - cachyos-gaming-applications
   - 7zip
   - spotify-launcher
-  - antigravity
+  - vivaldi
 
 services:
   - service: gcr-ssh-agent.socket
     user: true
+  - service: tailscaled.service
 
 files:
   # SSH keys and config (written first; dotfiles clone depends on them)
@@ -134,6 +140,11 @@ files:
       azure_tenant_id = 10895ab2-90e3-4778-a157-855870900fb7
       azure_client_id = ca971a3e-1cc2-41b4-a76c-db4bf4c9494d
       azure_client_secret = ${secrets.databricks.client_secret}
+      
+      [test]
+      host = https://adb-1871084061330888.8.azuredatabricks.net
+      DATABRICKS_CLIENT_ID = a667e418-f433-4dfa-a2f3-33132684eb93
+      DATABRICKS_CLIENT_SECRET = ${secrets.databricks.test_client_secret}
     target: ~/.databrickscfg
     mode: "0600"
 
@@ -208,6 +219,16 @@ commands:
       - packages: [7zip]
       - files: [~/Downloads/isos/Win11_25H2_English_x64_v2.iso]
       - folders: ["!/usr/local/share/fonts/WindowsFonts"]
+      
+  - name: tailscale
+    command: |
+      tailscale up --authkey=${secrets.tailscale_key}
+      tailscale configure systray --enable-startup=systemd
+      tailscale set --operator=$USER
+    sudo: true
+    depends:
+      - services: [tailscaled.service]
+      - packages: [tailscale]
 
 scripts:
   - script: ${config_root}/scripts/configure-zoxide.sh
@@ -276,30 +297,17 @@ distrobox:
           curl https://raw.githubusercontent.com/oh-my-fish/oh-my-fish/master/bin/install | fish
 
   - name: visionet
-    image: ubuntu:latest
+    image: docker.io/cachyos/cachyos-v3:latest
     home: ${home.visionet}
     home_sudo: true
-    #extends: ${config_root}/users/distrobox-base.yaml
-    packages:
-      - package: microsoft-edge-stable
-        depends:
-          - commands: [microsoft-edge-repo]
-      - package: xdg-desktop-portal
-        services: [{service: xdg-desktop-portal, user: true}]
-      - package: xdg-desktop-portal-gtk
-        services: [{service: xdg-desktop-portal-gtk, user: true}]
+    extends: ${config_root}/users/distrobox-base.yaml
 
-    exports:
-      - microsoft-edge-stable
-    commands:
-      - name: microsoft-edge-repo
-        command: |
-          pushd /tmp
-          curl https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > microsoft.gpg
-          install -o root -g root -m 644 microsoft.gpg /etc/apt/trusted.gpg.d/
-          sh -c 'echo "deb [arch=amd64] https://packages.microsoft.com/repos/edge stable main" > /etc/apt/sources.list.d/microsoft-edge-dev.list'
-          rm microsoft.gpg
-        sudo: true
+  - name: stoneridge
+    image: docker.io/cachyos/cachyos-v3:latest
+    home: ${home.stoneridge}
+    home_sudo: true
+    extends: ${config_root}/users/distrobox-base.yaml
+
 
 json:
   - file: ~/.config/DankMaterialShell/settings.json
@@ -317,6 +325,7 @@ json:
       showWorkspaceIndex: true
       workspaceDragReorder: false
       workspaceFocusedBorderEnabled: true
+      blurForegroundLayers: true
       barConfigs[0]:
         openOnOverview: true
         borderEnabled: true

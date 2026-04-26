@@ -1,6 +1,10 @@
 packages:
   - solaar
   - alsa-tools # for hda-verb
+  - gparted
+  - wtype
+  - package: keyd
+    services: [keyd]
 
 files:
   - source: ${config_root}/files/necessary-verbs.sh
@@ -34,3 +38,16 @@ files:
     symlink: true
     depends:
       - packages: [solaar]
+
+  - content: |
+      [ids]
+      *
+
+      [main]
+      shift = oneshot(shift)
+      leftmeta = overload(meta, M-d)
+            
+    target: /etc/keyd/default.conf
+    sudo: true
+    depends:
+      - packages: [keyd]

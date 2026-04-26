@@ -196,6 +196,7 @@ Flags:
   -d, --debug           stream command output; outputs >5 lines are truncated
       --verbose, -v     with --debug: stream all output without truncation
   -n, --dry-run         show plan without executing
+  -S, --skipped         show skipped packages/items in the plan
       --version         print build version and exit
 
 Config is loaded from three layers inside the config directory:
