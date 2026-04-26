@@ -19,13 +19,13 @@ Most configuration tools are either too complex (Ansible, NixOS) or too limited 
 ## Install
 
 ```sh
-go install github.com/rayben/stay-go/cmd/stay-go@latest
+go install github.com/rayzorben/stay-go/cmd/stay-go@latest
 ```
 
 Or build from source:
 
 ```sh
-git clone https://github.com/rayben/stay-go
+git clone https://github.com/rayzorben/stay-go
 cd stay-go
 make install
 ```
