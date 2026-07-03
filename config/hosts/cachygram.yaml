@@ -4,6 +4,7 @@ packages:
   - gparted
   - winboat
   - wtype
+  - power-profiles-daemon # powerprofilesctl for auto profile switching
   - package: keyd
     services: [keyd]
 
@@ -52,3 +53,54 @@ files:
     sudo: true
     depends:
       - packages: [keyd]
+
+  # ── Automatic power-profile switching (performance on AC, balanced on battery) ──
+  - source: ${config_root}/files/power-profile-auto.sh
+    target: /usr/local/bin/power-profile-auto.sh
+    sudo: true
+    mode: "+x"
+
+  - content: |
+      [Unit]
+      Description=Apply power profile based on AC state (managed by stay-go)
+      Wants=power-profiles-daemon.service
+      After=power-profiles-daemon.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/power-profile-auto.sh
+
+      [Install]
+      WantedBy=multi-user.target
+    target: /etc/systemd/system/power-profile-auto.service
+    sudo: true
+    depends:
+      - files: [/usr/local/bin/power-profile-auto.sh]
+
+  # Fire the oneshot on every AC plug/unplug. We start the systemd unit rather
+  # than exec the script directly so it runs in a proper service context (udev's
+  # RUN+= sandbox has a short timeout that can kill powerprofilesctl).
+  - content: |
+      SUBSYSTEM=="power_supply", KERNEL=="AC0", ACTION=="change", RUN+="/usr/bin/systemctl --no-block restart power-profile-auto.service"
+    target: /etc/udev/rules.d/99-power-profile.rules
+    sudo: true
+    depends:
+      - files: [/etc/systemd/system/power-profile-auto.service]
+
+services:
+  # Enable + start the oneshot: sets the profile now and re-applies it at boot.
+  - service: power-profile-auto
+    depends:
+      - packages: [power-profiles-daemon]
+      - files: [/etc/systemd/system/power-profile-auto.service]
+
+commands:
+  # Load the new udev rule so hotplug switching works without a reboot, and fire
+  # a synthetic AC event so the profile is applied to the current state now.
+  # (For commands, depends.files is a skip-if-absent condition, not an ordering
+  # edge — the file is written first anyway because files run before commands.)
+  - name: reload-udev-power-profile
+    command: udevadm control --reload-rules && udevadm trigger --subsystem-match=power_supply --action=change
+    sudo: true
+    depends:
+      - packages: [power-profiles-daemon]

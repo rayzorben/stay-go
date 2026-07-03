@@ -23,6 +23,16 @@ func (r *Resource) GatherKnowledge(_ context.Context) ([]engine.KnowledgeEntry, 
 			continue
 		}
 		if _, err := os.Lstat(target); err == nil {
+			// For symlinks, "present" means the link resolves to the intended
+			// source. A dangling or wrong-target link — e.g. the repo moved and
+			// ${config_root} now points elsewhere, or a manual edit — must be
+			// reported as absent so the planner re-creates it. Lstat alone would
+			// treat even a broken symlink as present and the node would TRACK.
+			if entry.Symlink && entry.Source != "" {
+				if dest, lerr := os.Readlink(target); lerr != nil || dest != entry.Source {
+					continue
+				}
+			}
 			entries = append(entries, engine.KnowledgeEntry{ID: nodeID(target)})
 		}
 	}
