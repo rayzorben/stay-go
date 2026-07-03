@@ -92,6 +92,7 @@ var resourceLabel = map[string]string{
 	"commands":   "command",
 	"secrets":    "secret",
 	"containers": "container",
+	"compose":    "compose",
 	"flatpak":    "flatpak",
 	"distrobox":  "distrobox",
 	"json":       "json",
@@ -109,7 +110,7 @@ func typeLabel(resourceType string) string {
 // canonicalOrder defines the display order for resource types.
 var canonicalOrder = []string{
 	"packages", "groups", "users", "services", "scripts",
-	"files", "commands", "secrets", "containers", "flatpak", "distrobox", "json",
+	"files", "commands", "secrets", "containers", "compose", "flatpak", "distrobox", "json",
 }
 
 var canonicalIndex = func() map[string]int {
@@ -478,11 +479,7 @@ func DisplayPlan(w io.Writer, nodes []*PlanNode, showSkipped bool) {
 			hiddenSkippedPkgs++
 			continue
 		}
-		lv := n.Level
-		if lv == "" {
-			lv = "common"
-		}
-		visible = append(visible, vnode{n: n, grp: g, typ: typeLabel(n.ResourceType), level: lv})
+		visible = append(visible, vnode{n: n, grp: g, typ: typeLabel(n.ResourceType), level: n.SourceFile})
 	}
 	if len(visible) == 0 {
 		return
@@ -856,13 +853,9 @@ func DisplayShow(w io.Writer, st *state.State, vars map[string]string, scope str
 			continue
 		}
 
-		level := entry.Level
-		if level == "" {
-			level = "common"
-		}
 		rows = append(rows, showRow{
 			resourceType: typeLabel(resType),
-			level:        level,
+			level:        entry.SourceFile,
 			item:         item,
 			hash:         entry.Hash,
 			tracked:      entry.TrackedAt.Format("2006-01-02"),
@@ -884,7 +877,7 @@ func DisplayShow(w io.Writer, st *state.State, vars map[string]string, scope str
 	})
 
 	// Compute column widths.
-	w1, w2, w3, w4, w5 := len("RESOURCE"), len("LEVEL"), len("ITEM"), len("HASH"), len("TRACKED")
+	w1, w2, w3, w4, w5 := len("RESOURCE"), len("SOURCE"), len("ITEM"), len("HASH"), len("TRACKED")
 	for _, r := range rows {
 		if l := len(r.resourceType); l > w1 {
 			w1 = l
@@ -904,7 +897,7 @@ func DisplayShow(w io.Writer, st *state.State, vars map[string]string, scope str
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "  %s%s%s  %s%s%s  %s%s%s  %s%s%s  %s%s%s\n",
 		ansiBold, padCenter("RESOURCE", w1), ansiReset,
-		ansiBold, padCenter("LEVEL", w2), ansiReset,
+		ansiBold, padCenter("SOURCE", w2), ansiReset,
 		ansiBold, padCenter("ITEM", w3), ansiReset,
 		ansiBold, padCenter("HASH", w4), ansiReset,
 		ansiBold, padCenter("TRACKED", w5), ansiReset,

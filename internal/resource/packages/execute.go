@@ -53,7 +53,7 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 		if betterManagerNowAvailable(r.manager) {
 			r.manager = nil
 		}
-		st.Set(node.ID, node.ConfigHash, node.Level, node.StateData)
+		st.Set(node.ID, node.ConfigHash, node.SourceFile, node.StateData)
 
 	case engine.ActionRemove:
 		cmd := r.manager.RemoveCmd

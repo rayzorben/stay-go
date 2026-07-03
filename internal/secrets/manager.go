@@ -15,7 +15,6 @@ type Entry struct {
 	Encrypted  bool   // true when the value was stored as !encrypted
 	RawValue   string // base64 ciphertext (Encrypted=true) or plaintext
 	SourceFile string // absolute path to the originating YAML file
-	Level      string // config layer level (e.g. "common", "user:rayben"); set by loadLayer
 }
 
 // Manager holds the unlocked encryption password and exposes encrypt/decrypt

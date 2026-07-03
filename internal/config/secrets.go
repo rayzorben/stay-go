@@ -59,36 +59,12 @@ func unmarshalSecretsGroup(node *yaml.Node, prefix string, out SecretsMap) error
 	return nil
 }
 
-// secretsRefRe matches ${secrets.key_name} tokens in command strings.
+// secretsRefRe matches ${secrets.key_name} tokens.
 var secretsRefRe = regexp.MustCompile(`\$\{secrets\.[^}]+\}`)
 
-// ApplySecrets substitutes ${secrets.key_name} tokens in s with their
-// decrypted plaintext values, shell-quoted for safe inclusion in bash commands.
-// Unreferenced or unknown keys are left as-is.
-// Call this at execute time, never at plan/display time.
-func ApplySecrets(s string, decrypted map[string]string) string {
-	if len(decrypted) == 0 || !strings.Contains(s, "${secrets.") {
-		return s
-	}
-	return secretsRefRe.ReplaceAllStringFunc(s, func(tok string) string {
-		key := tok[len("${secrets.") : len(tok)-1]
-		if v, ok := decrypted[key]; ok {
-			return shellQuote(v)
-		}
-		return tok
-	})
-}
-
-// shellQuote wraps s in single quotes and escapes any embedded single quotes,
-// producing a string that bash treats as a single literal argument regardless
-// of whitespace, newlines, or special characters in s.
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
 // ApplySecretsRaw substitutes ${secrets.key_name} tokens in s with their
-// decrypted plaintext values without shell-quoting. Use for file content
-// (not shell commands). Unknown keys are left as-is.
+// decrypted plaintext values. Unknown keys are left as-is. Resources should
+// not call this directly — use RenderExternal (see resolve.go).
 func ApplySecretsRaw(s string, decrypted map[string]string) string {
 	if len(decrypted) == 0 || !strings.Contains(s, "${secrets.") {
 		return s
@@ -102,8 +78,10 @@ func ApplySecretsRaw(s string, decrypted map[string]string) string {
 	})
 }
 
-// ApplySecretsCiphertext substitutes ${secrets.key_name} tokens in s with
-// their raw ciphertext values (for hashing only). Unknown keys are left as-is.
+// ApplySecretsCiphertext substitutes ${secrets.key_name} tokens in s with the
+// secret's raw ciphertext (or, for entries not yet encrypted, its plaintext
+// value, which is all that exists). Unknown keys are left as-is. Used by the
+// load-time pipeline (ResolveSecretsToCiphertext) and RenderExternalForHash.
 func ApplySecretsCiphertext(s string, sm SecretsMap) string {
 	if len(sm) == 0 || !strings.Contains(s, "${secrets.") {
 		return s
@@ -115,32 +93,4 @@ func ApplySecretsCiphertext(s string, sm SecretsMap) string {
 		}
 		return tok
 	})
-}
-
-// MaskSecrets replaces all ${secrets.key_name} tokens in s with <masked>.
-// Use this whenever a string containing potential secret references is shown
-// to the user (plan display, debug output, etc.).
-func MaskSecrets(s string) string {
-	if !strings.Contains(s, "${secrets.") {
-		return s
-	}
-	return secretsRefRe.ReplaceAllString(s, "<masked>")
-}
-
-// SecretRefs returns the distinct secret key names referenced in s as
-// ${secrets.key_name} tokens. Returns nil if there are none.
-func SecretRefs(s string) []string {
-	if !strings.Contains(s, "${secrets.") {
-		return nil
-	}
-	seen := make(map[string]bool)
-	var keys []string
-	for _, tok := range secretsRefRe.FindAllString(s, -1) {
-		key := tok[len("${secrets.") : len(tok)-1]
-		if !seen[key] {
-			seen[key] = true
-			keys = append(keys, key)
-		}
-	}
-	return keys
 }

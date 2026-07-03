@@ -9,5 +9,10 @@ packages:
   - vim
   - neovim
   
+files:
+  - source: ${config_root}/files/config/microsoft-edge-stable-flags.conf
+    target: ~/.config/microsoft-edge-stable-flags.conf
+    symlink: true
+
 exports:
   - microsoft-edge-stable

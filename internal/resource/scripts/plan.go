@@ -33,7 +33,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 		id := nodeID(entry.Script)
 		displayName := filepath.Base(entry.Script)
 
-		level := entry.Level
+		level := entry.SourceFile
 		if level == "" {
 			level = "common"
 		}
@@ -47,7 +47,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 				DisplayName:  displayName,
 				Action:       engine.ActionSkip,
 				SkipReason:   fmt.Sprintf("file not found: %s", entry.Script),
-				Level:        level,
+				SourceFile: level,
 			})
 			continue
 		}
@@ -88,7 +88,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 			ConfigHash:   hash,
 			DependsOn:    entry.DependsOnIDs(),
 			NeedsSudo:    entry.Sudo,
-			Level:        level,
+			SourceFile: level,
 			Description:  desc,
 			SkipReason:   skipReason,
 			StateData:    map[string]interface{}{"script": entry.Script, "sudo": entry.Sudo},

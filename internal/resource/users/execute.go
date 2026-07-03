@@ -43,7 +43,7 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 		if err != nil {
 			return fmt.Errorf("creating user %q: %w\nstderr: %s", name, err, result.Stderr)
 		}
-		st.Set(node.ID, node.ConfigHash, node.Level, node.StateData)
+		st.Set(node.ID, node.ConfigHash, node.SourceFile, node.StateData)
 
 	case engine.ActionUpdate:
 		entry, ok := r.nodeConfigs[node.ID]
@@ -94,7 +94,7 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 		}
 
 		if len(args) == 0 && len(groupsToRemove) == 0 {
-			st.Set(node.ID, node.ConfigHash, node.Level, node.StateData)
+			st.Set(node.ID, node.ConfigHash, node.SourceFile, node.StateData)
 			return nil
 		}
 		if len(args) > 0 {
@@ -109,7 +109,7 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 				return fmt.Errorf("removing user %q from group %q: %w\nstderr: %s", name, g, err, result.Stderr)
 			}
 		}
-		st.Set(node.ID, node.ConfigHash, node.Level, node.StateData)
+		st.Set(node.ID, node.ConfigHash, node.SourceFile, node.StateData)
 
 	case engine.ActionRemove:
 		result, err := r.exec.Run(ctx, executor.Options{Sudo: true}, "userdel", "-r", name)

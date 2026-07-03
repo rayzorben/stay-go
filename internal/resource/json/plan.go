@@ -37,7 +37,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 			Values map[string]interface{}
 		}{entry.File, entry.Values})
 
-		level := entry.Level
+		level := entry.SourceFile
 		if level == "" {
 			level = "common"
 		}
@@ -96,7 +96,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 			Action:       action,
 			ConfigHash:   hash,
 			DependsOn:    entry.DependsOnIDs(),
-			Level:        level,
+			SourceFile: level,
 			Description:  desc,
 			SkipReason:   skipReason,
 			StateData:    stateData,

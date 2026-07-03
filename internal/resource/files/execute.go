@@ -28,13 +28,14 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 		if err := r.apply(ctx, node, entry, st); err != nil {
 			return err
 		}
-		st.Set(node.ID, node.ConfigHash, node.Level, node.StateData)
+		st.Set(node.ID, node.ConfigHash, node.SourceFile, node.StateData)
 
 	case engine.ActionRemove:
 		ent, ok := st.Get(node.ID)
 		if ok {
 			if add, _ := ent.Data[stateKeyAdditive].(bool); add {
 				snippet, _ := ent.Data[stateKeySnippet].(string)
+				snippet = config.RenderExternal(snippet, r.cfg) // state stores secret refs as ciphertext
 				sudo := false
 				if v, ok := ent.Data[stateKeySudo].(bool); ok {
 					sudo = v
@@ -59,15 +60,18 @@ func (r *Resource) apply(ctx context.Context, node *engine.PlanNode, entry *conf
 	switch kind {
 
 	case kindInline:
-		content := config.ApplySecretsRaw(entry.Content, r.cfg.DecryptedSecrets)
+		content := entry.Content // already fully resolved by the config pipeline
 		if entry.Add {
 			perm := os.FileMode(0o644)
 			// Config snippet changed: drop what we last wrote, then ensure the new snippet is present.
 			if node.Action == engine.ActionUpdate {
 				if ent, ok := st.Get(node.ID); ok && ent.Data != nil {
-					if old, ok := ent.Data[stateKeySnippet].(string); ok && old != "" && old != content {
-						if err := removeSnippetFromFile(ctx, r.exec, target, old, sudo); err != nil {
-							return fmt.Errorf("replacing additive snippet in %q: %w", target, err)
+					if old, ok := ent.Data[stateKeySnippet].(string); ok {
+						old = config.RenderExternal(old, r.cfg) // state stores secret refs as ciphertext
+						if old != "" && old != content {
+							if err := removeSnippetFromFile(ctx, r.exec, target, old, sudo); err != nil {
+								return fmt.Errorf("replacing additive snippet in %q: %w", target, err)
+							}
 						}
 					}
 				}

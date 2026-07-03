@@ -63,7 +63,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 			dependsOn = append(dependsOn, config.NodeID("groups", g))
 		}
 
-		level := entry.Level
+		level := entry.SourceFile
 		if level == "" {
 			level = "common"
 		}
@@ -103,7 +103,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 			ConfigHash:   hash,
 			DependsOn:    dependsOn,
 			NeedsSudo:    true,
-			Level:        level,
+			SourceFile: level,
 			Description:  desc,
 			StateData:    stateData,
 		})

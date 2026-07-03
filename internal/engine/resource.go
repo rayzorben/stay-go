@@ -86,10 +86,10 @@ type PlanNode struct {
 	// this node can execute.
 	DependsOn []string
 
-	// Level describes the scope of this node. Conventional values:
-	//   "common"      — system-wide (packages, system services, system users)
-	//   "user:<name>" — user-scoped (user services, user-owned files)
-	Level string
+	// SourceFile is the path of the YAML file this node came from, relative to
+	// the config root (e.g. "/default.yaml", "/users/rayben.yaml"). Empty for
+	// nodes generated without a specific source (e.g. state removals).
+	SourceFile string
 
 	// NeedsSudo indicates that executing this node requires sudo.
 	// Used by the engine to pre-authenticate sudo once before the execute loop.
@@ -199,20 +199,27 @@ func DetermineAction(id string, inKnowledge bool, configHash string, st *state.S
 	}
 }
 
-// CheckLevelChange upgrades a TRACK action to ActionLevel when the node's
-// stored level differs from the desired config level. Returns the (possibly
-// updated) action and a human-readable description of the level change.
+// CheckSourceChange upgrades a TRACK action to ActionLevel when the node's
+// stored source file differs from the desired config source file. Returns the
+// (possibly updated) action and a human-readable description of the change.
 // No-ops if the action is not TRACK, the node is not yet in state, or the
-// stored level is empty (pre-level-tracking state entry).
-func CheckLevelChange(id, newLevel string, action ActionType, st *state.State) (ActionType, string) {
+// stored source file is empty (pre-source-tracking state entry).
+func CheckSourceChange(id, newSourceFile string, action ActionType, st *state.State) (ActionType, string) {
 	if action != ActionTrack {
 		return action, ""
 	}
 	entry, ok := st.Get(id)
-	if !ok || entry.Level == "" || entry.Level == newLevel {
+	if !ok || entry.SourceFile == "" || entry.SourceFile == newSourceFile {
 		return action, ""
 	}
-	return ActionLevel, fmt.Sprintf("level %s → %s", entry.Level, newLevel)
+	return ActionLevel, fmt.Sprintf("source %s → %s", entry.SourceFile, newSourceFile)
+}
+
+// CheckLevelChange is a deprecated alias for CheckSourceChange kept for
+// compatibility with callers not yet migrated.
+// Deprecated: use CheckSourceChange instead.
+func CheckLevelChange(id, newLevel string, action ActionType, st *state.State) (ActionType, string) {
+	return CheckSourceChange(id, newLevel, action, st)
 }
 
 // StateRemovals returns ActionRemove PlanNodes for every node tracked in state
@@ -231,16 +238,16 @@ func StateRemovals(resourceType string, configSet map[string]bool, knowledge map
 		}
 		name := strings.TrimPrefix(id, prefix)
 		if !configSet[name] {
-			level := ""
+			sourceFile := ""
 			if entry, ok := st.Get(id); ok {
-				level = entry.Level
+				sourceFile = entry.SourceFile
 			}
 			nodes = append(nodes, &PlanNode{
 				ID:               id,
 				ResourceType:     resourceType,
 				DisplayName:      name,
 				Action:           ActionRemove,
-				Level:            level,
+				SourceFile:       sourceFile,
 				AbsentFromSystem: knowledge != nil && !knowledge[id],
 			})
 		}

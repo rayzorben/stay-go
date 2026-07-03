@@ -38,7 +38,7 @@ type Resource struct {
 func New(cfg *config.Config, exec *executor.Executor) *Resource {
 	hasFlatpakConfig := len(cfg.Flatpak.Remotes) > 0 || len(cfg.Flatpak.Apps) > 0
 	if hasFlatpakConfig && !hasFlatpakPackage(cfg) {
-		cfg.Packages = append(cfg.Packages, config.PackageEntry{Name: "flatpak", Level: "common"})
+		cfg.Packages = append(cfg.Packages, config.PackageEntry{Name: "flatpak", SourceFile: "common"})
 	}
 	return &Resource{cfg: cfg, exec: exec}
 }

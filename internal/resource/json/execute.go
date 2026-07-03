@@ -63,7 +63,7 @@ func (r *Resource) Execute(_ context.Context, node *engine.PlanNode, st *state.S
 			"values":    entry.Values,
 			"originals": originals,
 		}
-		st.Set(node.ID, node.ConfigHash, node.Level, stateData)
+		st.Set(node.ID, node.ConfigHash, node.SourceFile, stateData)
 
 	case engine.ActionRemove:
 		// Restore original values from state.

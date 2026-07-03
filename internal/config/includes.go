@@ -15,12 +15,12 @@ type includeEntry struct {
 	filePath string // resolved absolute path to the included file
 }
 
-// loadLayer reads the YAML config at path, stamps all direct entries with
-// level, processes top-level `key: !include "file"` directives (stamping
-// their entries with level+":"+keyName), and returns the merged result.
+// loadLayer reads the YAML config at path, stamps all direct entries with the
+// source file path relative to configRoot, processes top-level
+// `key: !include "file"` directives, and returns the merged result.
 //
 // visited prevents circular includes; keys are absolute paths.
-func loadLayer(path, level string, visited map[string]bool) (*Config, error) {
+func loadLayer(path, configRoot string, visited map[string]bool) (*Config, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("resolving path %q: %w", path, err)
@@ -53,33 +53,58 @@ func loadLayer(path, level string, visited map[string]bool) (*Config, error) {
 		cfg.Secrets[k] = e
 	}
 
-	// Stamp direct entries with this layer's level (includes secrets Level).
-	stampLevel(cfg, level)
+	// Compute relative path of this file from configRoot, prefix with "/"
+	relPath := abs
+	if configRoot != "" {
+		if rel, err := filepath.Rel(configRoot, abs); err == nil {
+			relPath = "/" + rel
+		}
+	}
+
+	// Stamp direct entries with this file's source path.
+	stampSourceFile(cfg, relPath)
 
 	// Load included files as base; this file's direct entries override.
 	result := cfg
 	for _, inc := range includes {
-		incLevel := inc.keyName
-		if level != "" {
-			incLevel = level + ":" + inc.keyName
-		}
-		incCfg, err := loadLayer(inc.filePath, incLevel, visited)
+		incCfg, err := loadIncludeOptional(inc.filePath, configRoot, visited)
 		if err != nil {
 			return nil, fmt.Errorf("include %q (key %q) in %q: %w", inc.filePath, inc.keyName, path, err)
 		}
-		result = mergeConfigs(incCfg, result)
+		if incCfg != nil {
+			result = mergeConfigs(incCfg, result)
+		}
 	}
 
 	return result, nil
 }
 
+// loadIncludeOptional attempts to load an include file, returning nil if not found
+// (with a stderr warning) or the loaded Config otherwise. Returns an error only for
+// actual parsing/reading failures, not file-not-found.
+func loadIncludeOptional(path, configRoot string, visited map[string]bool) (*Config, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolving path: %w", err)
+	}
+	_, err = os.Stat(abs)
+	if os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "warning: include file not found: %q\n", path)
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("stat: %w", err)
+	}
+	return loadLayer(abs, configRoot, visited)
+}
+
 // loadLayerOptional calls loadLayer but returns nil without error when the
 // file does not exist.
-func loadLayerOptional(path, level string, visited map[string]bool) (*Config, error) {
+func loadLayerOptional(path, configRoot string, visited map[string]bool) (*Config, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil, nil
 	}
-	return loadLayer(path, level, visited)
+	return loadLayer(path, configRoot, visited)
 }
 
 // extractIncludes parses a *yaml.Node document, removes top-level key-value
@@ -143,60 +168,53 @@ func resolveIncludePath(s, configRoot string) string {
 	return s
 }
 
-// stampLevel sets the Level field on every entry in cfg.
-// An empty level (the default.yaml root) is mapped to "common" so that direct
-// entries in default.yaml display and store as "common", preserving backward
-// compatibility with state written by the old explicit-layer approach.
-func stampLevel(cfg *Config, level string) {
-	if level == "" {
-		level = "common"
-	}
+// stampSourceFile sets the SourceFile field on every entry in cfg to relPath
+// (the path of the source YAML file relative to the config root, prefixed with "/").
+func stampSourceFile(cfg *Config, relPath string) {
 	for i := range cfg.Packages {
-		cfg.Packages[i].Level = level
+		cfg.Packages[i].SourceFile = relPath
 	}
 	for i := range cfg.Groups {
-		cfg.Groups[i].Level = level
+		cfg.Groups[i].SourceFile = relPath
 	}
 	for i := range cfg.Users {
-		cfg.Users[i].Level = level
+		cfg.Users[i].SourceFile = relPath
 	}
 	for i := range cfg.Services {
-		cfg.Services[i].Level = level
+		cfg.Services[i].SourceFile = relPath
 	}
 	for i := range cfg.Scripts {
-		cfg.Scripts[i].Level = level
+		cfg.Scripts[i].SourceFile = relPath
 	}
 	for i := range cfg.Files {
-		cfg.Files[i].Level = level
+		cfg.Files[i].SourceFile = relPath
 	}
 	for i := range cfg.Commands {
-		cfg.Commands[i].Level = level
+		cfg.Commands[i].SourceFile = relPath
 	}
 	for i := range cfg.Containers {
-		cfg.Containers[i].Level = level
+		cfg.Containers[i].SourceFile = relPath
+	}
+	for i := range cfg.Compose {
+		cfg.Compose[i].SourceFile = relPath
 	}
 	for i := range cfg.Distrobox {
-		cfg.Distrobox[i].Level = level
+		cfg.Distrobox[i].SourceFile = relPath
 		for j := range cfg.Distrobox[i].Packages {
-			cfg.Distrobox[i].Packages[j].Level = level
+			cfg.Distrobox[i].Packages[j].SourceFile = relPath
 		}
 		for j := range cfg.Distrobox[i].Commands {
-			cfg.Distrobox[i].Commands[j].Level = level
+			cfg.Distrobox[i].Commands[j].SourceFile = relPath
 		}
 	}
 	for i := range cfg.Json {
-		cfg.Json[i].Level = level
+		cfg.Json[i].SourceFile = relPath
 	}
 	for i := range cfg.Flatpak.Remotes {
-		cfg.Flatpak.Remotes[i].Level = level
+		cfg.Flatpak.Remotes[i].SourceFile = relPath
 	}
 	for i := range cfg.Flatpak.Apps {
-		cfg.Flatpak.Apps[i].Level = level
-	}
-	for k := range cfg.Secrets {
-		e := cfg.Secrets[k]
-		e.Level = level
-		cfg.Secrets[k] = e
+		cfg.Flatpak.Apps[i].SourceFile = relPath
 	}
 }
 
@@ -247,8 +265,12 @@ func mergeConfigs(base, override *Config) *Config {
 		[]CommandEntry(base.Commands), []CommandEntry(override.Commands),
 		func(c CommandEntry) string { return c.Name }))
 
-	result.Containers = mergeByKey(base.Containers, override.Containers,
-		func(c ContainerEntry) string { return c.ContainerName() })
+	result.Containers = ContainerList(mergeByKey(
+		[]ContainerEntry(base.Containers), []ContainerEntry(override.Containers),
+		func(c ContainerEntry) string { return c.ContainerName() }))
+
+	result.Compose = mergeByKey(base.Compose, override.Compose,
+		func(c ComposeEntry) string { return c.ProjectName() })
 
 	result.Distrobox = mergeByKey(base.Distrobox, override.Distrobox,
 		func(d DistroboxEntry) string { return d.Name })

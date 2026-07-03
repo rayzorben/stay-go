@@ -27,7 +27,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 		configSet["remote/"+remote.Name] = true
 		hash := config.Hash(remote)
 
-		level := remote.Level
+		level := remote.SourceFile
 		if level == "" {
 			level = "common"
 		}
@@ -45,7 +45,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 			DisplayName:  remote.Name,
 			Action:       action,
 			ConfigHash:   hash,
-			Level:        level,
+			SourceFile: level,
 			NeedsSudo:    false,
 			DependsOn:    []string{"packages/flatpak"},
 			Description:  desc,
@@ -66,7 +66,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 			Remote string
 		}{app.AppID, remote})
 
-		level := app.Level
+		level := app.SourceFile
 		if level == "" {
 			level = "common"
 		}
@@ -93,7 +93,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 			DisplayName:  app.AppID,
 			Action:       action,
 			ConfigHash:   hash,
-			Level:        level,
+			SourceFile: level,
 			NeedsSudo:    false,
 			DependsOn:    deps,
 			Description:  desc,

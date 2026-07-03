@@ -34,7 +34,7 @@ func (r *Resource) BuildPlan(ctx context.Context, knowledge map[string]bool, st 
 		// ── Host-level box node ────────────────────────────────────────────────
 		hash := distroboxHash(entry)
 		action := engine.DetermineAction(id, knowledge[id], hash, st)
-		action, levelDesc := engine.CheckLevelChange(id, entry.Level, action, st)
+		action, levelDesc := engine.CheckLevelChange(id, entry.SourceFile, action, st)
 
 		deps := entry.DependsOnIDs()
 		deps = append(deps, config.NodeID("packages", "distrobox"))
@@ -46,7 +46,7 @@ func (r *Resource) BuildPlan(ctx context.Context, knowledge map[string]bool, st 
 			Action:       action,
 			ConfigHash:   hash,
 			DependsOn:    deps,
-			Level:        entry.Level,
+			SourceFile: entry.SourceFile,
 			NeedsSudo:    needsHomeSudo(entry),
 			Description:  describeBoxAction(action, entry, levelDesc),
 			StateData:    map[string]interface{}{"name": entry.Name, "image": entry.Image},
@@ -96,13 +96,24 @@ func (r *Resource) BuildPlan(ctx context.Context, knowledge map[string]bool, st 
 		default:
 			guestPkg, guestOk := r.guestPkgKnowledge(ctx, entry, guestBin, guestBinErr)
 			applyAction = engine.DetermineAction(aid, knowledge[id], applyHash, st)
-			applyAction, _ = engine.CheckLevelChange(aid, entry.Level, applyAction, st)
+			applyAction, _ = engine.CheckLevelChange(aid, entry.SourceFile, applyAction, st)
 			if applyAction == engine.ActionAdopt {
 				applyAction = engine.ActionAdd
 				applyDesc = summarizeInBoxConfig(entry)
 			}
 			deltas := r.guestWorkDeltas(entry, guestPkg, guestOk, boxSt)
-			if applyAction == engine.ActionTrack && guestWorkPending(deltas) {
+
+			// Exports are not part of guestWorkDeltas (they run on the host, not
+			// inside the box), so pending export changes must be detected against
+			// the last-applied snapshot in host state.
+			var prevExports []string
+			if prev, ok := st.Get(aid); ok {
+				prevExports = exportsSnapshotFromStateData(prev.Data)
+			}
+			addedExp, removedExp := diffSortedStringSets(prevExports, sortedStringsCopy(entry.Exports))
+			exportsPending := len(addedExp) > 0 || len(removedExp) > 0
+
+			if applyAction == engine.ActionTrack && (guestWorkPending(deltas) || exportsPending) {
 				applyAction = engine.ActionUpdate
 			}
 			// Inverse: UPDATE triggered purely by a config hash change (e.g. a
@@ -110,17 +121,16 @@ func (r *Resource) BuildPlan(ctx context.Context, knowledge map[string]bool, st 
 			// boxSt on a previous run). If guest inventory is reliable and nothing
 			// is actually pending, downgrade to TRACK so the engine just saves the
 			// new hash silently instead of showing an unexplained "~ update".
-			if applyAction == engine.ActionUpdate && guestOk && !guestWorkPending(deltas) {
+			// Exports must be checked too: adding/removing an export changes the
+			// hash but produces no package/command delta, so without this guard a
+			// new export would be silently swallowed (hash saved, never applied).
+			if applyAction == engine.ActionUpdate && guestOk && !guestWorkPending(deltas) && !exportsPending {
 				applyAction = engine.ActionTrack
 			}
 			includeExports := applyAction == engine.ActionAdd || applyAction == engine.ActionUpdate
 			exportAct := engine.ActionUpdate
 			if applyAction == engine.ActionAdd {
 				exportAct = engine.ActionAdd
-			}
-			var prevExports []string
-			if prev, ok := st.Get(aid); ok {
-				prevExports = exportsSnapshotFromStateData(prev.Data)
 			}
 			applyNotes = formatGuestWorkNotes(entry, deltas, guestOk, includeExports, exportAct, prevExports)
 		}
@@ -139,7 +149,7 @@ func (r *Resource) BuildPlan(ctx context.Context, knowledge map[string]bool, st 
 			Action:       applyAction,
 			ConfigHash:   applyHash,
 			DependsOn:    []string{id},
-			Level:        entry.Level,
+			SourceFile: entry.SourceFile,
 			Description:  applyDesc,
 			Notes:        applyNotes,
 			StateData: stateData,

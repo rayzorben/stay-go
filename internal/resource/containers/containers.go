@@ -10,6 +10,8 @@ package containers
 
 import (
 	"os/exec"
+	"strconv"
+	"time"
 
 	"github.com/rayzorben/stay-go/internal/config"
 	"github.com/rayzorben/stay-go/internal/executor"
@@ -52,14 +54,14 @@ func resolveRuntime(specified string) string {
 }
 
 // containerHash returns a deterministic hash of all container config fields
-// that define the desired runtime state. Depends and Level are excluded.
+// that define the desired runtime state. Depends and SourceFile are excluded.
 func containerHash(e *config.ContainerEntry, name string) string {
 	return config.Hash(struct {
 		Name        string
 		Image       string
 		Runtime     string
 		Ports       []string
-		Volumes     []string
+		Volumes     []config.Mount
 		Environment []string
 		EnvFile     []string
 		Labels      map[string]string
@@ -76,6 +78,8 @@ func containerHash(e *config.ContainerEntry, name string) string {
 		DNS         []string
 		ExtraHosts  []string
 		Hostname    string
+		ShmSize     string
+		StopTimeout string
 		Pull        string
 		Sudo        bool
 	}{
@@ -83,7 +87,7 @@ func containerHash(e *config.ContainerEntry, name string) string {
 		e.EnvFile, e.Labels, e.Restart, e.NetworkMode, e.Networks,
 		e.Command, e.Entrypoint, e.User, e.Privileged, e.CapAdd,
 		e.CapDrop, e.Devices, e.DNS, e.ExtraHosts, e.Hostname,
-		e.Pull, e.Sudo,
+		e.ShmSize, e.StopTimeout, e.Pull, e.Sudo,
 	})
 }
 
@@ -94,8 +98,8 @@ func buildRunArgs(e *config.ContainerEntry, name string) []string {
 	for _, p := range e.Ports {
 		args = append(args, "-p", p)
 	}
-	for _, v := range e.Volumes {
-		args = append(args, "-v", v)
+	for _, m := range e.Volumes {
+		args = append(args, mountArgs(m)...)
 	}
 	for _, env := range e.Environment {
 		args = append(args, "-e", env)
@@ -118,6 +122,12 @@ func buildRunArgs(e *config.ContainerEntry, name string) []string {
 	}
 	if e.Hostname != "" {
 		args = append(args, "--hostname", e.Hostname)
+	}
+	if e.ShmSize != "" {
+		args = append(args, "--shm-size", e.ShmSize)
+	}
+	if e.StopTimeout != "" {
+		args = append(args, "--stop-timeout", stopTimeoutSeconds(e.StopTimeout))
 	}
 	if e.User != "" {
 		args = append(args, "--user", e.User)
@@ -152,4 +162,37 @@ func buildRunArgs(e *config.ContainerEntry, name string) []string {
 	args = append(args, e.Command...)
 
 	return args
+}
+
+// mountArgs renders one volume mount as `docker run` arguments: short-form
+// strings and bind/named volumes use -v; tmpfs mounts use --tmpfs.
+func mountArgs(m config.Mount) []string {
+	if m.Short != "" {
+		return []string{"-v", m.Short}
+	}
+	if m.Type == "tmpfs" {
+		spec := m.Target
+		if m.TmpfsSize != "" {
+			spec += ":size=" + m.TmpfsSize
+		}
+		return []string{"--tmpfs", spec}
+	}
+	spec := m.Target
+	if m.Source != "" {
+		spec = m.Source + ":" + m.Target
+	}
+	if m.ReadOnly {
+		spec += ":ro"
+	}
+	return []string{"-v", spec}
+}
+
+// stopTimeoutSeconds normalises a stop-grace-period value to whole seconds, as
+// expected by `docker/podman run --stop-timeout`. Duration strings ("30s",
+// "1m30s") are parsed; a bare number is assumed to already be seconds.
+func stopTimeoutSeconds(v string) string {
+	if d, err := time.ParseDuration(v); err == nil {
+		return strconv.Itoa(int(d.Seconds()))
+	}
+	return v
 }

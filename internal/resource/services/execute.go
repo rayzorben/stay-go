@@ -34,7 +34,7 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 		if err != nil {
 			return fmt.Errorf("enabling service %q: %w\nstderr: %s", name, err, result.Stderr)
 		}
-		st.Set(node.ID, node.ConfigHash, node.Level, node.StateData)
+		st.Set(node.ID, node.ConfigHash, node.SourceFile, node.StateData)
 
 	case engine.ActionUpdate:
 		// Reload unit files then restart to apply any changes.
@@ -44,7 +44,7 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 		if err != nil {
 			return fmt.Errorf("restarting service %q: %w\nstderr: %s", name, err, result.Stderr)
 		}
-		st.Set(node.ID, node.ConfigHash, node.Level, node.StateData)
+		st.Set(node.ID, node.ConfigHash, node.SourceFile, node.StateData)
 
 	case engine.ActionRemove:
 		result, err := r.exec.Run(ctx, opts,

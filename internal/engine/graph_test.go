@@ -124,3 +124,39 @@ func TestStateRemovals(t *testing.T) {
 		t.Errorf("unexpected removals: %v", removals)
 	}
 }
+
+func TestAddSecretBarrierDeps(t *testing.T) {
+	nodes := []*PlanNode{
+		{ID: "secrets/db", ResourceType: "secrets", Action: ActionTrack},
+		{ID: "secrets/old", ResourceType: "secrets", Action: ActionRemove}, // excluded
+		{ID: "packages/docker", ResourceType: "packages", Action: ActionAdd},
+		{ID: "containers/app", ResourceType: "containers", Action: ActionAdd, DependsOn: []string{"packages/docker"}},
+		{ID: "files/x", ResourceType: "files", Action: ActionRemove}, // REMOVE: not given the barrier
+	}
+	addSecretBarrierDeps(nodes)
+
+	if got := nodes[3].DependsOn; len(got) != 2 || got[0] != "packages/docker" || got[1] != "secrets/db" {
+		t.Errorf("containers/app deps = %v, want [packages/docker secrets/db]", got)
+	}
+	if got := nodes[2].DependsOn; len(got) != 1 || got[0] != "secrets/db" {
+		t.Errorf("packages/docker deps = %v, want [secrets/db]", got)
+	}
+	if got := nodes[4].DependsOn; len(got) != 0 {
+		t.Errorf("files/x (REMOVE) should not get a secret barrier dep, got %v", got)
+	}
+	if got := nodes[0].DependsOn; len(got) != 0 {
+		t.Errorf("secrets node should not depend on itself, got %v", got)
+	}
+	// markSkips must not cascade: containers/app keeps its action (secrets/db is TRACK).
+	markSkips(nodes)
+	if nodes[3].Action != ActionAdd {
+		t.Errorf("containers/app skipped unexpectedly: %v (%s)", nodes[3].Action, nodes[3].SkipReason)
+	}
+
+	// With no secrets nodes, nothing changes.
+	plain := []*PlanNode{{ID: "containers/app", ResourceType: "containers", Action: ActionAdd}}
+	addSecretBarrierDeps(plain)
+	if len(plain[0].DependsOn) != 0 {
+		t.Errorf("no secrets nodes → no deps added, got %v", plain[0].DependsOn)
+	}
+}

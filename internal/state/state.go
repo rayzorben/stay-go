@@ -21,11 +21,11 @@ type State struct {
 
 // NodeEntry records a single managed resource node.
 type NodeEntry struct {
-	Hash      string                 `json:"hash"`
-	Level     string                 `json:"level,omitempty"`
-	TrackedAt time.Time              `json:"tracked_at"`
-	UpdatedAt time.Time              `json:"updated_at"`
-	Data      map[string]interface{} `json:"data,omitempty"`
+	Hash       string                 `json:"hash"`
+	SourceFile string                 `json:"source_file,omitempty"`
+	TrackedAt  time.Time              `json:"tracked_at"`
+	UpdatedAt  time.Time              `json:"updated_at"`
+	Data       map[string]interface{} `json:"data,omitempty"`
 }
 
 // DefaultPath returns the conventional state file location.
@@ -89,10 +89,10 @@ func (s *State) Get(id string) (NodeEntry, bool) {
 	return e, ok
 }
 
-// Set upserts a NodeEntry for id, storing the hash, level, and the full
+// Set upserts a NodeEntry for id, storing the hash, sourceFile, and the full
 // config data that was last applied. Data is used on subsequent runs to
 // produce accurate change descriptions without querying the live system.
-func (s *State) Set(id, hash, level string, data map[string]interface{}) {
+func (s *State) Set(id, hash, sourceFile string, data map[string]interface{}) {
 	now := time.Now()
 	entry, exists := s.Nodes[id]
 	if !exists {
@@ -100,8 +100,8 @@ func (s *State) Set(id, hash, level string, data map[string]interface{}) {
 	}
 	entry.Hash = hash
 	entry.UpdatedAt = now
-	if level != "" {
-		entry.Level = level
+	if sourceFile != "" {
+		entry.SourceFile = sourceFile
 	}
 	if data != nil {
 		entry.Data = data

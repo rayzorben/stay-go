@@ -19,7 +19,6 @@ package config
 import (
 	"os"
 	"os/exec"
-	"reflect"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -102,79 +101,13 @@ func ResolveString(s string, vars map[string]string) string {
 	return resolveOne(s, vars, home)
 }
 
-// ApplyVars substitutes all ${key} and ~ tokens in every string field of cfg
-// by walking the entire value tree via reflection. Fields tagged `yaml:"-"` are
-// skipped (they are internal-only and must not be mutated here).
+// ApplyVars substitutes all ${key}, ${env:VAR}, $(cmd), and ~ tokens in every
+// string field of cfg by walking the entire value tree via reflection. Fields
+// tagged `yaml:"-"` are skipped (internal-only; must not be mutated here).
+// ${secrets.x} tokens are intentionally left for the secrets pipeline (see
+// resolve.go) — ResolveString does not touch them.
 func ApplyVars(cfg *Config, vars map[string]string) {
-	r := func(s string) string { return ResolveString(s, vars) }
-	applyVarsValue(reflect.ValueOf(cfg), r)
-}
-
-// applyVarsValue recursively walks v and calls r on every settable string.
-// Pointers and interfaces are followed. Structs skip fields tagged yaml:"-".
-// map[string][]string (the Depends shape) has its values resolved in place.
-func applyVarsValue(v reflect.Value, r func(string) string) {
-	switch v.Kind() {
-	case reflect.Ptr, reflect.Interface:
-		if !v.IsNil() {
-			applyVarsValue(v.Elem(), r)
-		}
-	case reflect.Struct:
-		t := v.Type()
-		for i := range v.NumField() {
-			ft := t.Field(i)
-			// Skip fields marked yaml:"-" — these are internal (Level, DecryptedSecrets, etc.)
-			if ft.Tag.Get("yaml") == "-" {
-				continue
-			}
-			applyVarsValue(v.Field(i), r)
-		}
-	case reflect.Slice:
-		for i := range v.Len() {
-			applyVarsValue(v.Index(i), r)
-		}
-	case reflect.Map:
-		for _, key := range v.MapKeys() {
-			elem := v.MapIndex(key)
-			resolved := applyVarsMapValue(elem, r)
-			if resolved.IsValid() {
-				v.SetMapIndex(key, resolved)
-			}
-		}
-	case reflect.String:
-		if v.CanSet() {
-			v.SetString(r(v.String()))
-		}
-	}
-}
-
-// applyVarsMapValue resolves variables in a map value (which is not addressable
-// and therefore not directly settable). Returns the new reflect.Value to set.
-func applyVarsMapValue(v reflect.Value, r func(string) string) reflect.Value {
-	switch v.Kind() {
-	case reflect.String:
-		return reflect.ValueOf(r(v.String()))
-	case reflect.Slice:
-		// e.g. map[string][]string — resolve each element and return a new slice.
-		out := reflect.MakeSlice(v.Type(), v.Len(), v.Len())
-		for i := range v.Len() {
-			elem := v.Index(i)
-			if elem.Kind() == reflect.String {
-				out.Index(i).SetString(r(elem.String()))
-			} else {
-				out.Index(i).Set(elem)
-			}
-		}
-		return out
-	case reflect.Interface:
-		if !v.IsNil() {
-			inner := applyVarsMapValue(v.Elem(), r)
-			if inner.IsValid() {
-				return inner
-			}
-		}
-	}
-	return reflect.Value{}
+	walkConfigStrings(cfg, skipInternal, func(s string) string { return ResolveString(s, vars) })
 }
 
 // resolveEnvVars replaces ${env:NAME} tokens with the corresponding OS
@@ -237,8 +170,9 @@ func resolveCommandSubs(s string) string {
 
 // resolveOne performs one substitution pass: expands ~, ${env:VAR}, $(cmd),
 // then replaces ${key} from vars. Tokens of the form ${secrets.*} are
-// intentionally left untouched; they are substituted at execute time by
-// config.ApplySecrets so secrets are never printed in plan output.
+// intentionally left untouched; they are resolved by the secrets pipeline
+// (ResolveSecretsToCiphertext at load time, then the secrets resource at
+// execute time — see resolve.go) so secrets never appear in plan output.
 func resolveOne(s string, vars map[string]string, home string) string {
 	s = strings.ReplaceAll(s, "~", home)
 	s = resolveEnvVars(s)
@@ -247,11 +181,6 @@ func resolveOne(s string, vars map[string]string, home string) string {
 		s = strings.ReplaceAll(s, "${"+k+"}", v)
 	}
 	return s
-}
-
-// hasSecretsRef reports whether s contains at least one ${secrets.*} token.
-func hasSecretsRef(s string) bool {
-	return strings.Contains(s, "${secrets.")
 }
 
 // countVarTokens counts unresolved ${...}, ~, and $(...) tokens across all

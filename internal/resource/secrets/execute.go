@@ -15,8 +15,13 @@ import (
 //   - ADD: unlock the manager (prompting if needed), encrypt the plaintext
 //     value in-place in its source file, populate cfg.DecryptedSecrets.
 //   - TRACK/UPDATE: unlock the manager, decrypt the ciphertext, populate
-//     cfg.DecryptedSecrets.
+//     cfg.DecryptedSecrets, and substitute the plaintext into the shared config.
 //   - REMOVE: clear the state entry only; no file modification.
+//
+// LoadAll left each ${secrets.x} reference as the secret's ciphertext; this
+// resource substitutes the decrypted plaintext during execution. The engine
+// runs all secrets nodes before any other node (see addSecretBarrierDeps), so
+// every other resource observes a fully-resolved config.
 //
 // The Manager is unlocked on the first call that needs it; subsequent calls
 // reuse the cached password.
@@ -45,7 +50,7 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 		// State hash is based on the new ciphertext (stable until re-encrypted).
 		newCT := ciphertexts[key]
 		stateHash := config.Hash(newCT)
-		st.Set(node.ID, stateHash, node.Level, nil)
+		st.Set(node.ID, stateHash, node.SourceFile, nil)
 
 	case engine.ActionTrack, engine.ActionAdopt, engine.ActionUpdate:
 		entry := r.entries[node.ID]
@@ -65,8 +70,9 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 			r.cfg.DecryptedSecrets = make(map[string]string)
 		}
 		r.cfg.DecryptedSecrets[node.DisplayName] = pt
+		config.SubstituteSecret(r.cfg, entry.RawValue, pt)
 		if node.Action != engine.ActionTrack {
-			st.Set(node.ID, node.ConfigHash, node.Level, nil)
+			st.Set(node.ID, node.ConfigHash, node.SourceFile, nil)
 		}
 
 	case engine.ActionRemove:

@@ -183,6 +183,47 @@ users:
 Variables are resolved once in `LoadAll` and applied to all string fields before
 any resource sees the config. Higher-specificity layers override lower ones.
 
+Also resolved universally (never by individual resources):
+- `${env:NAME}` — value of an environment variable
+- `$(command)` — stdout of a shell command, run at load time
+- `${secrets.x}` — see below
+
+---
+
+## Substitution Pipeline & Secrets
+
+All substitution is centralised in the `config` package (`config/resolve.go`,
+`config/vars.go`, `config/secrets.go`). **Resources never deal with `${var}`,
+`${env:}`, `$(cmd)`, `~`, or `${secrets.x}`** — by the time a resource sees the
+`Config`, every string field is fully resolved.
+
+Pipeline:
+1. **`LoadAll`** — `ApplyVars` resolves `${var}/${env:}/$(cmd)/~` in every string
+   field (reflection walk, skips `yaml:"-"`); then `ResolveSecretsToCiphertext`
+   replaces every `${secrets.x}` token with the secret's **ciphertext**. After
+   this the `Config` holds no secret tokens and no plaintext — safe to display
+   and to hash (a secret rotation changes the ciphertext → triggers UPDATE).
+2. **Execute phase** — the engine registers the `secrets` resource first and
+   makes every other (non-REMOVE) node depend on the secrets nodes
+   (`addSecretBarrierDeps`). As the secrets resource decrypts each secret it
+   calls `config.SubstituteSecret`, replacing that ciphertext with the plaintext
+   throughout the `Config`. So every later resource's `Execute` sees plaintext.
+
+Content loaded from **outside** the `Config` tree (a file a resource reads at
+execute time — e.g. the `compose` resource's project files) cannot be
+pre-resolved; such resources call **`config.RenderExternal`** (plaintext, at
+execute) or **`config.RenderExternalForHash`** (ciphertext, at plan) — the only
+substitution API a resource ever touches.
+
+A struct field tagged **`secrets:"-"`** is excluded from secret substitution
+(still gets `${var}` resolution) — used where a `${secrets.x}` token is a
+structural marker rather than an inline value (`FileEntry.Source`) or a value
+serialised verbatim for a separate stay-go run (`DistroboxEntry.Packages/Commands`).
+
+In `command:`/`rollback:` strings, `${secrets.x}` and `${var}` substitute
+literally (no shell-quoting) — quote them in the YAML if a value may contain
+whitespace or shell metacharacters, exactly as you would any shell variable.
+
 ---
 
 ## Scripts Resource

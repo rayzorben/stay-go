@@ -23,7 +23,7 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 		if err != nil {
 			return fmt.Errorf("running script %q: %w\nstderr: %s", entry.Script, err, result.Stderr)
 		}
-		st.Set(node.ID, node.ConfigHash, node.Level, node.StateData)
+		st.Set(node.ID, node.ConfigHash, node.SourceFile, node.StateData)
 
 	case engine.ActionRemove:
 		// Scripts have no system-level undo — just stop tracking.

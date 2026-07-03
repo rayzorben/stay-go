@@ -223,15 +223,27 @@ scripts:
 # ─── containers ───────────────────────────────────────────────────────────────
 # Declares containers managed by Docker or Podman (auto-detected).
 # stay-go creates, recreates on config change, and removes containers.
-# Field names mirror docker-compose conventions.
+# Field names mirror docker-compose conventions; many compose forms are accepted
+# verbatim so that a compose service block can be pasted with little change.
+#
+# The "containers" value may be EITHER a sequence of entries OR a docker-compose
+# style mapping keyed by container name:
+#   containers:
+#     - name: redis            # sequence form
+#       image: redis:alpine
+#   containers:
+#     redis:                   # mapping form — key supplies the container name
+#       image: redis:alpine
 #
 # All fields:
-#   name: string                # optional — container name (derived from image if omitted)
+#   name / container_name: string  # optional — container name (derived from image if omitted)
 #   image: string               # required — image reference, e.g. redis:alpine
 #   runtime: string             # optional — "docker" or "podman" (auto-detected if omitted)
-#   ports: [string]             # optional — "hostPort:containerPort"
-#   volumes: [string]           # optional — "host:container[:options]"
-#   environment: [string]       # optional — "KEY=value" pairs
+#   ports: [string]             # optional — "hostPort:containerPort[/proto]"
+#   volumes: [string|mount]     # optional — "host:container[:options]" or compose long form:
+#                               #   { type: bind, source: ..., target: ..., read_only: bool }
+#                               #   { type: tmpfs, target: ..., tmpfs: { size: <bytes|"1g"> } }
+#   environment: [string]|{map} # optional — ["KEY=value"] list or {KEY: value} mapping
 #   env_file: [string]          # optional — paths to env files
 #   labels: {key: value}        # optional — container labels
 #   restart: string             # optional — no | always | unless-stopped | on-failure
@@ -243,13 +255,46 @@ scripts:
 #   privileged: bool            # optional — run in privileged mode (default: false)
 #   cap_add: [string]           # optional — Linux capabilities to add
 #   cap_drop: [string]          # optional — Linux capabilities to drop
-#   devices: [string]           # optional — device mappings
+#   devices: [string]           # optional — device mappings ("host[:container]")
 #   dns: [string]               # optional — custom DNS servers
 #   extra_hosts: [string]       # optional — "hostname:ip" entries added to /etc/hosts
 #   hostname: string            # optional — container hostname
+#   shm_size: string            # optional — /dev/shm size, e.g. "512mb"
+#   stop_grace_period: string   # optional — stop timeout: duration ("30s") or seconds ("30")
 #   pull: string                # optional — always | missing (default) | never
 #   sudo: bool                  # optional — run docker/podman with sudo (default: false)
 #   depends: [{resource: [names]}]  # optional
+
+# ─── compose ──────────────────────────────────────────────────────────────────
+# Declares docker-compose (or `podman compose`) projects: a directory of compose
+# files brought up with `docker compose up -d` and torn down with `down`.
+#
+# Before each up/down the project directory is rendered into a private cache
+# directory (~/.cache/stay-go/compose/<project>/, owner-only) with the same
+# substitution applied to every file's contents as to any config string field —
+# ${var}, ${env:VAR}, $(cmd), ~, and ${secrets.x} — so the source files on disk
+# are never modified. (e.g. an .env file may contain DB_PASSWORD=${secrets.x}.)
+#
+# Because the rendered copy becomes the compose project directory, bind-mount
+# paths inside the compose files must be absolute (or built from ${config_root}),
+# and the directory should hold only compose config files (it is copied verbatim).
+#
+# All fields:
+#   project: string             # optional — compose project name; defaults to the basename of path
+#   path: string                # required — directory containing the compose files
+#   files: [string]             # optional — compose files relative to path; default: first standard
+#                               #   name found (compose.yaml / docker-compose.yml / …) plus its .override file
+#   env_file: string            # optional — env file relative to path passed via --env-file
+#                               #   (only needed when it is not named ".env")
+#   runtime: string             # optional — "docker" or "podman"; auto-detected if omitted
+#   sudo: bool                  # optional — run the runtime with sudo (default: false)
+#   depends: [{resource: [names]}]  # optional
+#
+# Example:
+#   compose:
+#     - path: ${config_root}/files/docker/immich
+#       depends:
+#         - packages: [docker]
 
 # ─── distrobox ────────────────────────────────────────────────────────────────
 # Declares Distrobox containers managed by stay-go. Each entry produces two

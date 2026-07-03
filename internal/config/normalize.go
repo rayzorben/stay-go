@@ -19,8 +19,8 @@ func expandPackageEmbeddedServices(cfg *Config) {
 		for _, svc := range p.Services {
 			se := svc
 			se.Depends = appendOneResourceDepAll(se.Depends, "packages", p.Name)
-			if se.Level == "" {
-				se.Level = p.Level
+			if se.SourceFile == "" {
+				se.SourceFile = p.SourceFile
 			}
 			additions = append(additions, se)
 		}

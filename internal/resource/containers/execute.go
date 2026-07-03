@@ -34,7 +34,7 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 		if err := startContainer(ctx, r.exec, rt, opts, entry, name); err != nil {
 			return err
 		}
-		st.Set(node.ID, node.ConfigHash, node.Level, node.StateData)
+		st.Set(node.ID, node.ConfigHash, node.SourceFile, node.StateData)
 
 	case engine.ActionUpdate:
 		// Recreate: stop + remove the existing container, then run a fresh one.
@@ -46,7 +46,7 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 		if err := startContainer(ctx, r.exec, rt, opts, entry, name); err != nil {
 			return err
 		}
-		st.Set(node.ID, node.ConfigHash, node.Level, node.StateData)
+		st.Set(node.ID, node.ConfigHash, node.SourceFile, node.StateData)
 
 	case engine.ActionRemove:
 		if containerExists(ctx, r.exec, rt, name) {

@@ -24,7 +24,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 
 		action := engine.DetermineAction(id, knowledge[id], hash, st)
 
-		level := entry.Level
+		level := entry.SourceFile
 		if level == "" {
 			level = "common"
 		}
@@ -42,7 +42,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 			Action:       action,
 			ConfigHash:   hash,
 			NeedsSudo:    true,
-			Level:        level,
+			SourceFile: level,
 			Description:  desc,
 			StateData:    map[string]interface{}{"name": entry.Name},
 		})

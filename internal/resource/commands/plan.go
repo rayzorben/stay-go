@@ -36,7 +36,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 			Rollback string
 		}{entry.Name, entry.Sudo, entry.Command, entry.Rollback})
 
-		level := entry.Level
+		level := entry.SourceFile
 		if level == "" {
 			level = "common"
 		}
@@ -71,7 +71,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 			ConfigHash:   hash,
 			DependsOn:    entry.DependsOnIDs(),
 			NeedsSudo:    entry.Sudo,
-			Level:        level,
+			SourceFile: level,
 			Description:  desc,
 			SkipReason:   skipReason,
 			StateData: map[string]interface{}{

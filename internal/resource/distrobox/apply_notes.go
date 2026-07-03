@@ -13,12 +13,13 @@ import (
 	"github.com/rayzorben/stay-go/internal/state"
 )
 
-// guestInBoxStateLevel is the level stamped on every node in the per-box
-// state file by stay-go running inside the container (LoadAll of default.yaml
-// only → stampLevel maps "" to "common"). Host-layer DistroboxEntry / nested
-// entries may carry user_config etc.; CheckLevelChange must use this level
-// when diffing against boxSt, not the host entry's Level.
-const guestInBoxStateLevel = "common"
+// guestInBoxStateLevel is the SourceFile stamped on every node in the per-box
+// state file by stay-go running inside the container. The guest binary calls
+// LoadAll on the sub-config directory; stampSourceFile sets SourceFile to
+// "/" + the filename relative to configRoot, so the default config file
+// produces "/default.yaml". Host-layer entries carry user config paths;
+// CheckLevelChange must use this level when diffing against boxSt.
+const guestInBoxStateLevel = "/default.yaml"
 
 // guestPkgKnowledge runs stay-go inside the box with --guest-knowledge and
 // returns (map, true) on success. On failure the map is nil and ok is false.

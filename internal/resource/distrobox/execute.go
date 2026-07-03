@@ -56,7 +56,7 @@ func (r *Resource) executeBox(ctx context.Context, node *engine.PlanNode, entry 
 		// from a prior container (e.g. manual distrobox rm) so guest stay-go does
 		// not skip packages/commands that were recorded on the host only.
 		os.RemoveAll(r.boxStateDir(entry.Name)) //nolint:errcheck
-		st.Set(node.ID, node.ConfigHash, node.Level, node.StateData)
+		st.Set(node.ID, node.ConfigHash, node.SourceFile, node.StateData)
 
 	case engine.ActionRemove:
 		result, err := r.exec.Run(ctx, executor.Options{}, "distrobox", "rm", "--yes", entry.Name)
@@ -171,6 +171,6 @@ func (r *Resource) executeApply(ctx context.Context, node *engine.PlanNode, entr
 	if len(entry.Exports) > 0 {
 		data["exports_snapshot"] = sortedStringsCopy(entry.Exports)
 	}
-	st.Set(node.ID, node.ConfigHash, node.Level, data)
+	st.Set(node.ID, node.ConfigHash, node.SourceFile, data)
 	return nil
 }

@@ -24,12 +24,14 @@ import (
 	"os"
 	"os/signal"
 	"os/user"
+	"strings"
 	"syscall"
 
 	"github.com/rayzorben/stay-go/internal/config"
 	"github.com/rayzorben/stay-go/internal/engine"
 	"github.com/rayzorben/stay-go/internal/executor"
 	"github.com/rayzorben/stay-go/internal/resource/commands"
+	rcompose "github.com/rayzorben/stay-go/internal/resource/compose"
 	rcontainers "github.com/rayzorben/stay-go/internal/resource/containers"
 	rdistrobox "github.com/rayzorben/stay-go/internal/resource/distrobox"
 	rflatpak "github.com/rayzorben/stay-go/internal/resource/flatpak"
@@ -64,6 +66,23 @@ func (s *showFlag) Set(v string) error {
 	return nil
 }
 
+type applyFlag []string
+
+func (f *applyFlag) String() string {
+	return strings.Join(*f, ",")
+}
+
+func (f *applyFlag) Set(v string) error {
+	for _, part := range strings.Split(v, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		*f = append(*f, part)
+	}
+	return nil
+}
+
 func main() {
 	// Flags.
 	var (
@@ -76,8 +95,10 @@ func main() {
 		quietPlan      bool
 		guestKnowledge bool
 		show           showFlag
+		applyTargets   applyFlag
 		showSkipped    bool
 		showVersion    bool
+		sync           bool
 	)
 
 	flag.StringVar(&configDir, "config", "config", "path to config directory")
@@ -90,6 +111,7 @@ func main() {
 	flag.BoolVar(&showSkipped, "skipped", false, "show skipped packages in the plan")
 	flag.BoolVar(&showSkipped, "S", false, "show skipped packages in the plan (shorthand)")
 	flag.Var(&show, "show", "print tracked state without executing: --show (all), --show=packages|groups|users|services|variables")
+	flag.Var(&applyTargets, "apply", "apply only the named config node(s) and their runtime dependencies: --apply=resource/name or --apply=resource.name")
 	flag.BoolVar(&dryRun, "dry-run", false, "show plan without executing")
 	flag.BoolVar(&dryRun, "n", false, "show plan without executing (shorthand)")
 	flag.BoolVar(&autoYes, "yes", false, "auto-confirm execution plan without prompting")
@@ -97,6 +119,7 @@ func main() {
 	flag.BoolVar(&quietPlan, "quiet-plan", false, "suppress plan table, summary, and final report (used internally by distrobox resource)")
 	flag.BoolVar(&guestKnowledge, "guest-knowledge", false, "gather installed-package knowledge and output as JSON (internal: used by distrobox resource)")
 	flag.BoolVar(&showVersion, "version", false, "print version and exit")
+	flag.BoolVar(&sync, "sync", false, "mark plan nodes as done in state without executing commands")
 
 	flag.Usage = usage
 	flag.Parse()
@@ -150,24 +173,29 @@ func main() {
 	// Build engine and register resources in canonical order.
 	// The registration order controls the display grouping in the plan.
 	opts := engine.Options{
-		ConfigPath: configDir,
-		StatePath:  statePath,
-		Debug:      debug,
-		DryRun:      dryRun,
-		AutoYes:     autoYes,
-		QuietPlan:   quietPlan,
-		ShowSkipped: showSkipped,
+		ConfigPath:   configDir,
+		StatePath:    statePath,
+		Debug:        debug,
+		DryRun:       dryRun,
+		AutoYes:      autoYes,
+		QuietPlan:    quietPlan,
+		ShowSkipped:  showSkipped,
+		ApplyTargets: applyTargets,
+		Sync:         sync,
 	}
 	eng := engine.New(opts, exec)
+	// Secrets first: it decrypts every ${secrets.x} and substitutes the
+	// plaintext into the shared config before any other resource executes.
+	eng.Register(rsecrets.New(cfg))
 	eng.Register(packages.New(cfg, exec))
 	eng.Register(groups.New(cfg, exec))
 	eng.Register(users.New(cfg, exec))
 	eng.Register(services.New(cfg, exec))
 	eng.Register(scripts.New(cfg, exec))
 	eng.Register(rfiles.New(cfg, exec))
-	eng.Register(rsecrets.New(cfg))
 	eng.Register(commands.New(cfg, exec))
 	eng.Register(rcontainers.New(cfg, exec))
+	eng.Register(rcompose.New(cfg, exec))
 	eng.Register(rflatpak.New(cfg, exec))
 	eng.Register(rdistrobox.New(cfg, exec))
 	eng.Register(rjson.New(cfg, exec))
@@ -196,16 +224,15 @@ Flags:
   -d, --debug           stream command output; outputs >5 lines are truncated
       --verbose, -v     with --debug: stream all output without truncation
   -n, --dry-run         show plan without executing
+      --sync            mark plan nodes done in state without executing commands
+      --apply string    apply only the named config node(s) and their dependencies
+      --show [scope]    print tracked state and exit; scope: all (default), packages,
+                        groups, users, services, scripts, variables
   -S, --skipped         show skipped packages/items in the plan
       --version         print build version and exit
 
-Config is loaded from three layers inside the config directory:
-  config/default.yaml           common (all hosts and users)
-  config/hosts/<hostname>.yaml  host-specific overrides
-  config/users/<username>.yaml  user-specific overrides
-
-Higher-specificity layers override common entries with the same name.
-Each entry is tagged with its source level and tracked accordingly.
+Config is loaded from default.yaml in the config directory.
+Host- and user-specific entries are included via !include directives.
 `, version, state.DefaultPath())
 }
 

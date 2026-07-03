@@ -115,7 +115,9 @@ func (r *Resource) boxConfigDir(name string) string {
 // ─── Hashing ─────────────────────────────────────────────────────────────────
 
 // distroboxHash returns a deterministic hash of the host-level container config.
-// Only fields that affect the box creation command are included.
+// Only fields that affect the box creation command are included. All string
+// fields are already fully resolved (vars, $(cmd), ${secrets.x}) by the config
+// pipeline before this is called.
 func distroboxHash(e *config.DistroboxEntry) string {
 	// Omit Root from the struct when false so existing state hashes stay stable
 	// (default has always been non-root; we only pass --root when root: true).
@@ -238,8 +240,8 @@ func (r *Resource) writeBoxConfig(entry *config.DistroboxEntry) error {
 		for _, svc := range p.Services {
 			se := svc
 			se.Depends = config.AppendResourceDep(se.Depends, "packages", p.Name)
-			if se.Level == "" {
-				se.Level = p.Level
+			if se.SourceFile == "" {
+				se.SourceFile = p.SourceFile
 			}
 			services = append(services, se)
 		}

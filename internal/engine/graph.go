@@ -81,6 +81,38 @@ func topoSort(nodes []*PlanNode) ([]*PlanNode, error) {
 	return sorted, nil
 }
 
+// addSecretBarrierDeps makes every executable non-secrets plan node depend on
+// every secrets plan node that will exist after execution (TRACK/ADOPT/ADD/
+// UPDATE). The secrets resource decrypts each secret and substitutes its
+// plaintext into the shared config during its Execute, so this ordering
+// guarantees the config is fully resolved before any other resource executes.
+//
+// REMOVE nodes are not given this dep: topoSort reverses a REMOVE node's edges
+// (dependents-before-dependencies), which would order it *before* the secrets
+// nodes. REMOVE nodes still run after secrets in practice because the secrets
+// resource is registered first (its zero-dependency nodes are dequeued first).
+//
+// Secrets nodes that are REMOVE/SKIP are excluded from the barrier — nothing
+// should reference a secret that is going away, and adding such a dep would
+// wrongly cascade a skip to every node.
+func addSecretBarrierDeps(nodes []*PlanNode) {
+	var secretIDs []string
+	for _, n := range nodes {
+		if n.ResourceType == "secrets" && n.Action != ActionRemove && n.Action != ActionSkip {
+			secretIDs = append(secretIDs, n.ID)
+		}
+	}
+	if len(secretIDs) == 0 {
+		return
+	}
+	for _, n := range nodes {
+		if n.ResourceType == "secrets" || n.Action == ActionRemove {
+			continue
+		}
+		n.DependsOn = append(n.DependsOn, secretIDs...)
+	}
+}
+
 // markSkips sets Action=ActionSkip on any node whose declared dependencies are
 // not "promised" (i.e. will exist after execution). A dep is promised if its
 // action is TRACK, ADOPT, ADD, or UPDATE. A dep is not promised if its action

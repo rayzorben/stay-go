@@ -37,20 +37,20 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 				ResourceType: "secrets",
 				DisplayName:  key,
 				Action:       engine.ActionAdd,
-				Level:        entry.Level,
+				SourceFile: entry.SourceFile,
 				ConfigHash:   config.Hash(entry.RawValue),
 				Description:  "encrypt with existing key",
 			}
 		} else {
 			configHash := config.Hash(entry.RawValue)
 			action := engine.DetermineAction(nodeID, knowledge[nodeID], configHash, st)
-			action, desc := engine.CheckLevelChange(nodeID, entry.Level, action, st)
+			action, desc := engine.CheckLevelChange(nodeID, entry.SourceFile, action, st)
 			node = &engine.PlanNode{
 				ID:           nodeID,
 				ResourceType: "secrets",
 				DisplayName:  key,
 				Action:       action,
-				Level:        entry.Level,
+				SourceFile: entry.SourceFile,
 				ConfigHash:   configHash,
 				Description:  desc,
 			}

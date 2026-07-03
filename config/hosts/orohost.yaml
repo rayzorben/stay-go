@@ -1,0 +1,88 @@
+secrets:
+  frigate:
+    rtsp_password: !encrypted lNTj7t1wWy9FAB4zLuOZnlHXwd36+1hZotDiJ9Uo+S9XDsEsO3eTmcBGgHTolff5jT5LUw==
+    mqtt_password: !encrypted VyiTt0Gb8nTSOsjECnlC+9+afKUAHJORLSnowBi8VIOb1lB78BexSSn9Zx1/iVxU7nvWNFzrdg==
+    plus_api_key: !encrypted 7APSxVlM/3GLJI9zQTHzILoTUqhJ257V38/Dui6EpDf34b7lOSVhnnjx3T7dpDA7ujXKVR7kbwZ+mHYQxfQ+FwH6s4Yw3xwdNBpn/r7y10rDFJ6wWaPXOgedWrDeFpaBOHrfpIyzayKv9gpDpgs8u49Mb1YKsp4QpQ==
+  immich:
+    db_password: !encrypted 5aeT9kfYF2EA59YH3Gj/TJt7nMX4B4hG8umuOrTuGsVDoqVK6gFem8OnZ/HsniaVX77TOg==
+    
+services:
+  - sshd
+
+packages:
+  - solaar
+  - cachyos-zfs
+  - zfs-utils
+
+files:
+  - source: ${config_root}/files/config/solaar.yaml
+    target: ~/.config/solaar/config.yaml
+    symlink: true
+    depends:
+      - packages: [solaar]
+
+# containers: accepts either a sequence of entries (stay-go's native form) or a
+# docker-compose-style mapping keyed by container name (used below).
+containers:
+  portainer:
+    image: portainer/portainer-ce:latest
+    ports:
+      - 8000:8000
+      - 9443:9443
+    restart: always
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /storage/apps/portainer:/data
+
+  frigate:
+    container_name: frigate
+    privileged: true # this may not be necessary for all setups
+    restart: unless-stopped
+    stop_grace_period: 30s # allow enough time to shut down the various services
+    image: ghcr.io/blakeblackshear/frigate:stable-rocm
+    shm_size: "1gb" # update for your cameras based on calculation above
+    devices:
+      - /dev/bus/usb:/dev/bus/usb # Passes the USB Coral, needs to be modified for other versions
+      - /dev/dri:/dev/dri # AMD / Intel GPU, needs to be updated for your hardware
+      - /dev/kfd:/dev/kfd
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /storage/frigate/config:/config
+      - /storage/frigate/recordings:/media/frigate
+      - type: tmpfs # 1GB In-memory filesystem for recording segment storage
+        target: /tmp/cache
+        tmpfs:
+          size: 1000000000
+    ports:
+      - "8971:8971"
+      - "5000:5000" # Internal unauthenticated access. Expose carefully.
+      - "8554:8554" # RTSP feeds
+      - "8555:8555/tcp" # WebRTC over tcp
+      - "8555:8555/udp" # WebRTC over udp
+    environment:
+      FRIGATE_RTSP_PASSWORD: "${secrets.frigate.rtsp_password}"
+      MQTT_PASSWORD: "${secrets.frigate.mqtt_password}"
+      PLUS_API_KEY: "${secrets.frigate.plus_api_key}"
+
+  adguardhome:
+    container_name: adguardhome
+    restart: unless-stopped
+    volumes:
+        - /storage/apps/adguard:/opt/adguardhome/work
+        - /storage/apps/adguard/configr:/opt/adguardhome/conf
+    ports:
+        - 192.168.1.50:53:53/tcp
+        - 192.168.1.50:53:53/udp
+        - 8081:80/tcp
+        - 3000:3000/tcp
+    image: adguard/adguardhome
+
+# compose: docker-compose projects brought up with `docker compose up -d`.
+# The project directory is rendered into a private cache dir before each run,
+# substituting ${secrets.x} (and ${var}, ~, $(cmd)) into the files' contents
+# without modifying the originals — e.g. .env contains
+#   DB_PASSWORD=${secrets.immich.db_password}
+compose:
+  - path: ${config_root}/files/docker/immich   # project name defaults to "immich"
+    depends:
+      - packages: [docker]

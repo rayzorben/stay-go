@@ -21,7 +21,7 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 		if err != nil {
 			return fmt.Errorf("creating group %q: %w\nstderr: %s", name, err, result.Stderr)
 		}
-		st.Set(node.ID, node.ConfigHash, node.Level, node.StateData)
+		st.Set(node.ID, node.ConfigHash, node.SourceFile, node.StateData)
 
 	case engine.ActionRemove:
 		result, err := r.exec.Run(ctx, executor.Options{Sudo: true}, "groupdel", name)

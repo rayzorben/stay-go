@@ -2,6 +2,7 @@ packages:
   - solaar
   - alsa-tools # for hda-verb
   - gparted
+  - winboat
   - wtype
   - package: keyd
     services: [keyd]

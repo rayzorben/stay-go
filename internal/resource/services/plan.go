@@ -43,7 +43,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 			scope = "user"
 		}
 
-		level := entry.Level
+		level := entry.SourceFile
 		if level == "" {
 			level = "common"
 		}
@@ -62,7 +62,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 			ConfigHash:   hash,
 			DependsOn:    entry.DependsOnIDs(),
 			NeedsSudo:    !entry.User,
-			Level:        level,
+			SourceFile: level,
 			Description:  desc,
 			StateData: map[string]interface{}{
 				"service": entry.Service,

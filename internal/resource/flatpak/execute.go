@@ -44,7 +44,7 @@ func (r *Resource) applyRemote(ctx context.Context, node *engine.PlanNode, st *s
 	if err != nil {
 		return fmt.Errorf("adding flatpak remote %q: %w\nstderr: %s", name, err, result.Stderr)
 	}
-	st.Set(node.ID, node.ConfigHash, node.Level, node.StateData)
+	st.Set(node.ID, node.ConfigHash, node.SourceFile, node.StateData)
 	return nil
 }
 
@@ -78,7 +78,7 @@ func (r *Resource) applyApp(ctx context.Context, node *engine.PlanNode, st *stat
 	if err != nil {
 		return fmt.Errorf("installing flatpak app %q: %w\nstderr: %s", appID, err, result.Stderr)
 	}
-	st.Set(node.ID, node.ConfigHash, node.Level, node.StateData)
+	st.Set(node.ID, node.ConfigHash, node.SourceFile, node.StateData)
 	return nil
 }
 

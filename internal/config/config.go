@@ -26,7 +26,8 @@ type Config struct {
 	Files      []FileEntry       `yaml:"files"`
 	Commands   CommandList       `yaml:"commands"`
 	Secrets    SecretsMap        `yaml:"secrets"`
-	Containers []ContainerEntry  `yaml:"containers"`
+	Containers ContainerList     `yaml:"containers"`
+	Compose    []ComposeEntry    `yaml:"compose"`
 	Flatpak    FlatpakConfig     `yaml:"flatpak"`
 	Distrobox  []DistroboxEntry  `yaml:"distrobox"`
 
@@ -41,12 +42,12 @@ type Config struct {
 // CommandEntry defines a named inline command managed by stay-go.
 // The command string is executed via bash; rollback is run on removal.
 type CommandEntry struct {
-	Name     string                `yaml:"name"`
-	Command  string                `yaml:"command"`
-	Rollback string                `yaml:"rollback,omitempty"`
-	Sudo     bool                  `yaml:"sudo,omitempty"`
-	Depends  []map[string][]string `yaml:"depends,omitempty"`
-	Level    string                `yaml:"-"` // set by LoadAll, not parsed from YAML
+	Name       string                `yaml:"name"`
+	Command    string                `yaml:"command"`
+	Rollback   string                `yaml:"rollback,omitempty"`
+	Sudo       bool                  `yaml:"sudo,omitempty"`
+	Depends    []map[string][]string `yaml:"depends,omitempty"`
+	SourceFile string                `yaml:"-" json:"-"` // relative path to source YAML, set by LoadAll
 }
 
 // DependsOnIDs converts the raw depends field into canonical resource node IDs,
@@ -167,18 +168,21 @@ func (s *serviceList) UnmarshalYAML(value *yaml.Node) error {
 
 // FileEntry defines a file, directory clone, or download to place on disk.
 type FileEntry struct {
-	Source  string `yaml:"source,omitempty"`  // path, ${secrets.*}, git URL, or http URL
+	// Source is a path, a ${secrets.x} reference, a git URL, or an http URL.
+	// Tagged secrets:"-" because a ${secrets.x} value here is a structural marker
+	// ("the file's content IS this secret"), not a value to substitute inline.
+	Source  string `yaml:"source,omitempty" secrets:"-"`
 	Content string `yaml:"content,omitempty"` // inline file content (alternative to source)
 	// Add, when true with Content set, means: ensure Content appears in the target
 	// file (append if missing); on removal from config, strip that snippet from the file.
-	Add     bool                  `yaml:"add,omitempty"`
-	Target  string                `yaml:"target"`            // destination path (~ expanded)
-	Mode    string                `yaml:"mode,omitempty"`    // e.g. "0600", "+x"
-	Symlink bool                  `yaml:"symlink,omitempty"` // create symlink instead of copy (local only)
-	SSHKey  []string              `yaml:"ssh_key,omitempty"` // SSH key paths for git SSH auth
-	Sudo    bool                  `yaml:"sudo,omitempty"`
-	Depends []map[string][]string `yaml:"depends,omitempty"`
-	Level   string                `yaml:"-"` // set by LoadAll, not parsed from YAML
+	Add        bool                  `yaml:"add,omitempty"`
+	Target     string                `yaml:"target"`            // destination path (~ expanded)
+	Mode       string                `yaml:"mode,omitempty"`    // e.g. "0600", "+x"
+	Symlink    bool                  `yaml:"symlink,omitempty"` // create symlink instead of copy (local only)
+	SSHKey     []string              `yaml:"ssh_key,omitempty"` // SSH key paths for git SSH auth
+	Sudo       bool                  `yaml:"sudo,omitempty"`
+	Depends    []map[string][]string `yaml:"depends,omitempty"`
+	SourceFile string                `yaml:"-" json:"-"` // relative path to source YAML, set by LoadAll
 }
 
 // DependsOnIDs converts the raw depends field into canonical resource node IDs.
@@ -203,10 +207,10 @@ func (e *FileEntry) DependsOnIDs() []string {
 
 // ScriptEntry defines a shell script to run as part of the desired state.
 type ScriptEntry struct {
-	Script  string                `yaml:"script"`
-	Sudo    bool                  `yaml:"sudo,omitempty"`
-	Depends []map[string][]string `yaml:"depends,omitempty"`
-	Level   string                `yaml:"-"` // set by LoadAll, not parsed from YAML
+	Script     string                `yaml:"script"`
+	Sudo       bool                  `yaml:"sudo,omitempty"`
+	Depends    []map[string][]string `yaml:"depends,omitempty"`
+	SourceFile string                `yaml:"-" json:"-"` // relative path to source YAML, set by LoadAll
 }
 
 // DependsOnIDs converts the raw depends field into canonical resource node IDs,
@@ -240,8 +244,8 @@ func (s *ScriptEntry) FolderConditions() []string {
 // GroupEntry represents a single system group to manage. Supports both scalar
 // ("wheel") and mapping ({ name: wheel }) forms in YAML.
 type GroupEntry struct {
-	Name  string
-	Level string `yaml:"-"` // set by LoadAll, not parsed from YAML
+	Name       string
+	SourceFile string `yaml:"-" json:"-"` // relative path to source YAML, set by LoadAll
 }
 
 // UnmarshalYAML implements yaml.Unmarshaler to accept both scalar and map forms.
@@ -271,11 +275,11 @@ func (g *GroupEntry) UnmarshalYAML(value *yaml.Node) error {
 // Optional services: each entry is expanded into top-level Services with an
 // implicit depends on this package (see NormalizeExpandedForms).
 type PackageEntry struct {
-	Name     string
-	Remove   bool
-	Depends  []map[string][]string `yaml:"depends,omitempty"` // resource deps; must round-trip in YAML (e.g. distrobox guest config)
-	Services []ServiceEntry        `yaml:"-"`                 // mapping form only; cleared after normalization
-	Level    string                `yaml:"-"`                 // set by LoadAll, not parsed from YAML
+	Name       string
+	Remove     bool
+	Depends    []map[string][]string `yaml:"depends,omitempty"` // resource deps; must round-trip in YAML (e.g. distrobox guest config)
+	Services   []ServiceEntry        `yaml:"-"`                  // mapping form only; cleared after normalization
+	SourceFile string                `yaml:"-" json:"-"`         // relative path to source YAML, set by LoadAll
 }
 
 // DependsOnIDs converts the raw depends field into canonical resource node IDs.
@@ -358,23 +362,23 @@ func (p *PackageEntry) UnmarshalYAML(value *yaml.Node) error {
 
 // UserEntry defines the desired state of a system user.
 type UserEntry struct {
-	Username string   `yaml:"username"`
-	Name     string   `yaml:"name,omitempty"` // full display name (GECOS)
-	Shell    string   `yaml:"shell,omitempty"`
-	Home     string   `yaml:"home,omitempty"`
-	UID      string   `yaml:"uid,omitempty"`
-	Groups   []string `yaml:"groups,omitempty"`
-	Level    string   `yaml:"-"` // set by LoadAll, not parsed from YAML
+	Username   string   `yaml:"username"`
+	Name       string   `yaml:"name,omitempty"` // full display name (GECOS)
+	Shell      string   `yaml:"shell,omitempty"`
+	Home       string   `yaml:"home,omitempty"`
+	UID        string   `yaml:"uid,omitempty"`
+	Groups     []string `yaml:"groups,omitempty"`
+	SourceFile string   `yaml:"-" json:"-"` // relative path to source YAML, set by LoadAll
 }
 
 // ServiceEntry defines the desired state of a systemd service.
 type ServiceEntry struct {
-	Service string                `yaml:"service"`
-	User    bool                  `yaml:"user,omitempty"`    // true = systemd user service
-	Enabled *bool                 `yaml:"enabled,omitempty"` // default true
-	Now     *bool                 `yaml:"now,omitempty"`     // default true; false = enable without starting
-	Depends []map[string][]string `yaml:"depends,omitempty"` // [{packages: [docker]}]
-	Level   string                `yaml:"-"`                 // set by LoadAll, not parsed from YAML
+	Service    string                `yaml:"service"`
+	User       bool                  `yaml:"user,omitempty"`    // true = systemd user service
+	Enabled    *bool                 `yaml:"enabled,omitempty"` // default true
+	Now        *bool                 `yaml:"now,omitempty"`     // default true; false = enable without starting
+	Depends    []map[string][]string `yaml:"depends,omitempty"` // [{packages: [docker]}]
+	SourceFile string                `yaml:"-" json:"-"`        // relative path to source YAML, set by LoadAll
 }
 
 // IsEnabled returns the effective enabled state (defaults to true when unset).
@@ -408,14 +412,15 @@ func (s *ServiceEntry) DependsOnIDs() []string {
 }
 
 // ContainerEntry defines the desired state of a container managed by Docker or Podman.
-// Field names mirror docker-compose conventions.
+// Field names mirror docker-compose conventions; see ContainerList and the
+// flexible field types (envVars, Mount) for the compose forms also accepted.
 type ContainerEntry struct {
-	Name        string                `yaml:"name,omitempty"`
+	Name        string                `yaml:"name,omitempty"` // also accepts compose "container_name" (see UnmarshalYAML)
 	Image       string                `yaml:"image"`
-	Runtime     string                `yaml:"runtime,omitempty"`     // docker or podman; auto-detected if empty
-	Ports       []string              `yaml:"ports,omitempty"`       // "hostPort:containerPort"
-	Volumes     []string              `yaml:"volumes,omitempty"`     // "host:container[:options]"
-	Environment []string              `yaml:"environment,omitempty"` // "KEY=value"
+	Runtime     string                `yaml:"runtime,omitempty"` // docker or podman; auto-detected if empty
+	Ports       []string              `yaml:"ports,omitempty"`   // "hostPort:containerPort[/proto]"
+	Volumes     []Mount               `yaml:"volumes,omitempty"` // short "host:container[:opts]" or compose long form
+	Environment envVars               `yaml:"environment,omitempty"` // ["KEY=value"] list or {KEY: value} mapping
 	EnvFile     []string              `yaml:"env_file,omitempty"`    // paths to env files
 	Labels      map[string]string     `yaml:"labels,omitempty"`
 	Restart     string                `yaml:"restart,omitempty"`      // no, always, unless-stopped, on-failure
@@ -431,10 +436,180 @@ type ContainerEntry struct {
 	DNS         []string              `yaml:"dns,omitempty"`
 	ExtraHosts  []string              `yaml:"extra_hosts,omitempty"` // "hostname:ip"
 	Hostname    string                `yaml:"hostname,omitempty"`
+	ShmSize     string                `yaml:"shm_size,omitempty"`          // e.g. "512mb"
+	StopTimeout string                `yaml:"stop_grace_period,omitempty"` // duration ("30s") or seconds ("30")
 	Pull        string                `yaml:"pull,omitempty"` // always, missing (default), never
 	Sudo        bool                  `yaml:"sudo,omitempty"`
 	Depends     []map[string][]string `yaml:"depends,omitempty"`
-	Level       string                `yaml:"-"` // set by LoadAll, not parsed from YAML
+	SourceFile  string                `yaml:"-" json:"-"` // relative path to source YAML, set by LoadAll
+}
+
+// UnmarshalYAML decodes a container entry, accepting the docker-compose alias
+// "container_name" for "name". All other fields decode via their struct tags
+// (the flexible types envVars and Mount handle the remaining compose forms).
+func (c *ContainerEntry) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.MappingNode {
+		return fmt.Errorf("container entry: expected mapping, got kind %v", value.Kind)
+	}
+	type plain ContainerEntry // no UnmarshalYAML method → decodes via struct tags
+	var p plain
+	if err := value.Decode(&p); err != nil {
+		return fmt.Errorf("decoding container entry: %w", err)
+	}
+	*c = ContainerEntry(p)
+	if c.Name == "" {
+		var alias struct {
+			ContainerName string `yaml:"container_name"`
+		}
+		if value.Decode(&alias) == nil {
+			c.Name = alias.ContainerName
+		}
+	}
+	return nil
+}
+
+// ContainerList is the containers: section. It accepts either a sequence of
+// container mappings (stay-go's native form) or a mapping keyed by container
+// name (docker-compose's services: form). In the mapping form the key supplies
+// the container name unless the entry itself sets name/container_name.
+type ContainerList []ContainerEntry
+
+// UnmarshalYAML implements yaml.Unmarshaler for the two accepted shapes.
+func (cl *ContainerList) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.SequenceNode:
+		var out []ContainerEntry
+		if err := value.Decode(&out); err != nil {
+			return fmt.Errorf("containers: %w", err)
+		}
+		*cl = out
+	case yaml.MappingNode:
+		var out []ContainerEntry
+		for i := 0; i+1 < len(value.Content); i += 2 {
+			name := value.Content[i].Value
+			var e ContainerEntry
+			if err := value.Content[i+1].Decode(&e); err != nil {
+				return fmt.Errorf("containers/%s: %w", name, err)
+			}
+			if e.Name == "" {
+				e.Name = name
+			}
+			out = append(out, e)
+		}
+		*cl = out
+	default:
+		return fmt.Errorf("containers: expected sequence or mapping")
+	}
+	return nil
+}
+
+// envVars holds container environment variables. It accepts both the list form
+// (["KEY=value", ...]) and the docker-compose mapping form ({KEY: value, ...}),
+// normalising either to a deterministic, order-preserving []string of "KEY=value".
+// A null mapping value (compose "KEY:" with no value) becomes a bare "KEY",
+// meaning "inherit from the host environment".
+type envVars []string
+
+// UnmarshalYAML implements yaml.Unmarshaler.
+func (e *envVars) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.SequenceNode:
+		var list []string
+		if err := value.Decode(&list); err != nil {
+			return fmt.Errorf("environment: %w", err)
+		}
+		*e = list
+	case yaml.MappingNode:
+		list := make([]string, 0, len(value.Content)/2)
+		for i := 0; i+1 < len(value.Content); i += 2 {
+			key := value.Content[i].Value
+			var v interface{}
+			if err := value.Content[i+1].Decode(&v); err != nil {
+				return fmt.Errorf("environment[%s]: %w", key, err)
+			}
+			if v == nil {
+				list = append(list, key)
+			} else {
+				list = append(list, fmt.Sprintf("%s=%v", key, v))
+			}
+		}
+		*e = list
+	default:
+		return fmt.Errorf("environment: expected sequence or mapping")
+	}
+	return nil
+}
+
+// Mount is one entry under a container's volumes:. It accepts the short string
+// form ("host:container[:options]" — stored verbatim in Short) and the
+// docker-compose long form (a mapping with type/source/target/read_only and,
+// for tmpfs mounts, tmpfs.size). The containers resource renders it to the
+// appropriate `docker run` flag (-v or --tmpfs).
+type Mount struct {
+	// Short is the short "src:tgt[:opts]" form, used verbatim. It is populated by
+	// UnmarshalYAML (not by struct-tag decoding) and excluded from re-marshalling
+	// via MarshalYAML; it deliberately has no yaml:"-" tag so that the config
+	// substitution pipeline still resolves ${var}/${secrets.x} inside it.
+	Short     string `json:"short,omitempty"`
+	Type      string `yaml:"type,omitempty" json:"type,omitempty"` // bind | volume | tmpfs
+	Source    string `yaml:"source,omitempty" json:"source,omitempty"`
+	Target    string `yaml:"target,omitempty" json:"target,omitempty"`
+	ReadOnly  bool   `yaml:"read_only,omitempty" json:"read_only,omitempty"`
+	TmpfsSize string `json:"tmpfs_size,omitempty"` // tmpfs.size, normalised to a string (populated by UnmarshalYAML)
+}
+
+// MarshalYAML keeps Mount round-tripping cleanly: the short form marshals back
+// to a scalar, the long form to a mapping.
+func (m Mount) MarshalYAML() (interface{}, error) {
+	if m.Short != "" {
+		return m.Short, nil
+	}
+	out := map[string]interface{}{}
+	if m.Type != "" {
+		out["type"] = m.Type
+	}
+	if m.Source != "" {
+		out["source"] = m.Source
+	}
+	if m.Target != "" {
+		out["target"] = m.Target
+	}
+	if m.ReadOnly {
+		out["read_only"] = true
+	}
+	if m.TmpfsSize != "" {
+		out["tmpfs"] = map[string]interface{}{"size": m.TmpfsSize}
+	}
+	return out, nil
+}
+
+// UnmarshalYAML implements yaml.Unmarshaler for the short and long mount forms.
+func (m *Mount) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		m.Short = value.Value
+		return nil
+	case yaml.MappingNode:
+		var raw struct {
+			Type     string `yaml:"type"`
+			Source   string `yaml:"source"`
+			Target   string `yaml:"target"`
+			ReadOnly bool   `yaml:"read_only"`
+			Tmpfs    struct {
+				Size interface{} `yaml:"size"`
+			} `yaml:"tmpfs"`
+		}
+		if err := value.Decode(&raw); err != nil {
+			return fmt.Errorf("decoding volume mount: %w", err)
+		}
+		m.Type, m.Source, m.Target, m.ReadOnly = raw.Type, raw.Source, raw.Target, raw.ReadOnly
+		if raw.Tmpfs.Size != nil {
+			m.TmpfsSize = fmt.Sprintf("%v", raw.Tmpfs.Size)
+		}
+		return nil
+	default:
+		return fmt.Errorf("volume mount: expected string or mapping, got kind %v", value.Kind)
+	}
 }
 
 // ContainerName returns the effective container name: the explicit name field,
@@ -474,6 +649,52 @@ func (c *ContainerEntry) DependsOnIDs() []string {
 	return ids
 }
 
+// ComposeEntry declares a docker-compose project managed by stay-go: a directory
+// of compose files brought up with `docker compose up -d` (and torn down with
+// `docker compose down`).
+//
+// Before each up/down the project directory is rendered into a private cache
+// directory with the same substitution applied to every file's contents as to
+// any config string field — ${var}, ${env:VAR}, $(cmd), ~, and ${secrets.x} —
+// so the source files on disk are never modified. The rendered .env therefore
+// holds the plaintext secret, but the cache directory is owner-only (0700/0600).
+//
+// Because the project directory is the rendered copy, bind-mount paths inside
+// the compose files must be absolute (or built from ${config_root}); relative
+// paths would resolve against the rendered copy, not the original directory.
+type ComposeEntry struct {
+	Project    string                `yaml:"project,omitempty"`  // compose project name (-p); defaults to the basename of Path
+	Path       string                `yaml:"path"`               // required — directory containing the compose files
+	Files      []string              `yaml:"files,omitempty"`    // compose files relative to Path; default: first standard name (+ .override) found
+	EnvFile    string                `yaml:"env_file,omitempty"` // env file relative to Path passed via --env-file (only needed for a non-".env" name)
+	Runtime    string                `yaml:"runtime,omitempty"`  // "docker" or "podman"; auto-detected if empty
+	Sudo       bool                  `yaml:"sudo,omitempty"`
+	Depends    []map[string][]string `yaml:"depends,omitempty"`
+	SourceFile string                `yaml:"-" json:"-"` // relative path to source YAML, set by LoadAll
+}
+
+// ProjectName returns the effective compose project name: the explicit project
+// field, or the basename of Path.
+func (c *ComposeEntry) ProjectName() string {
+	if c.Project != "" {
+		return c.Project
+	}
+	return filepath.Base(c.Path)
+}
+
+// DependsOnIDs converts the raw depends field into canonical resource node IDs.
+func (c *ComposeEntry) DependsOnIDs() []string {
+	var ids []string
+	for _, dep := range c.Depends {
+		for resourceType, names := range dep {
+			for _, name := range names {
+				ids = append(ids, resourceType+"/"+name)
+			}
+		}
+	}
+	return ids
+}
+
 // DistroboxEntry defines the desired state of a distrobox container and
 // the resources managed inside it. The host manages the container lifecycle;
 // in-box packages and commands are applied by a guest stay-go invocation.
@@ -485,11 +706,15 @@ type DistroboxEntry struct {
 	HomeSudo bool                  `yaml:"home_sudo,omitempty"` // sudo required to create Home
 	Root     bool                  `yaml:"root,omitempty"`      // pass --root to distrobox create (rootful container manager); default false
 	Extends  string                `yaml:"extends,omitempty"`   // path to a base file; merged under entry-specific fields
-	Packages []PackageEntry        `yaml:"packages,omitempty"`  // in-box packages
-	Commands []CommandEntry        `yaml:"commands,omitempty"`  // in-box inline commands
-	Exports  []string              `yaml:"exports,omitempty"`   // app names to export via distrobox-export
-	Depends  []map[string][]string `yaml:"depends,omitempty"`   // host-level deps (e.g. services: [docker])
-	Level    string                `yaml:"-"`                   // set by LoadAll, not parsed from YAML
+	// Packages and Commands are serialised verbatim into the in-box stay-go's
+	// config; tagged secrets:"-" so any ${secrets.x} they contain stays a token
+	// (resolved, if at all, by the guest) rather than being baked into the
+	// guest config file as plaintext.
+	Packages []PackageEntry        `yaml:"packages,omitempty" secrets:"-"`  // in-box packages
+	Commands []CommandEntry        `yaml:"commands,omitempty" secrets:"-"`  // in-box inline commands
+	Exports    []string              `yaml:"exports,omitempty"`   // app names to export via distrobox-export
+	Depends    []map[string][]string `yaml:"depends,omitempty"`   // host-level deps (e.g. services: [docker])
+	SourceFile string                `yaml:"-" json:"-"`          // relative path to source YAML, set by LoadAll
 }
 
 // DependsOnIDs converts the raw depends field into canonical resource node IDs.
@@ -513,17 +738,17 @@ type FlatpakConfig struct {
 
 // FlatpakRemoteEntry defines a Flatpak remote repository to manage.
 type FlatpakRemoteEntry struct {
-	Name  string `yaml:"name"`
-	URL   string `yaml:"url"`
-	Level string `yaml:"-"` // set by LoadAll, not parsed from YAML
+	Name       string `yaml:"name"`
+	URL        string `yaml:"url"`
+	SourceFile string `yaml:"-" json:"-"` // relative path to source YAML, set by LoadAll
 }
 
 // FlatpakAppEntry defines a Flatpak application to manage.
 type FlatpakAppEntry struct {
-	AppID   string                `yaml:"app"`
-	Remote  string                `yaml:"remote,omitempty"` // defaults to "flathub"
-	Depends []map[string][]string `yaml:"depends,omitempty"`
-	Level   string                `yaml:"-"` // set by LoadAll, not parsed from YAML
+	AppID      string                `yaml:"app"`
+	Remote     string                `yaml:"remote,omitempty"` // defaults to "flathub"
+	Depends    []map[string][]string `yaml:"depends,omitempty"`
+	SourceFile string                `yaml:"-" json:"-"` // relative path to source YAML, set by LoadAll
 }
 
 // DependsOnIDs converts the raw depends field into canonical resource node IDs.
@@ -545,10 +770,10 @@ func (a *FlatpakAppEntry) DependsOnIDs() []string {
 // to their desired values. The original values are saved to state on first
 // application and restored on removal.
 type JsonEntry struct {
-	File    string                 `yaml:"file"`
-	Values  map[string]interface{} `yaml:"-"` // populated by UnmarshalYAML
-	Depends []map[string][]string  `yaml:"depends,omitempty"`
-	Level   string                 `yaml:"-"` // set by LoadAll, not parsed from YAML
+	File       string                 `yaml:"file"`
+	Values     map[string]interface{} `yaml:"-"` // populated by UnmarshalYAML
+	Depends    []map[string][]string  `yaml:"depends,omitempty"`
+	SourceFile string                 `yaml:"-" json:"-"` // relative path to source YAML, set by LoadAll
 }
 
 // UnmarshalYAML parses a json entry. The mapping may contain "file",
@@ -621,7 +846,12 @@ func (e *JsonEntry) DependsOnIDs() []string {
 // Load reads and parses the YAML configuration file at path.
 // Top-level `key: !include "file"` directives are resolved and merged recursively.
 func Load(path string) (*Config, error) {
-	cfg, err := loadLayer(path, "", make(map[string]bool))
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		absPath = path
+	}
+	configRoot := filepath.Dir(absPath)
+	cfg, err := loadLayer(absPath, configRoot, make(map[string]bool))
 	if err != nil {
 		return nil, err
 	}
@@ -633,18 +863,15 @@ func Load(path string) (*Config, error) {
 // layers are included via `key: !include "path"` directives in that file.
 // Include paths support ${config_root}, ${env:VAR}, $(command), and ~.
 //
-// Direct entries in default.yaml carry level "common". Included files inherit
-// their level from the key name, e.g. `"user:rayben": !include "..."` produces
-// level "user:rayben", matching the old explicit-layer naming.
+// Each entry's SourceFile is set to the path of the YAML file it came from,
+// relative to the config root (e.g. "/default.yaml", "/users/rayben.yaml").
 func LoadAll(configDir string) (*Config, error) {
 	absConfigDir, err := filepath.Abs(configDir)
 	if err != nil {
 		absConfigDir = configDir
 	}
 
-	// Load default.yaml with level "" — stampLevel maps this to "common" so
-	// that direct entries remain backward-compatible with existing state.
-	cfg, err := loadLayerOptional(filepath.Join(configDir, "default.yaml"), "", make(map[string]bool))
+	cfg, err := loadLayerOptional(filepath.Join(configDir, "default.yaml"), absConfigDir, make(map[string]bool))
 	if err != nil {
 		return nil, fmt.Errorf("loading config: %w", err)
 	}
@@ -665,6 +892,13 @@ func LoadAll(configDir string) (*Config, error) {
 	if err := applyDistroboxExtends(cfg, resolved); err != nil {
 		return nil, fmt.Errorf("distrobox extends: %w", err)
 	}
+
+	// Replace every ${secrets.x} token with the secret's ciphertext. After this
+	// no config string contains a secret token or any plaintext; the decrypted
+	// values are substituted later, just before execution, by the secrets
+	// resource (see resolve.go). Run last so it also covers distrobox-extended
+	// and expanded entries.
+	ResolveSecretsToCiphertext(cfg)
 
 	return cfg, nil
 }

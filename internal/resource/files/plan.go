@@ -49,7 +49,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 
 		id := nodeID(target)
 		displayName := target // full path; display.go truncates to fit terminal
-		level := entry.Level
+		level := entry.SourceFile
 		if level == "" {
 			level = "common"
 		}
@@ -64,7 +64,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 				DisplayName:  displayName,
 				Action:       engine.ActionSkip,
 				SkipReason:   skipReason,
-				Level:        level,
+				SourceFile: level,
 			})
 			continue
 		}
@@ -87,14 +87,9 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 		}
 		action, levelDesc := engine.CheckLevelChange(id, level, action, st)
 
-		// Build dependency list: declared deps + implicit secret dep(s).
+		// Secret dependencies are wired globally by the engine (every resource
+		// runs after the secrets resource); no per-entry secret deps needed.
 		deps := entry.DependsOnIDs()
-		if kind == kindSecret {
-			deps = append(deps, config.NodeID("secrets", secretKey(entry.Source)))
-		}
-		for _, key := range config.SecretRefs(entry.Content) {
-			deps = append(deps, config.NodeID("secrets", key))
-		}
 
 		notes := buildFileNotes(action, kind, entry)
 		if levelDesc != "" {
@@ -119,7 +114,7 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 			ConfigHash:   hash,
 			DependsOn:    deps,
 			NeedsSudo:    entry.Sudo,
-			Level:        level,
+			SourceFile: level,
 			Notes:        notes,
 			StateData:    stateData,
 		})
@@ -143,7 +138,7 @@ func computeHash(entry *config.FileEntry, kind sourceKind, cfg *config.Config) (
 	source := entry.Source
 	switch kind {
 	case kindInline:
-		source = config.ApplySecretsCiphertext(entry.Content, cfg.Secrets)
+		source = entry.Content // already secrets→ciphertext-resolved by the config pipeline
 	case kindSecret:
 		key := secretKey(entry.Source)
 		se, ok := cfg.Secrets[key]

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,6 +31,12 @@ type Options struct {
 	QuietPlan bool
 	// ShowSkipped determines whether skipped packages are printed in the plan.
 	ShowSkipped bool
+	// ApplyTargets restricts the plan to the selected node IDs and their deps.
+	ApplyTargets []string
+	// Sync marks plan nodes as done in state without executing any commands.
+	// Use this when you have manually applied a change and want stay-go to stop
+	// re-attempting it.
+	Sync bool
 }
 
 // Engine orchestrates knowledge gathering, plan building, and execution
@@ -104,6 +111,22 @@ func (e *Engine) Run(ctx context.Context, st *state.State) error {
 			fmt.Fprintf(os.Stdout, "\n  Nothing to do — no resources configured.\n\n")
 		}
 		return nil
+	}
+
+	// Every other resource depends on the secrets being resolved into the config
+	// first (the secrets resource decrypts and substitutes plaintext during its
+	// Execute). Wired here, once — resources never declare secret dependencies.
+	addSecretBarrierDeps(allNodes)
+
+	if len(e.opts.ApplyTargets) > 0 {
+		filtered, err := filterPlanNodes(allNodes, e.opts.ApplyTargets)
+		if err != nil {
+			return err
+		}
+		if len(filtered) == 0 {
+			return fmt.Errorf("no matching plan nodes for --apply")
+		}
+		allNodes = filtered
 	}
 
 	// ── Step 3: Mark skips (dependency resolution) ───────────────────────────
@@ -203,8 +226,17 @@ func (e *Engine) Run(ctx context.Context, st *state.State) error {
 		}
 	}
 
-	// ── Step 6: Execute ───────────────────────────────────────────────────────
-	executeErr := e.execute(ctx, sorted, st)
+	// ── Step 6: Execute (or sync) ────────────────────────────────────────────
+	if e.opts.Sync {
+		fmt.Fprintf(os.Stdout, "  %s(sync — state updated, no commands executed)%s\n\n", ansiDim, ansiReset)
+	}
+
+	var executeErr error
+	if e.opts.Sync {
+		executeErr = e.syncState(sorted, st)
+	} else {
+		executeErr = e.execute(ctx, sorted, st)
+	}
 
 	// ── Step 7: Save state ────────────────────────────────────────────────────
 	// Always save — per-node state updates from successful nodes must be
@@ -213,6 +245,86 @@ func (e *Engine) Run(ctx context.Context, st *state.State) error {
 		fmt.Fprintf(os.Stderr, "warning: failed to save state: %v\n", err)
 	}
 	return executeErr
+}
+
+func filterPlanNodes(nodes []*PlanNode, targets []string) ([]*PlanNode, error) {
+	if len(targets) == 0 {
+		return nodes, nil
+	}
+
+	byID := make(map[string]*PlanNode, len(nodes))
+	for _, n := range nodes {
+		byID[n.ID] = n
+	}
+
+	allowed := make(map[string]bool)
+	var visit func(id string)
+	visit = func(id string) {
+		if allowed[id] {
+			return
+		}
+		node, ok := byID[id]
+		if !ok {
+			return
+		}
+		allowed[id] = true
+		for _, dep := range node.DependsOn {
+			visit(dep)
+		}
+	}
+
+	for _, target := range targets {
+		normalized, err := normalizeApplyTarget(target)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := byID[normalized]; !ok {
+			return nil, fmt.Errorf("no matching plan node for --apply target %q", target)
+		}
+		visit(normalized)
+	}
+
+	var filtered []*PlanNode
+	for _, n := range nodes {
+		if allowed[n.ID] {
+			filtered = append(filtered, n)
+		}
+	}
+	return filtered, nil
+}
+
+func normalizeApplyTarget(target string) (string, error) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return "", fmt.Errorf("empty --apply target")
+	}
+	if strings.Contains(target, "=") {
+		parts := strings.SplitN(target, "=", 2)
+		if len(parts) != 2 || strings.TrimSpace(parts[1]) == "" {
+			return "", fmt.Errorf("invalid --apply target %q", target)
+		}
+		resource := strings.TrimSpace(parts[0])
+		if resource == "" {
+			return "", fmt.Errorf("invalid --apply target %q", target)
+		}
+		return resourceNamePair(resource, strings.TrimSpace(parts[1])), nil
+	}
+	if strings.Contains(target, "/") {
+		return target, nil
+	}
+	if strings.Contains(target, ".") {
+		parts := strings.Split(target, ".")
+		if len(parts) < 2 {
+			return "", fmt.Errorf("invalid --apply target %q", target)
+		}
+		return parts[0] + "/" + parts[len(parts)-1], nil
+	}
+	return "", fmt.Errorf("invalid --apply target %q", target)
+}
+
+func resourceNamePair(resource, name string) string {
+	parts := strings.Split(resource, ".")
+	return parts[0] + "/" + name
 }
 
 // preSudo runs "sudo -v" once to cache credentials if any active node in the
@@ -281,8 +393,8 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 	for _, node := range nodes {
 		switch node.Action {
 		case ActionTrack, ActionAdopt, ActionLevel:
-			// No system commands needed; update state to sync hash, level, and data.
-			st.Set(node.ID, node.ConfigHash, node.Level, node.StateData)
+			// No system commands needed; update state to sync sourceFile and data.
+			st.Set(node.ID, node.ConfigHash, node.SourceFile, node.StateData)
 			// Call Execute so resources can perform per-node work on TRACK/ADOPT
 			// (e.g. secrets resource decrypts values into cfg.DecryptedSecrets).
 			r := resourceByType[node.ResourceType]
@@ -356,6 +468,26 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 	if hasFailed {
 		return ErrExecutionFailed
 	}
+	return nil
+}
+
+// syncState updates persisted state to match the plan without executing any
+// system commands. ADD/UPDATE nodes are written to state as if they succeeded;
+// REMOVE nodes are deleted from state; SKIP nodes are left untouched.
+func (e *Engine) syncState(nodes []*PlanNode, st *state.State) error {
+	for _, node := range nodes {
+		switch node.Action {
+		case ActionTrack, ActionAdopt, ActionLevel:
+			st.Set(node.ID, node.ConfigHash, node.SourceFile, node.StateData)
+		case ActionAdd, ActionUpdate:
+			st.Set(node.ID, node.ConfigHash, node.SourceFile, node.StateData)
+			DisplayExecutionResult(os.Stdout, node, nil, 0)
+		case ActionRemove:
+			st.Delete(node.ID)
+			DisplayExecutionResult(os.Stdout, node, nil, 0)
+		}
+	}
+	e.printFinalReport(nodes)
 	return nil
 }
 
