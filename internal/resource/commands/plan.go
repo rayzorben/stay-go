@@ -83,7 +83,10 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 		})
 	}
 
-	nodes = append(nodes, engine.StateRemovals("commands", configSet, knowledge, st)...)
+	// knowledge is synthetic for commands (every configured command is reported
+	// present), so it can never confirm absence — pass nil or the engine would
+	// skip Execute on removal and the stored rollback would never run.
+	nodes = append(nodes, engine.StateRemovals("commands", configSet, nil, st)...)
 	return nodes, nil
 }
 

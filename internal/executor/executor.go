@@ -126,6 +126,13 @@ func (e *Executor) Run(ctx context.Context, opts Options, name string, args ...s
 	}
 	if exitErr, ok := err.(*exec.ExitError); ok {
 		result.ExitCode = exitErr.ExitCode()
+	} else if err != nil {
+		// Start failure (binary not found, permission denied, context cancel):
+		// there is no real exit code. Use -1 so that ExitCode == 0 always means
+		// "the process ran and succeeded" — callers that only inspect ExitCode
+		// (e.g. services isEnabled, containers isRunning) must never mistake a
+		// missing binary for success.
+		result.ExitCode = -1
 	}
 
 	// In Debug (non-Verbose) mode, print captured output now, truncated if long.

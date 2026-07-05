@@ -60,7 +60,9 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 		})
 	}
 
-	nodes = append(nodes, engine.StateRemovals("containers", configSet, knowledge, st)...)
+	// knowledge only inspects configured container names — pass nil so REMOVE
+	// Execute always runs (it probes containerExists itself before stop/rm).
+	nodes = append(nodes, engine.StateRemovals("containers", configSet, nil, st)...)
 	return nodes, nil
 }
 

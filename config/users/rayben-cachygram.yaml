@@ -29,7 +29,6 @@ packages:
   - tailscale
   - zoxide
   - fzf
-  - cursor-bin
   - visual-studio-code-bin
   - go
   - entr # for monitoring file events for diff
@@ -56,6 +55,7 @@ packages:
   - cachyos-gaming-applications
   - 7zip
   - spotify-launcher
+  - claude-desktop
 
 services:
   - service: gcr-ssh-agent.socket
@@ -215,7 +215,7 @@ commands:
       
   - name: tailscale
     command: |
-      tailscale up --authkey=${secrets.tailscale_key}
+      tailscale up --authkey=${secrets.tailscale_key} --operator=$USER
       tailscale configure systray --enable-startup=systemd
       tailscale set --operator=$USER
     sudo: true

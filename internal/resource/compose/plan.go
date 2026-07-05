@@ -73,7 +73,9 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 		})
 	}
 
-	nodes = append(nodes, engine.StateRemovals("compose", configSet, knowledge, st)...)
+	// knowledge only probes configured projects — pass nil so REMOVE Execute
+	// always runs `compose down` (idempotent when the project is already down).
+	nodes = append(nodes, engine.StateRemovals("compose", configSet, nil, st)...)
 	return nodes, nil
 }
 

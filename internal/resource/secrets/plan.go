@@ -59,7 +59,9 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 	}
 
 	// REMOVE nodes for secrets in state that are no longer in config.
-	removals := engine.StateRemovals("secrets", configSet, knowledge, st)
+	// knowledge is synthetic (config-derived) — pass nil per the StateRemovals
+	// contract; secret REMOVE is state-only either way.
+	removals := engine.StateRemovals("secrets", configSet, nil, st)
 	nodes = append(nodes, removals...)
 
 	return nodes, nil

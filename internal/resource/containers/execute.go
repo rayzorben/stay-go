@@ -16,6 +16,27 @@ import (
 func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state.State) error {
 	entry, ok := r.nodeConfigs[node.ID]
 	if !ok {
+		// REMOVE nodes for containers deleted from config have no config entry;
+		// reconstruct the container name and runtime from persisted state.
+		if node.Action == engine.ActionRemove {
+			name := node.DisplayName
+			rt := resolveRuntime("")
+			if se, ok := st.Get(node.ID); ok && se.Data != nil {
+				if n, _ := se.Data["name"].(string); n != "" {
+					name = n
+				}
+				if rts, _ := se.Data["runtime"].(string); rts != "" {
+					rt = rts
+				}
+			}
+			if containerExists(ctx, r.exec, rt, name) {
+				if err := stopAndRemove(ctx, r.exec, rt, executor.Options{}, name); err != nil {
+					return err
+				}
+			}
+			st.Delete(node.ID)
+			return nil
+		}
 		return fmt.Errorf("no config found for container %q", node.DisplayName)
 	}
 

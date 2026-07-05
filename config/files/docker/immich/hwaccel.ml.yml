@@ -10,6 +10,9 @@ services:
   rocm:
     group_add:
       - video
+      - render
     devices:
       - /dev/dri:/dev/dri
       - /dev/kfd:/dev/kfd
+    security_opt:
+      - seccomp=unconfined

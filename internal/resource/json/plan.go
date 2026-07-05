@@ -103,7 +103,9 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 		})
 	}
 
-	nodes = append(nodes, engine.StateRemovals("json", configSet, knowledge, st)...)
+	// knowledge only covers configured entries — pass nil so REMOVE Execute
+	// always runs and restores the original JSON values from state.
+	nodes = append(nodes, engine.StateRemovals("json", configSet, nil, st)...)
 	return nodes, nil
 }
 

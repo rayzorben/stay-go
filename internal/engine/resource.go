@@ -227,7 +227,16 @@ func CheckLevelChange(id, newLevel string, action ActionType, st *state.State) (
 // knowledge is the live-system map (nodeID → present); when a node is confirmed
 // absent from the system (knowledge != nil && !knowledge[id]), AbsentFromSystem
 // is set so the engine skips the system command and just cleans up state.
-// Pass nil for knowledge in display-only contexts (e.g. distrobox delta notes).
+//
+// CONTRACT: pass knowledge ONLY when the resource's GatherKnowledge enumerates
+// the live system beyond the configured entries (packages, groups, users,
+// flatpak). Resources whose knowledge is derived from the config (commands,
+// services, files, scripts, json, containers, compose, secrets) MUST pass nil:
+// a node removed from config is never in their knowledge, so a non-nil map
+// would mark every removal "confirmed absent" and the engine would skip the
+// resource's REMOVE Execute — silently dropping rollbacks, service disables,
+// snippet removals, container teardowns, etc.
+// Also pass nil in display-only contexts (e.g. distrobox delta notes).
 // This is shared by all resources to avoid duplicating the removal detection loop.
 func StateRemovals(resourceType string, configSet map[string]bool, knowledge map[string]bool, st *state.State) []*PlanNode {
 	prefix := resourceType + "/"

@@ -74,7 +74,12 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 		}
 
 		deps := append([]string(nil), p.DependsOnIDs()...)
-		if needsSync {
+		// Only plan an index sync when this package will actually run the
+		// install command (ADD/UPDATE). TRACK/ADOPT execute nothing, so an
+		// unconditional sync node would make every steady-state run execute
+		// "apt-get update" — breaking idempotency and showing a phantom
+		// "1 applied" on otherwise up-to-date systems.
+		if needsSync && (action == engine.ActionAdd || action == engine.ActionUpdate) {
 			// Build a stable fingerprint from the sorted package-level deps.
 			// Packages that share the same dep set share one sync node.
 			syncDeps := append([]string(nil), p.DependsOnIDs()...)

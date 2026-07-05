@@ -120,7 +120,10 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 		})
 	}
 
-	nodes = append(nodes, engine.StateRemovals("files", configSet, knowledge, st)...)
+	// knowledge only covers configured targets, so it cannot confirm absence —
+	// pass nil or the engine would skip Execute on removal and additive
+	// snippets would never be cleaned out of their target files.
+	nodes = append(nodes, engine.StateRemovals("files", configSet, nil, st)...)
 	return nodes, nil
 }
 

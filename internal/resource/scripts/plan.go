@@ -95,7 +95,10 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 		})
 	}
 
-	nodes = append(nodes, engine.StateRemovals("scripts", configSet, knowledge, st)...)
+	// knowledge is synthetic for scripts (all configured scripts reported
+	// present) — pass nil per the StateRemovals contract. Behaviour is the same
+	// either way (script REMOVE only clears state) but the semantics are right.
+	nodes = append(nodes, engine.StateRemovals("scripts", configSet, nil, st)...)
 	return nodes, nil
 }
 

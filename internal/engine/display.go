@@ -367,24 +367,60 @@ func divider(w io.Writer, tw int) {
 	}
 }
 
-// noteLine writes dim continuation lines beneath execution errors (and plan items).
-// Each line is limited to (tw − 7) runes after the 7-column prefix so a full
-// 80-column terminal shows 73 characters of message; wider terminals get more.
-// Multi-line messages are split on "\n"; each line is truncated rune-safe.
+// noteLine writes dim continuation lines beneath execution errors.
+// Long lines WRAP at the terminal width instead of truncating: error output
+// must stay fully readable — it often ends with the exact remediation command
+// the failing tool printed (e.g. a full "tailscale up ..." invocation).
+// Multi-line messages are split on "\n"; each line wraps independently.
 func noteLine(w io.Writer, text string, tw int) {
 	const firstPrefix = "     └ "
 	const contPrefix = "       " // 7 cols, align with text after "└ "
 	const prefixCols = 7
 	maxRunes := noteMaxRunes(tw, prefixCols)
-	lines := strings.Split(text, "\n")
-	for i, line := range lines {
-		p := firstPrefix
-		if i > 0 {
-			p = contPrefix
+	first := true
+	for _, line := range strings.Split(text, "\n") {
+		for _, seg := range wrapRunes(line, maxRunes) {
+			p := contPrefix
+			if first {
+				p = firstPrefix
+				first = false
+			}
+			fmt.Fprintf(w, "%s%s%s%s\n", ansiDim, p, seg, ansiReset)
 		}
-		line = truncateStringVisual(line, maxRunes)
-		fmt.Fprintf(w, "%s%s%s%s\n", ansiDim, p, line, ansiReset)
 	}
+}
+
+// wrapRunes splits s into segments of at most maxRunes runes, breaking at the
+// last space inside the limit when possible so words stay intact; tokens longer
+// than the limit (URLs, keys) are hard-split. Always returns at least one
+// segment so empty lines are preserved.
+func wrapRunes(s string, maxRunes int) []string {
+	if maxRunes < 1 {
+		maxRunes = 1
+	}
+	r := []rune(s)
+	if len(r) <= maxRunes {
+		return []string{s}
+	}
+	var out []string
+	for len(r) > maxRunes {
+		cut := maxRunes
+		for i := maxRunes; i > 0; i-- {
+			if r[i] == ' ' {
+				cut = i
+				break
+			}
+		}
+		out = append(out, string(r[:cut]))
+		r = r[cut:]
+		for len(r) > 0 && r[0] == ' ' {
+			r = r[1:]
+		}
+	}
+	if len(r) > 0 {
+		out = append(out, string(r))
+	}
+	return out
 }
 
 // noteMaxRunes returns the maximum rune count per line for text after the prefix.
