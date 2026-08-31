@@ -1,0 +1,173 @@
+packages:
+  - solaar
+  - alsa-tools # for hda-verb
+  - gparted
+  - winboat
+  - wtype
+  - power-profiles-daemon # powerprofilesctl for auto profile switching
+  - package: keyd
+    services: [keyd]
+
+files:
+  - source: ${config_root}/files/necessary-verbs.sh
+    target: /usr/local/sbin/necessary-verbs.sh
+    sudo: true
+    mode: "+x"
+    
+  - content: |
+      [Unit]
+      Description=Run internal speaker fix script at startup
+      After=getty.target
+
+      [Service]
+      User=root
+      Group=root
+      Type=simple
+      ExecStart=/usr/local/sbin/necessary-verbs.sh
+      Restart=always
+      TimeoutStartSec=0
+
+      [Install]
+      WantedBy=default.target
+    target: /etc/systemd/system/necessary-verbs.service
+    sudo: true
+    depends:
+      - files: [/usr/local/sbin/necessary-verbs.sh]
+      - packages: ['alsa-tools']
+      
+  - source: ${config_root}/files/config/solaar.yaml
+    target: ~/.config/solaar/config.yaml
+    symlink: true
+    depends:
+      - packages: [solaar]
+
+  - content: |
+      [ids]
+      *
+
+      [main]
+      leftmeta = overload(meta, M-d)
+            
+    target: /etc/keyd/default.conf
+    sudo: true
+    depends:
+      - packages: [keyd]
+
+  # ── Display / latency tuning (see commands: limine-i915-psr for the kernel flag) ──
+
+  # Kill multi-page readahead stalls on zRAM swap lookups and normalise VFS
+  # cache pressure so reclaim drops dentries/inodes before thrashing anon pages.
+  - content: |
+      # Managed by stay-go.
+      # Keep swappiness high for zram (CachyOS default is fine),
+      # but adjust page-cluster to minimize multi-page read-ahead stalls on swap
+      vm.page-cluster = 0
+
+      # Encourage reclaiming cached dentries/inodes instead of thrashing anonymous pages
+      vm.vfs_cache_pressure = 100
+    target: /etc/sysctl.d/99-zram-tuning.conf
+    sudo: true
+
+  # The ACPI UCSI typec modules flap with -110 timeouts on this board and wedge
+  # the Embedded Controller; blacklisting both stops the stall.
+  - content: |
+      # Managed by stay-go.
+      blacklist ucsi_acpi
+      blacklist typec_ucsi
+    target: /etc/modprobe.d/blacklist-ucsi.conf
+    sudo: true
+
+  # Electron/Chromium apps go native Wayland instead of XWayland, whose damage
+  # rect mismatches drive the atomic update drops.
+  - content: |
+      # Managed by stay-go.
+      ELECTRON_OZONE_PLATFORM_HINT=auto
+    target: /etc/environment.d/95-electron-wayland.conf
+    sudo: true
+
+  # ── Automatic power-profile switching (performance on AC, balanced on battery) ──
+  - source: ${config_root}/files/power-profile-auto.sh
+    target: /usr/local/bin/power-profile-auto.sh
+    sudo: true
+    mode: "+x"
+
+  - content: |
+      [Unit]
+      Description=Apply power profile based on AC state (managed by stay-go)
+      Wants=power-profiles-daemon.service
+      After=power-profiles-daemon.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/power-profile-auto.sh
+
+      [Install]
+      WantedBy=multi-user.target
+    target: /etc/systemd/system/power-profile-auto.service
+    sudo: true
+    depends:
+      - files: [/usr/local/bin/power-profile-auto.sh]
+
+  # Fire the oneshot on every AC plug/unplug. We start the systemd unit rather
+  # than exec the script directly so it runs in a proper service context (udev's
+  # RUN+= sandbox has a short timeout that can kill powerprofilesctl).
+  - content: |
+      SUBSYSTEM=="power_supply", KERNEL=="AC0", ACTION=="change", RUN+="/usr/bin/systemctl --no-block restart power-profile-auto.service"
+    target: /etc/udev/rules.d/99-power-profile.rules
+    sudo: true
+    depends:
+      - files: [/etc/systemd/system/power-profile-auto.service]
+
+services:
+  # Enable + start the oneshot: sets the profile now and re-applies it at boot.
+  - service: power-profile-auto
+    depends:
+      - packages: [power-profiles-daemon]
+      - files: [/etc/systemd/system/power-profile-auto.service]
+
+commands:
+  # Load the new udev rule so hotplug switching works without a reboot, and fire
+  # a synthetic AC event so the profile is applied to the current state now.
+  # (For commands, depends.files is a skip-if-absent condition, not an ordering
+  # edge — the file is written first anyway because files run before commands.)
+  - name: reload-udev-power-profile
+    command: udevadm control --reload-rules && udevadm trigger --subsystem-match=power_supply --action=change
+    sudo: true
+    depends:
+      - packages: [power-profiles-daemon]
+
+  # ── Kernel boot parameter: i915.enable_psr=0 ──
+  # Panel Self Refresh on this i915 panel drops atomic display updates. The flag
+  # has to be merged into the existing KERNEL_CMDLINE[default] line in
+  # /etc/default/limine rather than shipped as a drop-in: nothing in
+  # limine-mkinitcpio-hook parses KERNEL_CMDLINE out of /etc/limine-entry-tool.d,
+  # and /etc/default/limine is loaded last anyway. The line also carries this
+  # machine's LUKS UUID and rootflags, so stay-go edits it in place instead of
+  # owning the whole file. Both the command and the rollback are idempotent, and
+  # limine-update regenerates /boot/limine.conf from it.
+  - name: limine-i915-psr
+    command: |
+      grep -q 'i915\.enable_psr=0' /etc/default/limine || \
+        sed -i 's/^\(KERNEL_CMDLINE\[default\]+=".*\)"$/\1 i915.enable_psr=0"/' /etc/default/limine
+      grep -q 'i915\.enable_psr=0' /etc/default/limine
+      limine-update
+    rollback: |
+      sed -i 's/ i915\.enable_psr=0//g' /etc/default/limine
+      limine-update
+    sudo: true
+    depends:
+      - files: [/etc/default/limine]
+
+  # Apply the sysctl drop-in now so a reboot is not required.
+  - name: reload-sysctl-zram-tuning
+    command: sysctl --system
+    sudo: true
+    depends:
+      - files: [/etc/sysctl.d/99-zram-tuning.conf]
+
+  # The UCSI blacklist lives in the initramfs, so it needs a rebuild to take effect.
+  - name: rebuild-initramfs-ucsi-blacklist
+    command: mkinitcpio -P
+    sudo: true
+    depends:
+      - files: [/etc/modprobe.d/blacklist-ucsi.conf]
