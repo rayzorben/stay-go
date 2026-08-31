@@ -1,0 +1,112 @@
+#
+# Scrypted — https://github.com/koush/scrypted
+#
+# Adapted from the upstream install/docker/docker-compose.yml with three
+# deliberate changes:
+#
+#   1. The upstream watchtower service is omitted. stay-go owns updates for this
+#     project (`stay-go --update=compose/scrypted`); a watchtower polling the
+#     same image every hour would recreate containers behind stay-go's back and
+#     make the plan non-deterministic. The SCRYPTED_WEBHOOK_UPDATE_* variables
+#     that point at it are dropped for the same reason.
+#
+#   2. The database volume is an absolute host path (see .env). Upstream mounts
+#     "./volume" relative to the compose file; stay-go renders this project into
+#     a private cache dir before every run, so a relative path would put the
+#     Scrypted database inside the cache and lose it on the next apply.
+#
+#   3. AMD GPU passthrough (RX 9070 / RDNA4) is enabled — /dev/dri for VAAPI +
+#     OpenCL and /dev/kfd for ROCm compute. See the devices/environment blocks.
+#
+# Host networking is what upstream ships and what Scrypted expects: the plugins
+# do LAN discovery (ONVIF WS-Discovery, Reolink, HomeKit mDNS) and open their own
+# listeners, none of which survive a bridge. Ports in use on orohost that this
+# must not collide with: Plex is also host-networked (32400, 32410-32414/udp,
+# 1900/udp); frigate publishes 5000/8554/8555/8971; adguard 53/3000/8081;
+# neolink 8556; portainer 8000/9443; photoprism 2342; sftp 2222. Scrypted's
+# 10443 (https UI) and 11080 (http UI) are clear of all of them.
+#
+# UI: https://192.168.1.50:10443/ (self-signed cert on first boot)
+
+name: scrypted
+
+services:
+  scrypted:
+    container_name: scrypted
+    image: ghcr.io/koush/scrypted
+    restart: unless-stopped
+    network_mode: host
+
+    devices:
+      # AMD RX 9070 (RDNA4/gfx1201). /dev/dri gives VAAPI video decode+encode
+      # (Mesa radeonsi) and OpenCL; /dev/kfd is the ROCm compute device, needed
+      # by the object-detection plugins that run on the GPU rather than the CPU.
+      - "/dev/dri:/dev/dri"
+      - "/dev/kfd:/dev/kfd"
+      # Uncomment if a Coral USB TPU is ever moved to / shared with Scrypted.
+      # The Coral is currently claimed by frigate (which passes the same path),
+      # and a USB Coral cannot be driven by two processes at once.
+      # - "/dev/bus/usb:/dev/bus/usb"
+
+    group_add:
+      # These MUST be numeric GIDs, not names. group_add resolves names against
+      # the CONTAINER's /etc/group, and the Debian-based Scrypted image has no
+      # "render" group — using names fails the container create outright with
+      #   Error response from daemon: Unable to find group render
+      # A numeric GID is passed straight through with no lookup. The values come
+      # from the HOST's groups, resolved at config load time by stay-go (see
+      # RENDER_GID / VIDEO_GID in .env) so they stay correct if a GID changes.
+      #
+      # renderD128 is 0666 so render is belt-and-braces, but card1 is
+      # root:video 0660 — without the video group the container cannot open the
+      # primary node, which some VAAPI probe paths still do.
+      - "${RENDER_GID}"
+      - "${VIDEO_GID}"
+
+    volumes:
+      # Scrypted database, plugin installs, and settings. Absolute path — see
+      # the header note about the rendered project directory.
+      - "${SCRYPTED_VOLUME}:/server/volume"
+      # NVR recordings. Scrypted NVR is a paid plugin; the mount is harmless if
+      # unused and means the storage path is already correct when it is enabled.
+      # Point the NVR plugin at /nvr in its settings, or leave
+      # SCRYPTED_NVR_VOLUME below set and it picks this up automatically.
+      - "${SCRYPTED_NVR}:/nvr"
+      - /etc/localtime:/etc/localtime:ro
+
+    environment:
+      TZ: "${TZ}"
+      # Tells the NVR plugin where to record without configuring it in the UI.
+      SCRYPTED_NVR_VOLUME: "/nvr"
+      # Mesa VAAPI driver for the AMD card, same as frigate uses.
+      LIBVA_DRIVER_NAME: "radeonsi"
+      # RDNA4 (gfx1201) is new enough that some ROCm userspace builds do not yet
+      # ship a matching kernel library and fall back to CPU. If a GPU detector
+      # plugin reports "no ROCm device", uncomment this to make ROCm treat the
+      # card as the nearest supported gfx1200 target.
+      # HSA_OVERRIDE_GFX_VERSION: "12.0.0"
+      #
+      # Avahi / mDNS — only needed for the HomeKit plugin. With host networking
+      # the plugin binds UDP 5353 directly, which collides with a host
+      # avahi-daemon. To use HomeKit: stop the host daemon
+      #   sudo systemctl disable --now avahi-daemon avahi-daemon.socket
+      # and uncomment the next line.
+      # SCRYPTED_DOCKER_AVAHI: "true"
+
+    # Upstream disables logging entirely to spare flash storage; Scrypted keeps
+    # per-device logs in memory and shows them in the UI. orohost records to the
+    # pool rather than an SD card, so capped json-file logs are affordable and
+    # make `docker logs scrypted` useful when a plugin misbehaves at startup.
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Upstream forces public DNS because some local resolvers break the npm
+    # registry that the plugin installer uses. adguardhome runs on this same
+    # host and does not block npm, but a Scrypted that cannot install plugins
+    # when adguard is down is a bad failure mode — so keep the upstream default.
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8

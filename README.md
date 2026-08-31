@@ -260,9 +260,56 @@ stay-go [flags]
   -n, --dry-run         show plan without executing
   -y, --yes             auto-confirm without prompting
   -S, --skipped         show skipped items in the plan
+  -u, --update [target] upgrade tracked resources to their latest versions
       --show [scope]    print tracked state and exit (all, packages, users, …)
       --version         print version and exit
 ```
+
+---
+
+## Updating
+
+`--update` refreshes what is already installed without changing your desired
+config — the same plan → confirm → execute flow, but every row is an upgrade:
+
+```sh
+stay-go --update                      # everything: system packages, containers,
+                                      # compose projects, flatpaks, distroboxes
+stay-go --update=containers           # one resource type
+stay-go --update=containers/frigate   # one item (also: containers.frigate, or
+                                      # just "frigate" if unambiguous)
+stay-go --update=flatpak,compose/immich   # comma-separate multiple targets
+```
+
+What each resource does on update:
+
+| Resource | Update behaviour |
+|---|---|
+| `packages` | Full system upgrade via the detected manager (`paru -Syu`, `apt-get upgrade`, …) |
+| `containers` | Pull the configured image; recreate the container only if the image changed |
+| `compose` | Render the project, `compose pull`, then `up -d` (recreates changed services) |
+| `flatpak` | `flatpak update` per app, plus one pass for runtimes |
+| `distrobox` | `distrobox upgrade` (the box's own package manager, inside the box) |
+
+Pin anything with `lock: true` on its entry — locked items are skipped by bulk
+updates and shown in the plan with the reason:
+
+```yaml
+containers:
+  frigate:
+    image: ghcr.io/blakeblackshear/frigate:stable-rocm
+    lock: true      # skipped by --update / --update=containers
+
+packages:
+  - name: linux
+    lock: true      # held back via --ignore/--exclude where the manager supports it
+```
+
+Explicitly naming a locked item (`--update=containers/frigate`) overrides the
+lock — you said it, you meant it. Compose projects and containers whose files
+stay-go renders internally (secrets substituted into a private cache dir) are
+updated the same way, so there is no need to hunt down the rendered files to
+run `docker compose pull` by hand.
 
 ---
 
@@ -278,6 +325,7 @@ stay-go [flags]
 | `scripts` | Shell scripts tracked by file content hash |
 | `commands` | Inline shell commands tracked by content hash |
 | `containers` | Docker / Podman containers |
+| `compose` | docker-compose projects (rendered with secrets, `compose up -d`) |
 | `distrobox` | Distrobox containers with in-box packages and commands |
 | `flatpak` | Flatpak applications |
 | `json` | Specific values inside existing JSON files |

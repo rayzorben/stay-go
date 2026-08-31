@@ -18,6 +18,13 @@ import (
 // Implements engine.NodeExecutor.
 func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state.State) error {
 	switch node.Action {
+	case engine.ActionUpgrade:
+		entry, ok := r.nodeConfigs[node.ID]
+		if !ok {
+			return fmt.Errorf("no config found for compose project %q", node.DisplayName)
+		}
+		return r.executeUpgrade(ctx, entry)
+
 	case engine.ActionAdd, engine.ActionUpdate:
 		entry, ok := r.nodeConfigs[node.ID]
 		if !ok {

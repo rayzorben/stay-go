@@ -55,6 +55,12 @@ const (
 	// are run; only the stored level in state is updated.
 	ActionLevel ActionType = "LEVEL"
 
+	// ActionUpgrade — refresh the item to the latest available version
+	// (package upgrade, image pull + recreate, flatpak update, …). Only
+	// produced in update mode (--update); the desired config is unchanged,
+	// so state is not modified.
+	ActionUpgrade ActionType = "UPGRADE"
+
 	// ActionSkip — a dependency is not met or failed. No execution attempted.
 	ActionSkip ActionType = "SKIP"
 )
@@ -94,6 +100,12 @@ type PlanNode struct {
 	// NeedsSudo indicates that executing this node requires sudo.
 	// Used by the engine to pre-authenticate sudo once before the execute loop.
 	NeedsSudo bool
+
+	// Locked marks a node whose config entry has lock: true. Locked nodes are
+	// skipped by bulk updates (--update / --update=<resource>) but still
+	// upgraded when explicitly targeted (--update=<resource>/<name>).
+	// Only meaningful on ActionUpgrade nodes.
+	Locked bool
 
 	// Description is an optional plain-English explanation of what will change.
 	// Resources populate this for UPDATE nodes (e.g. "shell /bin/fish → /bin/zsh")
@@ -169,6 +181,16 @@ type Resource interface {
 	Knowledger
 	Planner
 	NodeExecutor
+}
+
+// Updater is an optional interface for resources whose managed items can be
+// refreshed to the latest available version (--update mode). Implementations
+// return ActionUpgrade nodes for every tracked item; entries with lock: true
+// must still be returned with Locked=true — the engine decides whether they
+// run (explicit target) or are skipped (bulk update). Resources that do not
+// implement Updater simply never appear in an update plan.
+type Updater interface {
+	BuildUpdatePlan(ctx context.Context, st *state.State) ([]*PlanNode, error)
 }
 
 // ─── Shared helpers (DRY) ────────────────────────────────────────────────────

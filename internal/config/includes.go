@@ -272,6 +272,13 @@ func mergeConfigs(base, override *Config) *Config {
 	result.Compose = mergeByKey(base.Compose, override.Compose,
 		func(c ComposeEntry) string { return c.ProjectName() })
 
+	result.Flatpak = FlatpakConfig{
+		Remotes: mergeByKey(base.Flatpak.Remotes, override.Flatpak.Remotes,
+			func(r FlatpakRemoteEntry) string { return r.Name }),
+		Apps: mergeByKey(base.Flatpak.Apps, override.Flatpak.Apps,
+			func(a FlatpakAppEntry) string { return a.AppID }),
+	}
+
 	result.Distrobox = mergeByKey(base.Distrobox, override.Distrobox,
 		func(d DistroboxEntry) string { return d.Name })
 

@@ -1,0 +1,89 @@
+#
+# PhotoPrism — see https://docs.photoprism.app/getting-started/docker-compose/
+#
+# Based on the upstream example at https://dl.photoprism.app/docker/compose.yaml,
+# trimmed to the photoprism + mariadb services (the optional ollama, open-webui,
+# and watchtower services are omitted — stay-go handles updates via --update).
+#
+# Host paths and credentials live in .env. All host paths must be ABSOLUTE:
+# stay-go renders this project into a private cache dir before each run, so the
+# upstream "./storage" style relative mounts would land in the cache, not on disk.
+#
+# PhotoPrism needs at least 4 GB of swap; the indexer can transiently spike well
+# above its steady-state memory when processing large files.
+
+name: photoprism
+
+services:
+  photoprism:
+    container_name: photoprism
+    image: photoprism/photoprism:latest
+    restart: unless-stopped
+    stop_grace_period: 15s
+    depends_on:
+      - mariadb
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+    ports:
+      - "2342:2342"
+    working_dir: "/photoprism" # do not change or remove
+    volumes:
+      - "${PHOTOPRISM_ORIGINALS}:/photoprism/originals"
+      - "${PHOTOPRISM_STORAGE}:/photoprism/storage"
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      PHOTOPRISM_ADMIN_USER: "${PHOTOPRISM_ADMIN_USER}"
+      PHOTOPRISM_ADMIN_PASSWORD: "${PHOTOPRISM_ADMIN_PASSWORD}"
+      PHOTOPRISM_AUTH_MODE: "password"          # public, password
+      PHOTOPRISM_SITE_URL: "${PHOTOPRISM_SITE_URL}"
+      PHOTOPRISM_SITE_TITLE: "PhotoPrism"
+      PHOTOPRISM_DISABLE_TLS: "false"           # disables HTTPS/TLS even if the site URL starts with https://
+      PHOTOPRISM_DEFAULT_TLS: "true"            # self-signed cert if no other certificate is available
+      PHOTOPRISM_DEFAULT_LOCALE: "en"
+      PHOTOPRISM_PLACES_LOCALE: "local"
+      PHOTOPRISM_LOG_LEVEL: "info"              # trace, debug, info, warning, error
+      PHOTOPRISM_READONLY: "true"               # originals live in Dropbox — do not modify them
+      PHOTOPRISM_DISABLE_CHOWN: "true"          # do not chmod/chown the Dropbox tree on startup
+      PHOTOPRISM_SIDECAR_YAML: "true"           # back up picture metadata to YAML sidecars
+      PHOTOPRISM_BACKUP_ALBUMS: "true"
+      PHOTOPRISM_BACKUP_DATABASE: "true"
+      PHOTOPRISM_BACKUP_SCHEDULE: "daily"
+      PHOTOPRISM_INDEX_SCHEDULE: "@every 6h"    # rescan the originals for new files
+      PHOTOPRISM_DISABLE_TENSORFLOW: "false"    # face detection + image classification
+      PHOTOPRISM_DISABLE_FACES: "false"
+      PHOTOPRISM_DISABLE_CLASSIFICATION: "false"
+      PHOTOPRISM_DISABLE_RAW: "false"
+      PHOTOPRISM_ORIGINALS_LIMIT: 5000          # max size of original media files in MB
+      PHOTOPRISM_HTTP_COMPRESSION: "zstd,gzip"
+      PHOTOPRISM_DATABASE_DRIVER: "mysql"
+      PHOTOPRISM_DATABASE_SERVER: "mariadb:3306"
+      PHOTOPRISM_DATABASE_NAME: "photoprism"
+      PHOTOPRISM_DATABASE_USER: "photoprism"
+      PHOTOPRISM_DATABASE_PASSWORD: "${PHOTOPRISM_DATABASE_PASSWORD}"
+      PHOTOPRISM_INIT: "https tensorflow"
+      TZ: "${TZ}"
+    ## Hardware transcoding via the AMD GPU (frigate already uses /dev/dri):
+    # devices:
+    #   - "/dev/dri:/dev/dri"
+    # environment:
+    #   PHOTOPRISM_FFMPEG_ENCODER: "vaapi"
+
+  mariadb:
+    container_name: photoprism_mariadb
+    image: mariadb:11
+    restart: unless-stopped
+    stop_grace_period: 15s
+    security_opt: # see https://github.com/MariaDB/mariadb-docker/issues/434#issuecomment-1136151239
+      - seccomp:unconfined
+      - apparmor:unconfined
+    command: --innodb-buffer-pool-size=512M --transaction-isolation=READ-COMMITTED --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --max-connections=512 --innodb-rollback-on-timeout=OFF --innodb-lock-wait-timeout=120
+    volumes:
+      - "${PHOTOPRISM_DATABASE}:/var/lib/mysql" # DO NOT REMOVE
+    environment:
+      MARIADB_AUTO_UPGRADE: "1"
+      MARIADB_INITDB_SKIP_TZINFO: "1"
+      MARIADB_DATABASE: "photoprism"
+      MARIADB_USER: "photoprism"
+      MARIADB_PASSWORD: "${PHOTOPRISM_DATABASE_PASSWORD}"
+      MARIADB_ROOT_PASSWORD: "${MARIADB_ROOT_PASSWORD}"

@@ -22,6 +22,9 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 		return fmt.Errorf("no config found for distrobox node %q", node.DisplayName)
 	}
 
+	if node.Action == engine.ActionUpgrade {
+		return r.executeUpgrade(ctx, entry.Name)
+	}
 	if isApplyNode(node.ID) {
 		return r.executeApply(ctx, node, entry, st)
 	}

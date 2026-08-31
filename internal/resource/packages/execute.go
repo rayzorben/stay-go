@@ -20,6 +20,9 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 	opts := executor.Options{Sudo: r.manager.NeedsSudo, Env: r.manager.Env}
 
 	switch node.Action {
+	case engine.ActionUpgrade:
+		return r.executeUpgrade(ctx)
+
 	case engine.ActionAdd, engine.ActionUpdate:
 		if isPackageSyncNode(node.ID) {
 			// Sync nodes are ephemeral — never persisted to state.

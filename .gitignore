@@ -3,3 +3,32 @@ bin/**
 
 # Local daily build counter (see scripts/compute-build-version.sh)
 .build-version
+
+# Dropbox/Nextcloud/Syncthing conflict copies.
+# These are point-in-time snapshots of a file and can silently reintroduce an
+# older, pre-encryption config containing plaintext secrets.
+*conflicted copy*
+*conflicted-copy*
+*[Cc]onflict[0-9]*
+*.sync-conflict-*
+
+# Editor / OS noise
+*~
+*.swp
+*.swo
+.DS_Store
+
+# Secrets & credentials that must never be committed.
+# stay-go secrets belong in config YAML as `!encrypted <base64>` only.
+*.pem
+*.key
+id_rsa
+id_ed25519
+id_ecdsa
+id_dsa
+*.p12
+*.pfx
+.env.local
+.env.*.local
+secrets.yaml
+secrets.yml

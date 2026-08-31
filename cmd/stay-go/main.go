@@ -83,6 +83,30 @@ func (f *applyFlag) Set(v string) error {
 	return nil
 }
 
+// updateFlag accepts --update (everything), --update=containers (one resource
+// type), or --update=containers/frigate,compose/immich (specific nodes,
+// comma-separated). IsBoolFlag lets the flag package accept a bare --update;
+// Set receives "true" in that case, meaning "no target restriction".
+type updateFlag struct {
+	set     bool
+	targets []string
+}
+
+func (f *updateFlag) String() string   { return strings.Join(f.targets, ",") }
+func (f *updateFlag) IsBoolFlag() bool { return true }
+func (f *updateFlag) Set(v string) error {
+	f.set = true
+	if v == "true" {
+		return nil
+	}
+	for _, part := range strings.Split(v, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			f.targets = append(f.targets, part)
+		}
+	}
+	return nil
+}
+
 func main() {
 	// Flags.
 	var (
@@ -96,6 +120,7 @@ func main() {
 		guestKnowledge bool
 		show           showFlag
 		applyTargets   applyFlag
+		update         updateFlag
 		showSkipped    bool
 		showVersion    bool
 		sync           bool
@@ -112,6 +137,8 @@ func main() {
 	flag.BoolVar(&showSkipped, "S", false, "show skipped packages in the plan (shorthand)")
 	flag.Var(&show, "show", "print tracked state without executing: --show (all), --show=packages|groups|users|services|variables")
 	flag.Var(&applyTargets, "apply", "apply only the named config node(s) and their runtime dependencies: --apply=resource/name or --apply=resource.name")
+	flag.Var(&update, "update", "upgrade tracked resources to latest: --update (all), --update=<resource> or --update=<resource>/<name>,…")
+	flag.Var(&update, "u", "upgrade tracked resources to latest (shorthand)")
 	flag.BoolVar(&dryRun, "dry-run", false, "show plan without executing")
 	flag.BoolVar(&dryRun, "n", false, "show plan without executing (shorthand)")
 	flag.BoolVar(&autoYes, "yes", false, "auto-confirm execution plan without prompting")
@@ -129,6 +156,12 @@ func main() {
 		os.Exit(0)
 	}
 
+	// --update is a distinct mode: it refreshes tracked items rather than
+	// applying config, so mixing it with apply/sync selectors is a user error.
+	if update.set && (len(applyTargets) > 0 || sync || show.scope != "") {
+		fatalf("--update cannot be combined with --apply, --sync, or --show")
+	}
+
 	// Load and merge config. Host/user layers are declared as !include directives
 	// in default.yaml using ${env:USER} and $(hostname) expressions.
 	cfg, err := config.LoadAll(configDir)
@@ -144,7 +177,7 @@ func main() {
 
 	// --show: print tracking info and exit without executing.
 	if show.scope != "" {
-		engine.DisplayShow(os.Stdout, st, cfg.Vars, show.scope)
+		engine.DisplayShow(os.Stdout, st, cfg, show.scope)
 		return
 	}
 
@@ -204,7 +237,11 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	if err := eng.Run(ctx, st); err != nil {
+	run := func() error { return eng.Run(ctx, st) }
+	if update.set {
+		run = func() error { return eng.RunUpdate(ctx, st, update.targets) }
+	}
+	if err := run(); err != nil {
 		if !errors.Is(err, engine.ErrExecutionFailed) {
 			fatalf("%v", err)
 		}
@@ -226,8 +263,18 @@ Flags:
   -n, --dry-run         show plan without executing
       --sync            mark plan nodes done in state without executing commands
       --apply string    apply only the named config node(s) and their dependencies
+  -u, --update [target] upgrade tracked resources to their latest versions.
+                        --update            everything (entries with lock: true are skipped)
+                        --update=containers one resource type (bulk; locks respected)
+                        --update=containers/frigate
+                                            one item — overrides lock: true
+                        Targets accept resource/name, resource.name, or a bare
+                        unambiguous name; comma-separate multiple targets.
+                        Updatable: packages (full system upgrade), containers
+                        (pull + recreate if changed), compose (pull + up -d),
+                        flatpak (apps + runtimes), distrobox (in-box upgrade)
       --show [scope]    print tracked state and exit; scope: all (default), packages,
-                        groups, users, services, scripts, variables
+                        groups, users, services, scripts, variables, secrets
   -S, --skipped         show skipped packages/items in the plan
       --version         print build version and exit
 

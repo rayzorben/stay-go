@@ -12,19 +12,22 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/rayzorben/stay-go/internal/config"
+	"github.com/rayzorben/stay-go/internal/secrets"
 	"github.com/rayzorben/stay-go/internal/state"
 )
 
 // ─── ANSI escape codes ────────────────────────────────────────────────────────
 
 const (
-	ansiReset  = "\033[0m"
-	ansiBold   = "\033[1m"
-	ansiDim    = "\033[2m"
-	ansiGreen  = "\033[32m"
-	ansiRed    = "\033[31m"
-	ansiYellow = "\033[33m"
-	ansiCyan   = "\033[36m"
+	ansiReset   = "\033[0m"
+	ansiBold    = "\033[1m"
+	ansiDim     = "\033[2m"
+	ansiGreen   = "\033[32m"
+	ansiRed     = "\033[31m"
+	ansiYellow  = "\033[33m"
+	ansiCyan    = "\033[36m"
+	ansiMagenta = "\033[35m"
 )
 
 // ─── Display metrics ──────────────────────────────────────────────────────────
@@ -50,6 +53,8 @@ func ColoredPlanDelta(action ActionType, name string) string {
 		prefix = "+"
 	case ActionUpdate:
 		prefix = "~"
+	case ActionUpgrade:
+		prefix = "^"
 	case ActionRemove:
 		prefix = "-"
 	case ActionLevel:
@@ -71,6 +76,8 @@ func actionColor(a ActionType) func(string) string {
 		return func(s string) string { return ansiRed + s + ansiReset }
 	case ActionUpdate:
 		return func(s string) string { return ansiYellow + s + ansiReset }
+	case ActionUpgrade:
+		return func(s string) string { return ansiMagenta + s + ansiReset }
 	case ActionLevel:
 		return func(s string) string { return ansiCyan + s + ansiReset }
 	case ActionSkip:
@@ -143,7 +150,7 @@ func nodeGroupID(a ActionType) (groupID, bool) {
 	switch a {
 	case ActionAdd, ActionAdopt:
 		return grpAdding, true
-	case ActionUpdate:
+	case ActionUpdate, ActionUpgrade:
 		return grpUpdating, true
 	case ActionLevel:
 		return grpMoved, true
@@ -203,6 +210,8 @@ func compactActionLabel(a ActionType) string {
 		return "+ add"
 	case ActionUpdate:
 		return "~ update"
+	case ActionUpgrade:
+		return "^ upgrade"
 	case ActionLevel:
 		return "= level"
 	case ActionRemove:
@@ -218,7 +227,7 @@ func compactActionLabel(a ActionType) string {
 func actionColumnWidth() int {
 	w := 0
 	for _, a := range []ActionType{
-		ActionAdd, ActionAdopt, ActionUpdate, ActionLevel, ActionRemove, ActionSkip,
+		ActionAdd, ActionAdopt, ActionUpdate, ActionUpgrade, ActionLevel, ActionRemove, ActionSkip,
 	} {
 		if l := len(compactActionLabel(a)); l > w {
 			w = l
@@ -455,10 +464,20 @@ func writeSummaryLine(w io.Writer, nodes []*PlanNode) {
 	}
 	add := counts[ActionAdd] + counts[ActionAdopt]
 	upd := counts[ActionUpdate]
+	upg := counts[ActionUpgrade]
 	mov := counts[ActionLevel]
 	rem := counts[ActionRemove]
 	skp := counts[ActionSkip]
 	managed := counts[ActionTrack]
+
+	// Update mode (--update): only upgrade/skip counts are meaningful.
+	if upg > 0 {
+		fmt.Fprintf(w, "  %s^%d upgraded%s  %s!%d skipped%s\n",
+			ansiMagenta, upg, ansiReset,
+			ansiDim, skp, ansiReset,
+		)
+		return
+	}
 
 	fmt.Fprintf(w, "  %s+%d added%s  %s~%d updated%s  %s=%d moved%s  %s-%d removed%s  %s!%d skipped%s  %s·  %d managed%s\n",
 		ansiGreen, add, ansiReset,
@@ -834,14 +853,15 @@ func padCenter(s string, width int) string {
 // DisplayShow writes a read-only table of all currently-tracked nodes to w.
 // scope controls what is printed:
 //
-//	"all"       — variables section + all resource types
+//	"all"       — variables section + secrets (decrypted) + all resource types
 //	"variables" — only the resolved variables map
+//	"secrets"   — only decrypted secrets with full paths (e.g., secrets.code.pass)
 //	any other   — only nodes whose resource type matches the scope
-func DisplayShow(w io.Writer, st *state.State, vars map[string]string, scope string) {
+func DisplayShow(w io.Writer, st *state.State, cfg *config.Config, scope string) {
 	// ── Variables section ────────────────────────────────────────────────────
 	if scope == "all" || scope == "variables" {
-		keys := make([]string, 0, len(vars))
-		for k := range vars {
+		keys := make([]string, 0, len(cfg.Vars))
+		for k := range cfg.Vars {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
@@ -854,10 +874,19 @@ func DisplayShow(w io.Writer, st *state.State, vars map[string]string, scope str
 		}
 		for _, k := range keys {
 			token := "${" + k + "}"
-			fmt.Fprintf(w, "  %-*s  %s\n", w2, token, vars[k])
+			fmt.Fprintf(w, "  %-*s  %s\n", w2, token, cfg.Vars[k])
 		}
 		fmt.Fprintln(w)
 		if scope == "variables" {
+			return
+		}
+	}
+
+	// ── Secrets section ──────────────────────────────────────────────────────
+	if scope == "all" || scope == "secrets" {
+		displaySecrets(w, cfg)
+		fmt.Fprintln(w)
+		if scope == "secrets" {
 			return
 		}
 	}
@@ -955,4 +984,74 @@ func DisplayShow(w io.Writer, st *state.State, vars map[string]string, scope str
 		)
 	}
 	fmt.Fprintln(w)
+}
+
+// displaySecrets decrypts and displays all configured secrets with their full
+// paths (e.g., secrets.code.pass). Uses the same decoder as the app would use,
+// loading from the keyring if available or prompting the user.
+func displaySecrets(w io.Writer, cfg *config.Config) {
+	if len(cfg.Secrets) == 0 {
+		fmt.Fprintln(w, ansiDim+"(no secrets configured)"+ansiReset)
+		return
+	}
+
+	// Create and unlock the secrets manager (reuses keyring like the app does).
+	mgr := secrets.New()
+	var verifyToken string
+	if ve, ok := cfg.Secrets[secrets.VerifyKey]; ok && ve.Encrypted {
+		verifyToken = ve.RawValue
+	}
+
+	if err := mgr.Unlock(verifyToken); err != nil {
+		fmt.Fprintf(w, "%serror unlocking secrets: %v%s\n", ansiRed, err, ansiReset)
+		return
+	}
+
+	// Decrypt all secrets and collect by key (excluding the _verify sentinel).
+	decrypted := make(map[string]string)
+	for key, entry := range cfg.Secrets {
+		// Skip the verify sentinel and plaintext entries.
+		if key == secrets.VerifyKey {
+			continue
+		}
+		if !entry.Encrypted {
+			decrypted[key] = entry.RawValue
+			continue
+		}
+
+		// Decrypt encrypted entry.
+		pt, err := mgr.Decrypt(entry.RawValue)
+		if err != nil {
+			fmt.Fprintf(w, "%serror decrypting secret %q: %v%s\n",
+				ansiRed, key, err, ansiReset)
+			continue
+		}
+		decrypted[key] = pt
+	}
+
+	if len(decrypted) == 0 {
+		fmt.Fprintln(w, ansiDim+"(no secrets to display)"+ansiReset)
+		return
+	}
+
+	// Sort keys for consistent output.
+	keys := make([]string, 0, len(decrypted))
+	for k := range decrypted {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	fmt.Fprintf(w, "%sSecrets%s\n", ansiBold, ansiReset)
+	w2 := 0
+	for _, k := range keys {
+		token := "secrets." + k
+		if l := len(token); l > w2 {
+			w2 = l
+		}
+	}
+
+	for _, k := range keys {
+		token := "secrets." + k
+		fmt.Fprintf(w, "  %-*s  %s\n", w2, token, decrypted[k])
+	}
 }

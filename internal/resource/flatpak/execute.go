@@ -14,6 +14,9 @@ import (
 // State is updated on success. Implements engine.NodeExecutor.
 func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state.State) error {
 	switch node.Action {
+	case engine.ActionUpgrade:
+		return r.executeUpgrade(ctx, node)
+
 	case engine.ActionAdd, engine.ActionUpdate:
 		if isRemoteNode(node.ID) {
 			return r.applyRemote(ctx, node, st)

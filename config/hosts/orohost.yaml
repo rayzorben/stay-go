@@ -5,7 +5,18 @@ secrets:
     plus_api_key: !encrypted 7APSxVlM/3GLJI9zQTHzILoTUqhJ257V38/Dui6EpDf34b7lOSVhnnjx3T7dpDA7ujXKVR7kbwZ+mHYQxfQ+FwH6s4Yw3xwdNBpn/r7y10rDFJ6wWaPXOgedWrDeFpaBOHrfpIyzayKv9gpDpgs8u49Mb1YKsp4QpQ==
   immich:
     db_password: !encrypted 5aeT9kfYF2EA59YH3Gj/TJt7nMX4B4hG8umuOrTuGsVDoqVK6gFem8OnZ/HsniaVX77TOg==
-    
+  photoprism:
+    admin_password: !encrypted MvPI5yAG4i9ZICzNf1l/CfktfxfsLowFc6TMjieiSWdfnIRRX7Jh/tVPDFTDnFpoTet8RakD
+    db_password: !encrypted yVawkXt8Io27kgTjgmRZtXv6KixjYMWz4wFoUlQyGL07tAd3TKnwLkphWCUJikqMwCOyxtxJWKU=
+    db_root_password: !encrypted NneM1WndSvkFX7g0berybRnssdaHcPLgYzdeHzUF32YkRDABOScKjFXYLoLlRkWEJmEF1dnVjsA4lsas
+  neolink:
+    driveway_password: !encrypted 9EgJu+ivg1UGFwdmW26Fk+cnxWneokKtgTB7eR/AJR7+Gc3leiQDpxQqy6KAaLSEz0cW+w==
+  plex:
+    claim: !encrypted JM//y8mM5tYKGv/tkp5gJQLpZGjMioqAiGZa/ac7OenRMhPXoMBiD2McHhdFXQXeFbDWuoOpKvk9lRQPGzpFQI7HXimSyw==
+  sftp:
+    rayben_password: !encrypted JbkwZs04onvw0WpAQFKHirFXT+JQojyejp8G8GmTD6Cvz2cODbgTynDB3pLMMnrIv/ZZNMIB5g==
+    ha_password: !encrypted XJ9s+kHkKn4Zi5MeSGTHN0KMOl94cTkUJYDDGS+Wqw9KJBBGYPO+dDRqraMli134vg/s
+
 services:
   - sshd
 
@@ -20,6 +31,64 @@ files:
     symlink: true
     depends:
       - packages: [solaar]
+
+  - content: |
+      bind = "0.0.0.0"
+
+      [[cameras]]
+      name = "driveway"
+      username = "admin"
+      password = "${secrets.neolink.driveway_password}"
+      address = "192.168.1.22:9000"
+      stream = "mainStream"
+    target: /storage/apps/neolink/neolink.toml
+    sudo: true
+
+  # atmoz/sftp reads every *.pub under /home/<user>/.ssh/keys as an authorized
+  # key for that user. The container bind-mounts these two paths, so dropping
+  # the key here is all that is needed for key-based login.
+  - content: |
+      ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCjKda239tzwtWEM3Z17r2U6+TCak6zXX8CmU7fLJy/17NGfTF9RvfvoJQcme2CXRG41niTj27tLn/cWRI+dbslTpKX4GTxKc1DhrNLjRXv1Q2QkfCLJx6ny0TlzFf/Ti8xruErHx6ldHVNMQd9qqK4SG6KdUFmp9lntefJ+2EqNNi0Vjyj4QfM6mxu/uQSDsYReHyI6b62b+teckVKv+SCke0Ncm9HdQXbLmry+4Yz6RPcLFCjd3673p5pL0H2FNhx/xDRFmK61+c3hwmD9p4+iItKl+x4NhY0/qDYGIivRCpODicyV910kADVa+WlAs1EINUKr5ivjJx2OMC9lbiz rayben@raycachy
+    target: /storage/apps/sftp/keys/rayben/raycachy.pub
+    mode: "0644"
+    sudo: true
+
+  - content: |
+      ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCjKda239tzwtWEM3Z17r2U6+TCak6zXX8CmU7fLJy/17NGfTF9RvfvoJQcme2CXRG41niTj27tLn/cWRI+dbslTpKX4GTxKc1DhrNLjRXv1Q2QkfCLJx6ny0TlzFf/Ti8xruErHx6ldHVNMQd9qqK4SG6KdUFmp9lntefJ+2EqNNi0Vjyj4QfM6mxu/uQSDsYReHyI6b62b+teckVKv+SCke0Ncm9HdQXbLmry+4Yz6RPcLFCjd3673p5pL0H2FNhx/xDRFmK61+c3hwmD9p4+iItKl+x4NhY0/qDYGIivRCpODicyV910kADVa+WlAs1EINUKr5ivjJx2OMC9lbiz rayben@raycachy
+    target: /storage/apps/sftp/keys/ha/raycachy.pub
+    mode: "0644"
+    sudo: true
+
+commands:
+  # Persist the sftp server's host keys outside the container so client
+  # known_hosts entries survive a recreate. These files must exist as *files*
+  # before the container starts — docker would otherwise create the bind-mount
+  # targets as empty directories. ssh-keygen refuses to overwrite, so this is
+  # idempotent, but the folder condition keeps it out of the plan once done.
+  - name: sftp host keys
+    command: |
+      mkdir -p /storage/apps/sftp/ssh
+      ssh-keygen -t ed25519 -N "" -f /storage/apps/sftp/ssh/ssh_host_ed25519_key
+      ssh-keygen -t rsa -b 4096 -N "" -f /storage/apps/sftp/ssh/ssh_host_rsa_key
+      chmod 600 /storage/apps/sftp/ssh/ssh_host_*_key
+    sudo: true
+    depends:
+      - folders: ["!/storage/apps/sftp/ssh"]
+    rollback: |
+      rm -rf /storage/apps/sftp/ssh
+
+  # Scrypted's two bind-mount targets. Docker would create these itself, but as
+  # root:root 0755 wherever the daemon happens to run — creating them here keeps
+  # ownership explicit and, more importantly, makes the recordings directory
+  # exist on the pool before the container starts, so a typo in the path fails
+  # loudly here instead of silently recording into a fresh empty directory.
+  - name: scrypted storage
+    command: |
+      mkdir -p /storage/apps/scrypted/volume
+      mkdir -p /storage/security/scrypted
+    sudo: true
+    depends:
+      - folders: ["!/storage/security/scrypted"]
 
 # containers: accepts either a sequence of entries (stay-go's native form) or a
 # docker-compose-style mapping keyed by container name (used below).
@@ -36,6 +105,7 @@ containers:
 
   frigate:
     container_name: frigate
+    lock: true # skipped by bulk --update; upgrade explicitly with --update=containers/frigate
     privileged: true # this may not be necessary for all setups
     restart: unless-stopped
     stop_grace_period: 30s # allow enough time to shut down the various services
@@ -60,6 +130,7 @@ containers:
       - "8555:8555/tcp" # WebRTC over tcp
       - "8555:8555/udp" # WebRTC over udp
     environment:
+      LIBVA_DRIVER_NAME: "radeonsi"
       FRIGATE_RTSP_PASSWORD: "${secrets.frigate.rtsp_password}"
       MQTT_PASSWORD: "${secrets.frigate.mqtt_password}"
       PLUS_API_KEY: "${secrets.frigate.plus_api_key}"
@@ -77,6 +148,99 @@ containers:
         - 3000:3000/tcp
     image: adguard/adguardhome
 
+  neolink:
+    container_name: neolink
+    restart: unless-stopped
+    image: quantumentangledandy/neolink:latest
+    volumes:
+      - /storage/apps/neolink/neolink.toml:/etc/neolink.toml
+    ports:
+      - "8556:8554"
+    depends:
+      - files: [/storage/apps/neolink/neolink.toml]
+
+  plex:
+    container_name: plex
+    restart: unless-stopped
+    image: plexinc/pms-docker:latest
+    # Host networking is what Plex recommends on Linux — GDM discovery, DLNA
+    # (1900/udp) and the 32410-32414/udp range all work without publishing each
+    # port individually. The server lives at http://192.168.1.50:32400/web.
+    network_mode: host
+    devices:
+      - /dev/dri:/dev/dri # AMD VAAPI hardware transcoding (needs Plex Pass)
+    environment:
+      TZ: "America/Phoenix"
+      # First run only: links the server to the Plex account. Claim tokens from
+      # https://plex.tv/claim expire 4 minutes after they are generated — if
+      # this one has gone stale, put a fresh token in secrets.plex.claim above
+      # (plaintext; stay-go re-encrypts it) before applying. Once /config holds
+      # a claimed server the token is ignored.
+      PLEX_CLAIM: "${secrets.plex.claim}"
+      # pms-docker drops privileges to the "plex" user (PLEX_UID, default 1000).
+      # stay-go's containers resource has no group_add, so that user cannot be
+      # put in the host's render group — run the server as root instead so
+      # /dev/dri/renderD128 is readable no matter how udev labels it.
+      PLEX_UID: "0"
+      PLEX_GID: "0"
+      # Uncomment to reach the setup UI from the LAN without signing in — the
+      # recovery path if the claim token expired and the server came up
+      # unclaimed (Plex otherwise only allows setup from localhost).
+      # ALLOWED_NETWORKS: "192.168.1.0/24"
+    volumes:
+      - /storage/apps/plex/config:/config # database + metadata; grows large
+      - /storage/apps/plex/transcode:/transcode # transcoder scratch space; swap
+      #                                           for a tmpfs mount (as frigate
+      #                                           does) to keep it off the pool
+      - /storage/movies:/movies:ro # add as a library in the UI: /movies
+      - /storage/tv:/tv:ro
+      - /etc/localtime:/etc/localtime:ro
+    depends:
+      - packages: [docker]
+
+  sftp:
+    container_name: sftp
+    restart: unless-stopped
+    image: atmoz/sftp:alpine
+    # atmoz/sftp takes its accounts as command arguments in the form
+    #   user:password[:e][:uid[:gid[:dir1[,dir2]...]]]
+    # Each account is chrooted to /home/<user>; the trailing "data" creates
+    # /home/<user>/data, which is the only writable directory inside the chroot
+    # (sshd requires the chroot root itself to be owned by root and not
+    # group/world-writable).
+    command:
+      - "rayben:${secrets.sftp.rayben_password}:1001"
+      - "ha:${secrets.sftp.ha_password}:1002"
+    ports:
+      - "2222:22"
+    volumes:
+      # rayben's own upload directory, reached as /data after login.
+      - /storage/apps/sftp/rayben:/home/rayben/data
+      # ha's home is the whole storage pool: the chroot root stays /home/ha
+      # (atmoz/sftp hardcodes that in sshd_config and it must remain
+      # root-owned), and the host's /storage is mounted inside it under the
+      # same name. ha therefore lands in / and cds into storage to see the pool.
+      - /storage:/home/ha/storage
+      # Authorized public keys — one *.pub per key, per user.
+      - /storage/apps/sftp/keys/rayben:/home/rayben/.ssh/keys:ro
+      - /storage/apps/sftp/keys/ha:/home/ha/.ssh/keys:ro
+      # Persist the host keys so client known_hosts entries survive a recreate.
+      - /storage/apps/sftp/ssh/ssh_host_ed25519_key:/etc/ssh/ssh_host_ed25519_key
+      - /storage/apps/sftp/ssh/ssh_host_rsa_key:/etc/ssh/ssh_host_rsa_key
+      - /etc/localtime:/etc/localtime:ro
+    # Only depends: entries that resolve to real plan nodes may be listed here.
+    # ContainerEntry.DependsOnIDs has no files:/folders: condition handling (that
+    # is scripts/commands only), so every name becomes a "<type>/<name>" node ID
+    # that must exist in the plan. The two *.pub files below are managed file
+    # entries, so they resolve; the host keys are created by the "sftp host keys"
+    # command, which is folder-guarded and plans as SKIP once they exist — and a
+    # SKIP dep propagates as unmet, so it must NOT be listed.
+    depends:
+      - packages: [docker]
+      - files:
+          - /storage/apps/sftp/keys/rayben/raycachy.pub
+          - /storage/apps/sftp/keys/ha/raycachy.pub
+
 # compose: docker-compose projects brought up with `docker compose up -d`.
 # The project directory is rendered into a private cache dir before each run,
 # substituting ${secrets.x} (and ${var}, ~, $(cmd)) into the files' contents
@@ -86,3 +250,22 @@ compose:
   - path: ${config_root}/files/docker/immich   # project name defaults to "immich"
     depends:
       - packages: [docker]
+
+  - path: ${config_root}/files/docker/photoprism
+    depends:
+      - packages: [docker]
+
+  # Scrypted — second NVR alongside frigate. Host-networked, AMD GPU passed
+  # through, database in /storage/apps/scrypted, recordings in
+  # /storage/security/scrypted. Locked like frigate: an NVR should be upgraded
+  # deliberately, not swept up in a bulk --update, because a bad plugin/image
+  # combination means missed recordings rather than a broken UI you notice.
+  # Upgrade explicitly with --update=compose/scrypted.
+  - path: ${config_root}/files/docker/scrypted
+    lock: true
+    depends:
+      - packages: [docker]
+    # NOTE: deliberately does NOT depend on the "scrypted storage" command. That
+    # command is folder-guarded and plans as SKIP once the directories exist, and
+    # a SKIP dep propagates as unmet — depending on it would skip this project on
+    # every run after the first. Same trap as documented on the sftp container.

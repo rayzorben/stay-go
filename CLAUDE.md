@@ -119,8 +119,44 @@ cmd/stay-go ← all of the above
 | TRACK  | In knowledge (+ matches config or first-time) | Add to state; no command |
 | ADD    | In config, not in knowledge | Install/create/run |
 | UPDATE | In state with different hash | Modify existing / re-run |
+| UPGRADE | --update mode only (tracked entry) | Refresh to latest version; state untouched |
 | REMOVE | In state, not in config | Uninstall/delete (scripts: state only) |
-| SKIP   | Dependency REMOVE/SKIP/FAIL or folder condition not met | Log only |
+| SKIP   | Dependency REMOVE/SKIP/FAIL, folder condition not met, or `lock: true` in a bulk --update | Log only |
+
+---
+
+## Update Mode (--update)
+
+`stay-go --update[=targets]` refreshes tracked items to their latest versions
+without changing desired state. It is a separate pipeline (`engine.RunUpdate`
+in `engine/update.go`) that reuses markSkips → topoSort → DisplayPlan →
+Confirm → execute:
+
+1. Every resource implementing the optional `engine.Updater` interface
+   (`BuildUpdatePlan(ctx, st) ([]*PlanNode, error)`) returns ActionUpgrade
+   nodes for its tracked entries. Not-yet-applied entries come back as SKIP.
+2. Targets filter the nodes: none/`all` → everything; a resource type
+   (`containers`) → bulk for that type; a node (`containers/frigate`,
+   `containers.frigate`, or bare unambiguous `frigate`) → just that item.
+3. `lock: true` on an entry sets `PlanNode.Locked`; bulk updates turn locked
+   nodes into SKIP, but an explicit node target overrides the lock.
+4. The secrets resource's plan is included and `addSecretBarrierDeps` wired,
+   so compose/container upgrades see plaintext secrets at execute time.
+5. UPGRADE Execute never calls `st.Set`/`st.Delete` — an upgrade does not
+   change the desired config, so state hashes stay stable.
+
+Per-resource behaviour:
+
+| Resource | Updater implementation |
+|----------|------------------------|
+| packages | Single ephemeral `packages/__upgrade__` node: `UpgradeCmd` from the manager table (full system upgrade; per-package upgrades are deliberately unsupported). Locked packages → `IgnoreFmt` flag (`--ignore=%s` pacman family, `--exclude=%s` dnf/yum); managers without one get a plan note. |
+| containers | Per container: pull image, compare image IDs, stop+rm+run only if changed |
+| compose | Per project: render (secrets substituted), `compose pull`, `up -d --remove-orphans` |
+| flatpak | Per app: `flatpak update --user <app>`; plus one `flatpak/runtimes` node |
+| distrobox | Per box: `distrobox upgrade <name>` (in-box package manager) |
+
+`lock: true` is excluded from every config hash, so toggling it never triggers
+an UPDATE in normal runs.
 
 ---
 
@@ -308,6 +344,11 @@ Saved atomically (`.tmp` + rename) to prevent corruption.
 
 4. Add the YAML section to `config.go` and the `Config` struct.
 
+5. (Optional) implement `engine.Updater` (`update.go` — `BuildUpdatePlan` +
+   an ActionUpgrade branch in `Execute`) if the resource's items can be
+   refreshed to a latest version; add a `lock:` field to the entry and set
+   `PlanNode.Locked` from it. Keep `lock` out of the config hash.
+
 The engine handles all orchestration — no engine changes required.
 
 ---
@@ -316,17 +357,17 @@ The engine handles all orchestration — no engine changes required.
 
 Auto-detected in priority order:
 
-| Manager | Distro | NeedsSudo | List command |
-|---------|--------|-----------|--------------|
-| paru | Arch (AUR) | no | `pacman -Qq` |
-| yay | Arch (AUR) | no | `pacman -Qq` |
-| pacman | Arch | yes | `pacman -Qq` |
-| apt-get | Debian/Ubuntu | yes | `dpkg-query -f '${Package}\n' -W` |
-| dnf | Fedora/RHEL | yes | `rpm -qa --queryformat '%{NAME}\n'` |
-| yum | CentOS/old RHEL | yes | `rpm -qa --queryformat '%{NAME}\n'` |
-| zypper | openSUSE | yes | `rpm -qa --queryformat '%{NAME}\n'` |
-| apk | Alpine | yes | `apk info` |
-| xbps-install | Void | yes | `xbps-query -l` (custom parser) |
+| Manager | Distro | NeedsSudo | List command | Upgrade command |
+|---------|--------|-----------|--------------|-----------------|
+| paru | Arch (AUR) | no | `pacman -Qq` | `paru -Syu --noconfirm` |
+| yay | Arch (AUR) | no | `pacman -Qq` | `yay -Syu --noconfirm` |
+| pacman | Arch | yes | `pacman -Qq` | `pacman -Syu --noconfirm` |
+| apt-get | Debian/Ubuntu | yes | `dpkg-query -f '${Package}\n' -W` | `apt-get upgrade -y` |
+| dnf | Fedora/RHEL | yes | `rpm -qa --queryformat '%{NAME}\n'` | `dnf upgrade -y` |
+| yum | CentOS/old RHEL | yes | `rpm -qa --queryformat '%{NAME}\n'` | `yum update -y` |
+| zypper | openSUSE | yes | `rpm -qa --queryformat '%{NAME}\n'` | `zypper update -y` |
+| apk | Alpine | yes | `apk info` | `apk upgrade` |
+| xbps-install | Void | yes | `xbps-query -l` (custom parser) | `xbps-install -yu` |
 
 ---
 
@@ -339,6 +380,10 @@ stay-go [flags]
       --state  string     path to state file (default ~/.local/share/stay-go/state.json)
   -d, --debug             stream all command stdout/stderr to terminal
   -n, --dry-run           show plan without executing
+  -u, --update [targets]  upgrade tracked resources to latest; bare = all,
+                          =<resource> for a type, =<resource>/<name> for one item
+                          (overrides lock: true). Value must be attached with "="
+                          (bool-style flag, same as --show).
       --show [scope]      print tracked state and exit; scope: all (default),
                           packages, groups, users, services, scripts, variables
 ```

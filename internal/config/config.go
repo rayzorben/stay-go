@@ -277,6 +277,7 @@ func (g *GroupEntry) UnmarshalYAML(value *yaml.Node) error {
 type PackageEntry struct {
 	Name       string
 	Remove     bool
+	Lock       bool                  `yaml:"lock,omitempty"`    // exclude from --update (pin at current version where the manager supports it)
 	Depends    []map[string][]string `yaml:"depends,omitempty"` // resource deps; must round-trip in YAML (e.g. distrobox guest config)
 	Services   []ServiceEntry        `yaml:"-"`                  // mapping form only; cleared after normalization
 	SourceFile string                `yaml:"-" json:"-"`         // relative path to source YAML, set by LoadAll
@@ -333,6 +334,7 @@ func (p *PackageEntry) UnmarshalYAML(value *yaml.Node) error {
 		var m struct {
 			Name     string                 `yaml:"name"`
 			Package  string                 `yaml:"package"`
+			Lock     bool                   `yaml:"lock,omitempty"`
 			Depends  []map[string][]string  `yaml:"depends,omitempty"`
 			Services []inlinePackageService `yaml:"services,omitempty"`
 		}
@@ -347,6 +349,7 @@ func (p *PackageEntry) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("package entry: need \"name\" or \"package\"")
 		}
 		applyName(raw)
+		p.Lock = m.Lock
 		p.Depends = m.Depends
 		if len(m.Services) > 0 {
 			p.Services = make([]ServiceEntry, len(m.Services))
@@ -439,6 +442,7 @@ type ContainerEntry struct {
 	ShmSize     string                `yaml:"shm_size,omitempty"`          // e.g. "512mb"
 	StopTimeout string                `yaml:"stop_grace_period,omitempty"` // duration ("30s") or seconds ("30")
 	Pull        string                `yaml:"pull,omitempty"` // always, missing (default), never
+	Lock        bool                  `yaml:"lock,omitempty"` // exclude from --update (no image pull / recreate)
 	Sudo        bool                  `yaml:"sudo,omitempty"`
 	Depends     []map[string][]string `yaml:"depends,omitempty"`
 	SourceFile  string                `yaml:"-" json:"-"` // relative path to source YAML, set by LoadAll
@@ -668,6 +672,7 @@ type ComposeEntry struct {
 	Files      []string              `yaml:"files,omitempty"`    // compose files relative to Path; default: first standard name (+ .override) found
 	EnvFile    string                `yaml:"env_file,omitempty"` // env file relative to Path passed via --env-file (only needed for a non-".env" name)
 	Runtime    string                `yaml:"runtime,omitempty"`  // "docker" or "podman"; auto-detected if empty
+	Lock       bool                  `yaml:"lock,omitempty"`     // exclude from --update (no compose pull / up)
 	Sudo       bool                  `yaml:"sudo,omitempty"`
 	Depends    []map[string][]string `yaml:"depends,omitempty"`
 	SourceFile string                `yaml:"-" json:"-"` // relative path to source YAML, set by LoadAll
@@ -713,6 +718,7 @@ type DistroboxEntry struct {
 	Packages []PackageEntry        `yaml:"packages,omitempty" secrets:"-"`  // in-box packages
 	Commands []CommandEntry        `yaml:"commands,omitempty" secrets:"-"`  // in-box inline commands
 	Exports    []string              `yaml:"exports,omitempty"`   // app names to export via distrobox-export
+	Lock       bool                  `yaml:"lock,omitempty"`      // exclude from --update (no distrobox upgrade)
 	Depends    []map[string][]string `yaml:"depends,omitempty"`   // host-level deps (e.g. services: [docker])
 	SourceFile string                `yaml:"-" json:"-"`          // relative path to source YAML, set by LoadAll
 }
@@ -747,6 +753,7 @@ type FlatpakRemoteEntry struct {
 type FlatpakAppEntry struct {
 	AppID      string                `yaml:"app"`
 	Remote     string                `yaml:"remote,omitempty"` // defaults to "flathub"
+	Lock       bool                  `yaml:"lock,omitempty"`   // exclude from --update
 	Depends    []map[string][]string `yaml:"depends,omitempty"`
 	SourceFile string                `yaml:"-" json:"-"` // relative path to source YAML, set by LoadAll
 }

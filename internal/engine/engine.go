@@ -332,7 +332,7 @@ func resourceNamePair(resource, name string) string {
 // a clean line. Returns true if sudo is needed (so the caller can start a keepalive).
 func (e *Engine) preSudo(ctx context.Context, nodes []*PlanNode) bool {
 	for _, n := range nodes {
-		if n.NeedsSudo && (n.Action == ActionAdd || n.Action == ActionUpdate || n.Action == ActionRemove) {
+		if n.NeedsSudo && (n.Action == ActionAdd || n.Action == ActionUpdate || n.Action == ActionRemove || n.Action == ActionUpgrade) {
 			fmt.Fprintln(os.Stdout)
 			e.exec.Run(ctx, executor.Options{}, "sudo", "-v") //nolint:errcheck
 			return true
@@ -404,7 +404,7 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 				hasFailed = true
 			}
 
-		case ActionAdd, ActionUpdate, ActionRemove:
+		case ActionAdd, ActionUpdate, ActionRemove, ActionUpgrade:
 			// Runtime dep check: all deps that are going to execute must have succeeded.
 			if !e.depsSucceeded(node, succeeded) {
 				node.Action = ActionSkip

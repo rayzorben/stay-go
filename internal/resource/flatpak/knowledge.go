@@ -19,8 +19,11 @@ func (r *Resource) GatherKnowledge(ctx context.Context) ([]engine.KnowledgeEntry
 
 	var entries []engine.KnowledgeEntry
 
-	// List installed remotes (user + system).
-	result, err := r.exec.Run(ctx, executor.Options{}, "flatpak", "remotes", "--columns=name")
+	// List installed remotes. Scoped to --user: every command this resource
+	// runs is user-scoped, and a system-level remote cannot serve a
+	// "flatpak install --user" (it fails with "No remote refs found"), so a
+	// system remote with the same name must not satisfy the plan.
+	result, err := r.exec.Run(ctx, executor.Options{}, "flatpak", "remotes", "--user", "--columns=name")
 	if err != nil {
 		if result.ExitCode == 127 {
 			// flatpak exists in PATH (e.g. a distrobox host-exec shim) but is not
@@ -33,8 +36,10 @@ func (r *Resource) GatherKnowledge(ctx context.Context) ([]engine.KnowledgeEntry
 		entries = append(entries, engine.KnowledgeEntry{ID: remoteNodeID(name)})
 	}
 
-	// List installed applications (user + system).
-	result, err = r.exec.Run(ctx, executor.Options{}, "flatpak", "list", "--app", "--columns=application")
+	// List installed applications, also user-scoped: a system-wide install
+	// can be neither updated nor removed with the --user commands this
+	// resource issues, so it is not treated as satisfying the config.
+	result, err = r.exec.Run(ctx, executor.Options{}, "flatpak", "list", "--app", "--user", "--columns=application")
 	if err != nil {
 		return nil, fmt.Errorf("listing flatpak apps: %w\nstderr: %s", err, result.Stderr)
 	}

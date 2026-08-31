@@ -26,6 +26,14 @@ type PackageManager struct {
 	// install. Managers that embed sync in install (pacman -Sy, paru -Sy)
 	// leave this nil.
 	UpdateCmd []string
+	// UpgradeCmd performs a full system upgrade (--update mode). Managers whose
+	// upgrade needs a fresh index first rely on UpdateCmd running before it.
+	UpgradeCmd []string
+	// IgnoreFmt, when non-empty, is the per-package exclusion flag appended to
+	// UpgradeCmd for entries with lock: true (e.g. "--ignore=%s", "--exclude=%s").
+	// Empty means the manager has no per-run exclusion; locked packages may
+	// still be upgraded and the plan says so.
+	IgnoreFmt string
 	// ParseOutput optionally post-processes the raw list output.
 	// nil means treat each non-empty line as a package name.
 	ParseOutput func(raw string) []string
@@ -53,6 +61,8 @@ var managers = []PackageManager{
 		ListCmd:    []string{"pacman", "-Qq"},
 		InstallCmd: []string{"paru", "-Sy", "--noconfirm", "--needed"},
 		RemoveCmd:  []string{"paru", "-Rs", "--noconfirm"},
+		UpgradeCmd: []string{"paru", "-Syu", "--noconfirm"},
+		IgnoreFmt:  "--ignore=%s",
 	},
 	{
 		Name:       "yay",
@@ -61,6 +71,8 @@ var managers = []PackageManager{
 		ListCmd:    []string{"pacman", "-Qq"},
 		InstallCmd: []string{"yay", "-Sy", "--noconfirm", "--needed"},
 		RemoveCmd:  []string{"yay", "-Rs", "--noconfirm"},
+		UpgradeCmd: []string{"yay", "-Syu", "--noconfirm"},
+		IgnoreFmt:  "--ignore=%s",
 	},
 	{
 		Name:       "pacman",
@@ -69,6 +81,8 @@ var managers = []PackageManager{
 		ListCmd:    []string{"pacman", "-Qq"},
 		InstallCmd: []string{"pacman", "-Sy", "--noconfirm", "--needed"},
 		RemoveCmd:  []string{"pacman", "-Rs", "--noconfirm"},
+		UpgradeCmd: []string{"pacman", "-Syu", "--noconfirm"},
+		IgnoreFmt:  "--ignore=%s",
 	},
 	// ── Debian / Ubuntu ──────────────────────────────────────────────────────
 	{
@@ -79,6 +93,7 @@ var managers = []PackageManager{
 		UpdateCmd:  []string{"apt-get", "update", "-y"},
 		InstallCmd: []string{"apt-get", "install", "-y"},
 		RemoveCmd:  []string{"apt-get", "remove", "-y", "--autoremove"},
+		UpgradeCmd: []string{"apt-get", "upgrade", "-y"},
 		Env:        []string{"DEBIAN_FRONTEND=noninteractive"},
 	},
 	// ── Fedora / RHEL ─────────────────────────────────────────────────────────
@@ -89,6 +104,8 @@ var managers = []PackageManager{
 		ListCmd:    []string{"rpm", "-qa", "--queryformat", "%{NAME}\\n"},
 		InstallCmd: []string{"dnf", "install", "-y"},
 		RemoveCmd:  []string{"dnf", "remove", "-y"},
+		UpgradeCmd: []string{"dnf", "upgrade", "-y"},
+		IgnoreFmt:  "--exclude=%s",
 	},
 	// ── CentOS / older RHEL ───────────────────────────────────────────────────
 	{
@@ -98,6 +115,8 @@ var managers = []PackageManager{
 		ListCmd:    []string{"rpm", "-qa", "--queryformat", "%{NAME}\\n"},
 		InstallCmd: []string{"yum", "install", "-y"},
 		RemoveCmd:  []string{"yum", "remove", "-y"},
+		UpgradeCmd: []string{"yum", "update", "-y"},
+		IgnoreFmt:  "--exclude=%s",
 	},
 	// ── openSUSE ──────────────────────────────────────────────────────────────
 	{
@@ -108,6 +127,7 @@ var managers = []PackageManager{
 		UpdateCmd:  []string{"zypper", "refresh"},
 		InstallCmd: []string{"zypper", "install", "-y", "--no-confirm"},
 		RemoveCmd:  []string{"zypper", "remove", "-y"},
+		UpgradeCmd: []string{"zypper", "update", "-y"},
 	},
 	// ── Alpine Linux ──────────────────────────────────────────────────────────
 	{
@@ -118,6 +138,7 @@ var managers = []PackageManager{
 		UpdateCmd:  []string{"apk", "update"},
 		InstallCmd: []string{"apk", "add"},
 		RemoveCmd:  []string{"apk", "del"},
+		UpgradeCmd: []string{"apk", "upgrade"},
 	},
 	// ── Void Linux ────────────────────────────────────────────────────────────
 	{
@@ -128,6 +149,7 @@ var managers = []PackageManager{
 		UpdateCmd:   []string{"xbps-install", "-S"},
 		InstallCmd:  []string{"xbps-install", "-y"},
 		RemoveCmd:   []string{"xbps-remove", "-y"},
+		UpgradeCmd:  []string{"xbps-install", "-yu"},
 		ParseOutput: parseXBPS,
 	},
 }

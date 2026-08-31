@@ -56,6 +56,7 @@ packages:
   - 7zip
   - spotify-launcher
   - claude-desktop
+  - flatpak
 
 services:
   - service: gcr-ssh-agent.socket
@@ -256,6 +257,7 @@ distrobox:
       - code
       - cursor
       - StorageExplorer
+      - claude
     packages:
       - visual-studio-code-bin
       - cursor-bin
@@ -267,6 +269,7 @@ distrobox:
       - nodejs
       - npm
       - opentofu
+      - claude-desktop
     commands:
       - name: Install Databricks CLI
         command: |
@@ -294,11 +297,6 @@ distrobox:
     home: ${home.motion}
     home_sudo: true
     extends: ${config_root}/users/distrobox-base.yaml
-    packages:
-      - visual-studio-code-bin
-      - dotnet-sdk
-    exports:
-      - code
 
   - name: stoneridge
     image: docker.io/cachyos/cachyos-v3:latest

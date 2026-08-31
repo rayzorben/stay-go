@@ -10,7 +10,6 @@ wayfreeze \
       --actions-on-escape "save-to-clipboard,exit" \
       --copy-command wl-copy \
       --annotation-size-factor 0.8 \
-      --fullscreen \
       --filename "$img"
 
     rm -f "$img"

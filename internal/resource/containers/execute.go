@@ -45,6 +45,9 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 	opts := executor.Options{Sudo: entry.Sudo}
 
 	switch node.Action {
+	case engine.ActionUpgrade:
+		return r.executeUpgrade(ctx, entry)
+
 	case engine.ActionAdd:
 		// Remove any stopped container with the same name before (re)creating.
 		if containerExists(ctx, r.exec, rt, name) {

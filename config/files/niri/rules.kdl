@@ -1,9 +1,7 @@
-workspace "personal"
-workspace "sed-1"
-workspace "sed-2"
-workspace "sed-3"
-workspace "vis"
-workspace "ssi"
+// Workspaces are named dynamically by wintelligent (P-BRW, S-DEV, M-OFF, …),
+// so there are no static `workspace` declarations here. Declaring one would
+// pin it permanently and stop it being reclaimed when it empties.
+// See ~/Dropbox/PC/development/wintelligent.
 
 window-rule {
     match title="RemoteApp Marker Window"
@@ -33,16 +31,17 @@ window-rule {
     open-floating true
 }
 
+// Workspace routing for these now lives in wintelligent's config.toml — the
+// org markers below (- SED -, -sedanos$, - VIS -, - SSI -) are matched there.
+// Only the sizing behaviour is kept here.
 window-rule {
     match app-id="firefox$"
-    open-on-workspace "personal"
     open-maximized true
 }
 
 window-rule {
     match title="- SED -"
     match app-id="-sedanos$"
-    open-on-workspace "sed-1"
     open-maximized true
 }
 
@@ -50,13 +49,11 @@ window-rule {
     match title="- VIS -"
     match title="- OCS -"
     match app-id="-visionet$"
-    open-on-workspace "vis"
     open-maximized true
 }
 
 window-rule {
     match title="- SSI -"
-    open-on-workspace "ssi"
     open-maximized true
 }
 
