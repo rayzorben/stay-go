@@ -122,6 +122,17 @@ ensure_storage_ready() {
     vgchange -ay "$VG_NAME" >/dev/null 2>&1 || true
 }
 
+# mkfs.fat on the ESP happens in STEP 1. If that step was skipped (resuming on a
+# stale checkpoint from an earlier install) or its mkfs raced udev after
+# partprobe, the partition exists with no filesystem and mounting it fails with
+# "wrong fs type, bad superblock". Format it if it is not already vfat.
+ensure_esp_ready() {
+    if ! blkid -s TYPE -o value "$PART_EFI" 2>/dev/null | grep -qx vfat; then
+        echo "[*] ESP $PART_EFI has no vfat filesystem; formatting..."
+        mkfs.fat -F 32 "$PART_EFI"
+    fi
+}
+
 ensure_mounts_ready() {
     ensure_storage_ready
     if ! mountpoint -q /mnt; then
@@ -132,6 +143,7 @@ ensure_mounts_ready() {
         mount -o noatime,compress=zstd,discard=async,subvol=@var_log "/dev/$VG_NAME/lv_root" /mnt/var/log
         mount -o noatime,compress=zstd,discard=async,subvol=@pkg "/dev/$VG_NAME/lv_root" /mnt/var/cache/pacman/pkg
         mount -o noatime "/dev/$VG_NAME/lv_home" /mnt/home
+        ensure_esp_ready
         mount "$PART_EFI" /mnt/boot
     fi
 }
@@ -150,6 +162,17 @@ if [[ "$CURRENT_STEP" -lt 1 ]]; then
     sgdisk -n 1:0:+"$EFI_SIZE" -t 1:ef00 -c 1:"EFI-SP" "$DISK"
     sgdisk -n 2:0:0            -t 2:8309 -c 2:"cryptsystem" "$DISK"
     partprobe "$DISK"
+    # Wait for udev to create the partition nodes; mkfs.fat immediately after
+    # partprobe can otherwise race and act on a device that is not there yet.
+    udevadm settle
+    for _ in $(seq 1 10); do
+        [[ -b "$PART_EFI" && -b "$PART_LUKS" ]] && break
+        sleep 1
+    done
+    if [[ ! -b "$PART_EFI" || ! -b "$PART_LUKS" ]]; then
+        echo "[!] Partition nodes did not appear after partprobe: $PART_EFI / $PART_LUKS"
+        exit 1
+    fi
 
     echo "[*] Formatting EFI System Partition..."
     mkfs.fat -F 32 "$PART_EFI"
