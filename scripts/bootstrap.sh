@@ -225,6 +225,34 @@ if [[ "$CURRENT_STEP" -lt 4 ]]; then
     echo "[*] STEP 4: Bootstrapping packages (including Plymouth, inetutils, and Go)..."
     ensure_mounts_ready
 
+    # Seed configuration BEFORE pacstrap. Installing the kernel and
+    # limine-mkinitcpio-hook in the same transaction fires the mkinitcpio hook
+    # immediately, and it reads these files as it builds. Without them the build
+    # emits "/etc/vconsole.conf not found" and "Kernel command line is not
+    # available", and limine-entry-tool writes boot entries with no cmdline.
+    # STEP 5 rebuilds the initramfs anyway, but seeding avoids generating a
+    # broken limine.conf that STEP 5 then has to correct.
+    LUKS_UUID=$(blkid -s UUID -o value "$PART_LUKS")
+    mkdir -p /mnt/etc /mnt/etc/default
+
+    cat > /mnt/etc/vconsole.conf <<VCONSOLE
+KEYMAP=us
+FONT=ter-116n
+VCONSOLE
+
+    cat > /mnt/etc/default/limine <<LIMINE_DEFAULT
+ESP_PATH="/boot"
+KERNEL_CMDLINE[default]+="cryptdevice=UUID=$LUKS_UUID:$LUKS_NAME root=/dev/$VG_NAME/lv_root rootflags=subvol=@ rw quiet splash rd.udev.log_priority=3 vt.global_cursor_default=0 zswap.enabled=0"
+BOOT_ORDER="*, *lts, *fallback, Snapshots"
+MKINITCPIO_FALLBACK=linux-cachyos-lts
+ENABLE_LIMINE_FALLBACK=yes
+LIMINE_DEFAULT
+
+    # snap-pac's pacman hook fires at the end of the pacstrap transaction, before
+    # snapper has any config and with no dbus, logging "fatal library error,
+    # lookup self". Nothing to snapshot yet, so keep it out of this transaction.
+    printf '[root]\nsnapshot = False\n' > /mnt/etc/snap-pac.ini
+
     pacstrap -K /mnt \
         base base-devel cachyos-keyring cachyos-mirrorlist cachyos-v3-mirrorlist \
         linux-cachyos linux-cachyos-headers \
@@ -282,9 +310,6 @@ cat <<HOSTS > /etc/hosts
 127.0.1.1   $HOSTNAME.localdomain $HOSTNAME
 HOSTS
 
-# systemd-resolved is enabled below; point resolv.conf at its stub resolver.
-ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
-
 # Initramfs configuration with Plymouth for Graphical Decryption
 sed -i 's/^HOOKS=.*/HOOKS=(base udev plymouth autodetect modconf kms keyboard keymap consolefont block plymouth-encrypt lvm2 filesystems fsck)/' /etc/mkinitcpio.conf
 
@@ -293,7 +318,7 @@ sed -i 's/^HOOKS=.*/HOOKS=(base udev plymouth autodetect modconf kms keyboard ke
 sed -i 's/^MODULES=.*/MODULES=(virtio virtio_blk virtio_pci virtio_net virtio_scsi)/' /etc/mkinitcpio.conf
 
 # Plymouth Graphical Theme setup. Deliberately without -R: the initramfs is
-# built once later, after /etc/default/limine exists.
+# rebuilt once below, after the HOOKS/MODULES edits above are all in place.
 if plymouth-set-default-theme -l | grep -q "cachyos"; then
     plymouth-set-default-theme cachyos || true
 elif plymouth-set-default-theme -l | grep -q "breeze"; then
@@ -326,6 +351,15 @@ sed -i 's/^TIMELINE_LIMIT_MONTHLY=.*/TIMELINE_LIMIT_MONTHLY="0"/' /etc/snapper/c
 sed -i 's/^TIMELINE_LIMIT_YEARLY=.*/TIMELINE_LIMIT_YEARLY="0"/' /etc/snapper/configs/root
 sed -i 's/^ALLOW_GROUPS=.*/ALLOW_GROUPS="wheel"/' /etc/snapper/configs/root
 
+# Re-enable snap-pac. It was disabled before pacstrap so its hook would not fire
+# against a system with no snapper config; snapper is configured now, so restore
+# the packaged default (pacman kept our file and left its own as .pacnew).
+if [[ -f /etc/snap-pac.ini.pacnew ]]; then
+    mv /etc/snap-pac.ini.pacnew /etc/snap-pac.ini
+else
+    rm -f /etc/snap-pac.ini
+fi
+
 # Limine Bootloader Setup
 #
 # /boot/limine.conf is NOT hand-written here. limine-mkinitcpio-hook owns its
@@ -345,8 +379,9 @@ MKINITCPIO_FALLBACK=linux-cachyos-lts
 ENABLE_LIMINE_FALLBACK=yes
 LIMINE_DEFAULT
 
-# Build initramfs only now: /etc/default/limine must exist first so that
-# limine-entry-tool can generate boot entries as part of this build.
+# Rebuild the initramfs with the HOOKS/MODULES set above. pacstrap already built
+# one against the seeded config, but with the stock HOOKS line (no plymouth,
+# plymouth-encrypt or lvm2) -- that image cannot open the LUKS volume.
 mkinitcpio -P
 
 limine-install
@@ -413,6 +448,12 @@ systemctl enable paccache.timer
 systemctl enable systemd-timesyncd.service
 
 CHROOT_SCRIPT
+
+    # systemd-resolved is enabled above; point resolv.conf at its stub resolver.
+    # Done OUTSIDE the chroot: arch-chroot bind-mounts the host's resolv.conf over
+    # the target's to give the chroot DNS, and a bind-mount target cannot be
+    # replaced with a symlink ("Device or resource busy").
+    ln -sf /run/systemd/resolve/stub-resolv.conf /mnt/etc/resolv.conf
 
     set_checkpoint 5
 fi
