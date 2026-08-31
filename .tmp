@@ -1,6 +1,0 @@
-[prod-man]
-host = https://adb-7405608649113470.10.azuredatabricks.net
-auth_type = azure-client-secret
-azure_tenant_id = 10895ab2-90e3-4778-a157-855870900fb7
-azure_client_id = ca971a3e-1cc2-41b4-a76c-db4bf4c9494d
-azure_client_secret = ${secrets.databricks_client_secret}
