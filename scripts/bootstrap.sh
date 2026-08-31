@@ -225,6 +225,41 @@ if [[ "$CURRENT_STEP" -lt 4 ]]; then
     echo "[*] STEP 4: Bootstrapping packages (including Plymouth, inetutils, and Go)..."
     ensure_mounts_ready
 
+    # Mirror preparation. pacstrap downloads using the LIVE ISO's mirrorlist and
+    # pacman.conf, not the target's, so ranking has to happen here -- installing
+    # cachyos-rate-mirrors into /mnt below is too late to help this transaction.
+    #
+    # Three distinct failures show up without this:
+    #   404                      -> stale mirror whose db lists files it no longer has
+    #   HTTP/2 PROTOCOL_ERROR    -> CDN resetting multiplexed streams under parallel
+    #                               downloads
+    #   "does not support byte ranges, cannot resume"
+    #                            -> pacman retrying a truncated .part left by the above
+    echo "[*] Ranking mirrors..."
+    if command -v cachyos-rate-mirrors >/dev/null 2>&1; then
+        cachyos-rate-mirrors || echo "[!] Mirror ranking failed; continuing with defaults."
+    elif command -v rate-mirrors >/dev/null 2>&1; then
+        rate-mirrors --allow-root --save /etc/pacman.d/cachyos-mirrorlist cachyos \
+            || echo "[!] Mirror ranking failed; continuing with defaults."
+    else
+        echo "[!] No rate-mirrors on the ISO; using shipped mirrorlist."
+    fi
+
+    # Serialise downloads. The stream resets above are provoked by pacman opening
+    # several HTTP/2 streams at once against the same CDN host; one connection at a
+    # time trades throughput for a transaction that actually completes.
+    sed -i 's/^[[:space:]]*ParallelDownloads.*/ParallelDownloads = 1/' /etc/pacman.conf
+    grep -q '^ParallelDownloads' /etc/pacman.conf || echo 'ParallelDownloads = 1' >> /etc/pacman.conf
+
+    # Drop partially-downloaded packages. A truncated .part from a reset connection
+    # is what triggers the unresumable byte-range errors on the next attempt.
+    rm -f /var/cache/pacman/pkg/*.part
+    rm -f /mnt/var/cache/pacman/pkg/*.part 2>/dev/null || true
+
+    # Refresh databases against the newly ranked mirrors so a stale db cannot ask
+    # for a package version that no mirror actually carries.
+    pacman -Syy --noconfirm || echo "[!] Database refresh failed; continuing."
+
     # Seed configuration BEFORE pacstrap. Installing the kernel and
     # limine-mkinitcpio-hook in the same transaction fires the mkinitcpio hook
     # immediately, and it reads these files as it builds. Without them the build
@@ -253,22 +288,41 @@ LIMINE_DEFAULT
     # lookup self". Nothing to snapshot yet, so keep it out of this transaction.
     printf '[root]\nsnapshot = False\n' > /mnt/etc/snap-pac.ini
 
-    pacstrap -K /mnt \
-        base base-devel cachyos-keyring cachyos-mirrorlist cachyos-v3-mirrorlist \
-        linux-cachyos linux-cachyos-headers \
-        linux-cachyos-lts linux-cachyos-lts-headers \
-        linux-firmware $UCODE_PKG \
-        lvm2 cryptsetup btrfs-progs xfsprogs systemd \
-        limine limine-mkinitcpio-hook limine-snapper-sync plymouth plymouth-kcm \
-        snapper snap-pac btrfs-assistant \
-        cachyos-settings cachyos-hooks cachyos-rate-mirrors cachyos-fish-config \
-        ananicy-cpp cachyos-ananicy-rules scx-scheds \
-        zram-generator irqbalance \
-        networkmanager sudo git nano curl which bash-completion go inetutils \
-        fish terminus-font \
-        man-db man-pages pacman-contrib openssh rsync wget unzip htop \
-        usbutils pciutils \
-        qemu-guest-agent
+    # Retry the whole transaction. pacstrap is idempotent -- already-downloaded
+    # packages are reused from the cache -- so a retry resumes rather than restarts,
+    # and a mirror that reset last time is usually fine on the next pass.
+    PACSTRAP_OK=0
+    for attempt in 1 2 3; do
+        echo "[*] pacstrap attempt $attempt of 3..."
+        if pacstrap -K /mnt \
+            base base-devel cachyos-keyring cachyos-mirrorlist cachyos-v3-mirrorlist \
+            linux-cachyos linux-cachyos-headers \
+            linux-cachyos-lts linux-cachyos-lts-headers \
+            linux-firmware $UCODE_PKG \
+            lvm2 cryptsetup btrfs-progs xfsprogs systemd \
+            limine limine-mkinitcpio-hook limine-snapper-sync plymouth plymouth-kcm \
+            snapper snap-pac btrfs-assistant \
+            cachyos-settings cachyos-hooks cachyos-rate-mirrors cachyos-fish-config \
+            ananicy-cpp cachyos-ananicy-rules scx-scheds \
+            zram-generator irqbalance \
+            networkmanager sudo git nano curl which bash-completion go inetutils \
+            fish terminus-font \
+            man-db man-pages pacman-contrib openssh rsync wget unzip htop \
+            usbutils pciutils \
+            qemu-guest-agent
+        then
+            PACSTRAP_OK=1
+            break
+        fi
+        echo "[!] pacstrap attempt $attempt failed; clearing partials and retrying..."
+        rm -f /var/cache/pacman/pkg/*.part /mnt/var/cache/pacman/pkg/*.part 2>/dev/null || true
+        sleep 5
+    done
+
+    if [[ "$PACSTRAP_OK" -ne 1 ]]; then
+        echo "[!] pacstrap failed after 3 attempts. Check network/mirrors and re-run to resume."
+        exit 1
+    fi
 
     echo "[*] Generating fstab..."
     genfstab -U /mnt > /mnt/etc/fstab
@@ -311,7 +365,17 @@ cat <<HOSTS > /etc/hosts
 HOSTS
 
 # Initramfs configuration with Plymouth for Graphical Decryption
-sed -i 's/^HOOKS=.*/HOOKS=(base udev plymouth autodetect modconf kms keyboard keymap consolefont block plymouth-encrypt lvm2 filesystems fsck)/' /etc/mkinitcpio.conf
+# udev-based hook stack. NOT the systemd stack: 'encrypt' + 'lvm2' handle
+# LUKS-on-LVM directly and honour the cryptdevice= cmdline set in
+# /etc/default/limine. (sd-encrypt would need rd.luks.uuid= instead, and LVM
+# activation via systemd generators.)
+#
+# There is deliberately no 'plymouth-encrypt' here: that hook was removed from
+# the plymouth package and no longer exists, which fails the build outright with
+# "Hook 'plymouth-encrypt' cannot be found" -- and a failed build means NO
+# initramfs, so the system cannot unlock LUKS or boot at all. Plain 'encrypt'
+# after 'plymouth' gives the same graphical passphrase prompt.
+sed -i 's/^HOOKS=.*/HOOKS=(base udev plymouth autodetect modconf kms keyboard keymap consolefont block encrypt lvm2 filesystems fsck)/' /etc/mkinitcpio.conf
 
 # Pin the virtio drivers: 'autodetect' probes the *running* installer kernel, so
 # a guest whose root lives on virtio can otherwise end up without them.
@@ -382,7 +446,30 @@ LIMINE_DEFAULT
 # Rebuild the initramfs with the HOOKS/MODULES set above. pacstrap already built
 # one against the seeded config, but with the stock HOOKS line (no plymouth,
 # plymouth-encrypt or lvm2) -- that image cannot open the LUKS volume.
+# Verify every hook in HOOKS exists before building. A missing hook does not stop
+# mkinitcpio -- it warns, skips the kernel, and exits leaving no initramfs, which
+# is only discovered at first boot as a LUKS/root failure.
+for hook in \$(sed -n 's/^HOOKS=(\(.*\))/\1/p' /etc/mkinitcpio.conf); do
+    if [[ ! -e "/usr/lib/initcpio/install/\$hook" ]]; then
+        echo "[!] mkinitcpio hook '\$hook' does not exist on this system."
+        exit 1
+    fi
+done
+
 mkinitcpio -P
+
+# mkinitcpio exits 0 even when individual kernels fail ("ERROR: mkinitcpio failed
+# for kernel X, skipping"), so confirm an image actually landed for each kernel.
+# limine-mkinitcpio-hook installs them under /boot/<machine-id>/<pkgbase>/.
+for kdir in /usr/lib/modules/*/; do
+    [[ -e "\$kdir/pkgbase" ]] || continue
+    pkgbase=\$(cat "\$kdir/pkgbase")
+    if ! find /boot -type f -path "*/\$pkgbase/initramfs*" | grep -q .; then
+        echo "[!] No initramfs was generated for \$pkgbase. Refusing to continue"
+        echo "    -- the system would not be able to unlock LUKS or boot."
+        exit 1
+    fi
+done
 
 limine-install
 
@@ -403,8 +490,14 @@ echo "$USERNAME:$USER_PASS" | chpasswd
 # Default shell: fish for both root and $USERNAME. Set via chsh (not just
 # useradd -s) so a resumed run fixes an account that already exists with bash.
 grep -qx '/usr/bin/fish' /etc/shells || echo '/usr/bin/fish' >> /etc/shells
-chsh -s /usr/bin/fish root
-chsh -s /usr/bin/fish "$USERNAME"
+# "chsh: Shell not changed" (and a non-zero exit under set -e) is the expected
+# result when the shell already matches -- $USERNAME was just created with
+# 'useradd -s /usr/bin/fish'. Only call chsh when there is an actual change.
+for u in root "$USERNAME"; do
+    if [[ "\$(getent passwd "\$u" | cut -d: -f7)" != /usr/bin/fish ]]; then
+        chsh -s /usr/bin/fish "\$u"
+    fi
+done
 # sudo refuses any sudoers drop-in that is group/world-writable, so set 0440
 # explicitly rather than inheriting root's umask, and validate before trusting it.
 echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/10-wheel
