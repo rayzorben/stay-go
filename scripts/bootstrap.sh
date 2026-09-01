@@ -505,19 +505,60 @@ chmod 0440 /etc/sudoers.d/10-wheel
 visudo -c -f /etc/sudoers.d/10-wheel
 
 # AUR helper: stay-go's package-manager table prefers paru, and the host configs
-# reference AUR packages, so the first stay-go run needs it present. Try the
-# binary package from the CachyOS repos first; fall back to building from the
-# AUR as $USERNAME (makepkg refuses to run as root).
-if ! pacman -S --noconfirm --needed paru 2>/dev/null; then
+# reference AUR packages, so the first stay-go run needs it present.
+#
+# Prefer the repo package, which is built against this system's pacman. The
+# fallback deliberately builds 'paru' from source rather than installing
+# 'paru-bin': paru links against libalpm, whose soname tracks the pacman major
+# version (pacman 6 -> libalpm.so.15, pacman 7 -> libalpm.so.16). A prebuilt
+# paru-bin from the AUR carries whatever soname was current when it was
+# uploaded, so on a pacman-7 CachyOS install it dies on every invocation with
+#   paru: error while loading shared libraries: libalpm.so.15
+# and exit status 127 -- which surfaces later as every single stay-go package
+# node failing. Building from source links against the libalpm actually here.
+install_paru_from_aur() {
     install -d -o "$USERNAME" -g "$USERNAME" /tmp/paru-build
     su - "$USERNAME" -s /bin/bash -c '
         set -euo pipefail
-        git clone https://aur.archlinux.org/paru-bin.git /tmp/paru-build/paru-bin
-        cd /tmp/paru-build/paru-bin
+        rm -rf /tmp/paru-build/paru
+        git clone https://aur.archlinux.org/paru.git /tmp/paru-build/paru
+        cd /tmp/paru-build/paru
         makepkg -s --noconfirm
     '
-    pacman -U --noconfirm /tmp/paru-build/paru-bin/*.pkg.tar.zst
+    # makepkg can exit 0 having produced nothing useful; do not let a glob that
+    # matched no files reach pacman -U as a literal argument.
+    shopt -s nullglob
+    local pkgs=(/tmp/paru-build/paru/*.pkg.tar.*)
+    shopt -u nullglob
+    if [[ \${#pkgs[@]} -eq 0 ]]; then
+        echo "[!] paru build produced no package."
+        return 1
+    fi
+    pacman -U --noconfirm "\${pkgs[@]}"
     rm -rf /tmp/paru-build
+}
+
+# 'rust' is needed to build paru and conflicts with the 'rustup' toolchain if
+# that is ever installed; --needed keeps this a no-op when it is already there.
+if pacman -S --noconfirm --needed paru; then
+    echo "[*] Installed paru from the repositories."
+else
+    echo "[!] Repo paru unavailable; building paru from the AUR..."
+    pacman -S --noconfirm --needed rust
+    install_paru_from_aur
+fi
+
+# Verify paru actually runs. A paru linked against the wrong libalpm exits 127
+# on every call, and the failure is otherwise invisible until the first stay-go
+# run reports every package as failed.
+if ! su - "$USERNAME" -s /bin/bash -c 'paru --version' >/dev/null 2>&1; then
+    echo "[!] paru is installed but cannot execute (likely a libalpm soname"
+    echo "    mismatch against pacman \$(pacman -Q pacman | awk '{print \$2}'))."
+    echo "    Rebuilding paru from source against the installed pacman..."
+    pacman -Rdd --noconfirm paru paru-bin 2>/dev/null || true
+    pacman -S --noconfirm --needed rust
+    install_paru_from_aur
+    su - "$USERNAME" -s /bin/bash -c 'paru --version' >/dev/null
 fi
 
 # Clone stay-go repository into /home/rayben/stay
