@@ -628,6 +628,18 @@ install_paru_from_aur() {
     rm -rf /tmp/paru-build
 }
 
+# Trust the packagers' keys. 'pacstrap -K' created this keyring EMPTY; the
+# archlinux/cachyos keyring packages shipped their keys under
+# /usr/share/pacman/keyrings, but nothing in the pacstrap transaction reliably
+# lsign-trusts them in the image's keyring, and untrusted keys fail every
+# cachyos database and package with 'signature from "CachyOS ..." is unknown
+# trust'. The CachyOS installer avoids this by copying the live ISO's populated
+# keyring into the target (initialize_pacman job); populating from the shipped
+# keyrings here is equivalent without depending on host state. --init is
+# idempotent and covers resumed runs whose keyring was never created.
+pacman-key --init
+pacman-key --populate
+
 # paru is normally already in the image: pacstrap installed it from [cachyos]
 # in STEP 4 (the same way the CachyOS installer ships it). --needed makes this
 # a no-op then; it is a real install only when resuming from a checkpoint laid
