@@ -429,7 +429,16 @@ if [[ "$CURRENT_STEP" -lt 5 ]]; then
     
     LUKS_UUID=$(blkid -s UUID -o value "$PART_LUKS")
 
-    arch-chroot /mnt /bin/bash <<CHROOT_SCRIPT
+    # The chroot payload is written to a FILE and executed from it -- never fed
+    # to bash on stdin. When it was a stdin heredoc, any command inside that
+    # read stdin consumed the remainder of the script text as its input
+    # (pacman's ":: Import PGP key? [Y/n]" prompt demonstrably did this), bash
+    # then hit EOF and exited 0, and the install "completed" with everything
+    # after the reading command -- service enables, user hardening -- silently
+    # skipped. A file-backed script cannot lose commands that way, and stdin is
+    # pinned to /dev/null so anything that still tries to prompt fails loudly
+    # instead of misbehaving.
+    cat > /mnt/root/stay-bootstrap-chroot.sh <<CHROOT_SCRIPT
 set -euo pipefail
 
 ln -sf "/usr/share/zoneinfo/$TIMEZONE" /etc/localtime
@@ -510,7 +519,12 @@ sed -i 's/^ALLOW_GROUPS=.*/ALLOW_GROUPS="wheel"/' /etc/snapper/configs/root
 # the packaged default (pacman kept our file and left its own as .pacnew).
 if [[ -f /etc/snap-pac.ini.pacnew ]]; then
     mv /etc/snap-pac.ini.pacnew /etc/snap-pac.ini
-else
+elif grep -qs '^snapshot = False' /etc/snap-pac.ini; then
+    # Still the seeded pre-pacstrap disable file (no .pacnew was left to
+    # restore); drop it so snap-pac falls back to its packaged defaults. A
+    # resumed run whose earlier pass already restored the packaged config must
+    # NOT hit this branch -- an unconditional rm here used to delete that
+    # restored config on every resume.
     rm -f /etc/snap-pac.ini
 fi
 
@@ -575,6 +589,10 @@ echo "root:$USER_PASS" | chpasswd
 if ! id "$USERNAME" >/dev/null 2>&1; then
     useradd -m -G wheel,storage,power,network -s /usr/bin/fish "$USERNAME"
 fi
+# Membership enforced via usermod as well (not only useradd -G) so a resumed
+# run repairs an account that already exists without these groups -- a user
+# missing 'wheel' is exactly "$USERNAME is not in the sudoers file".
+usermod -aG wheel,storage,power,network "$USERNAME"
 echo "$USERNAME:$USER_PASS" | chpasswd
 
 # Default shell: fish for both root and $USERNAME. Set via chsh (not just
@@ -687,6 +705,26 @@ systemctl enable paccache.timer
 systemctl enable systemd-timesyncd.service
 
 CHROOT_SCRIPT
+
+    arch-chroot /mnt /bin/bash /root/stay-bootstrap-chroot.sh < /dev/null
+    rm -f /mnt/root/stay-bootstrap-chroot.sh
+
+    # Verify the chroot payload ran to completion by checking effects of its
+    # TAIL. A truncated payload is precisely the failure that once shipped an
+    # image with no networking and no sudo while still printing "complete".
+    if [[ ! -e /mnt/etc/systemd/system/multi-user.target.wants/NetworkManager.service ]]; then
+        echo "[!] NetworkManager was not enabled in the target -- the chroot"
+        echo "    configuration did not run to completion. Refusing to continue."
+        exit 1
+    fi
+    if ! grep '^wheel:' /mnt/etc/group | grep -qw "$USERNAME"; then
+        echo "[!] $USERNAME is not in the target's wheel group. Refusing to continue."
+        exit 1
+    fi
+    if [[ ! -f /mnt/etc/sudoers.d/10-wheel ]]; then
+        echo "[!] /etc/sudoers.d/10-wheel is missing in the target. Refusing to continue."
+        exit 1
+    fi
 
     # systemd-resolved is enabled above; point resolv.conf at its stub resolver.
     # Done OUTSIDE the chroot: arch-chroot bind-mounts the host's resolv.conf over
