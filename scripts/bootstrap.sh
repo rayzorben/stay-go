@@ -148,6 +148,68 @@ ensure_mounts_ready() {
     fi
 }
 
+# Enable the optimized cachyos repos the CPU supports (znver4 > v4 > v3),
+# inserted above [cachyos] in the given pacman.conf. Inlined from the CachyOS
+# installer (cachyos-calamares src/scripts/detect-architecture), with a guard
+# so a resumed STEP 4 does not insert the sections a second time.
+enable_cachyos_arch_repos() {
+    local conf="$1"
+    grep -q '^\[cachyos\]' "$conf" || return 0
+    grep -qE '^\[cachyos-(znver4|v4|v3)\]' "$conf" && return 0
+
+    local check_v3 check_v4
+    check_v3="$(/lib/ld-linux-x86-64.so.2 --help 2>/dev/null | grep 'x86-64-v3 (' | awk '{print $1}' || true)"
+    check_v4="$(/lib/ld-linux-x86-64.so.2 --help 2>/dev/null | grep 'x86-64-v4 (' | awk '{print $1}' || true)"
+
+    # Zen 4/5 detection, matching the installer's is_zen45(): AVX-512 present
+    # and family 0x19 model 0x10-0x1f/0x60-0xaf, or family 0x1a.
+    local family model zen45=0
+    family="$(grep -Po '^cpu family\s+:\s+\K[0-9]+' /proc/cpuinfo | head -n1 || true)"
+    model="$(grep -Po '^model\s+:\s+\K[0-9]+' /proc/cpuinfo | head -n1 || true)"
+    if grep -qw avx512f /proc/cpuinfo && [[ -n "$family" && -n "$model" ]]; then
+        if (( family == 25 )) && { (( model >= 16 && model <= 31 )) || (( model >= 96 && model <= 175 )); }; then
+            zen45=1
+        elif (( family == 26 )); then
+            zen45=1
+        fi
+    fi
+
+    if (( zen45 )); then
+        echo "[*] CPU supports znver4; enabling cachyos znver4 repos."
+        sed -i '/^\[cachyos\]$/i \
+[cachyos-znver4] \
+Include = /etc/pacman.d/cachyos-v4-mirrorlist \
+\
+[cachyos-core-znver4] \
+Include = /etc/pacman.d/cachyos-v4-mirrorlist \
+\
+[cachyos-extra-znver4] \
+Include = /etc/pacman.d/cachyos-v4-mirrorlist\n' "$conf"
+    elif [[ "$check_v4" == "x86-64-v4" ]]; then
+        echo "[*] CPU supports x86-64-v4; enabling cachyos v4 repos."
+        sed -i '/^\[cachyos\]$/i \
+[cachyos-v4] \
+Include = /etc/pacman.d/cachyos-v4-mirrorlist \
+\
+[cachyos-extra-v4] \
+Include = /etc/pacman.d/cachyos-v4-mirrorlist \
+\
+[cachyos-core-v4] \
+Include = /etc/pacman.d/cachyos-v4-mirrorlist\n' "$conf"
+    elif [[ "$check_v3" == "x86-64-v3" ]]; then
+        echo "[*] CPU supports x86-64-v3; enabling cachyos v3 repos."
+        sed -i '/^\[cachyos\]$/i \
+[cachyos-v3] \
+Include = /etc/pacman.d/cachyos-v3-mirrorlist \
+\
+[cachyos-extra-v3] \
+Include = /etc/pacman.d/cachyos-v3-mirrorlist \
+\
+[cachyos-core-v3] \
+Include = /etc/pacman.d/cachyos-v3-mirrorlist\n' "$conf"
+    fi
+}
+
 # ==========================================
 # 1. PARTITIONING & LUKS INITIALIZATION
 # ==========================================
@@ -270,6 +332,23 @@ if [[ "$CURRENT_STEP" -lt 4 ]]; then
     LUKS_UUID=$(blkid -s UUID -o value "$PART_LUKS")
     mkdir -p /mnt/etc /mnt/etc/default
 
+    # Target pacman.conf, seeded BEFORE pacstrap -- exactly how the CachyOS
+    # installer does it (calamares shellprocess-before-online.conf):
+    #     cp /etc/pacman-more.conf ${ROOT}/etc/pacman.conf
+    #     detect-architecture ${ROOT}/etc/pacman.conf
+    # pacman.conf is a backup= file of the pacman package, so a file already in
+    # place when pacstrap installs pacman is kept (the package's copy lands as
+    # pacman.conf.pacnew). Without this seed the deployed system gets the stock
+    # Arch pacman.conf with NO [cachyos] repos: the chroot's 'pacman -S paru'
+    # fails with "target not found", paru never reaches the image, and the
+    # installed linux-cachyos kernels have no repo to update from.
+    if [[ -f /etc/pacman-more.conf ]]; then
+        cp /etc/pacman-more.conf /mnt/etc/pacman.conf
+    else
+        cp /etc/pacman.conf /mnt/etc/pacman.conf
+    fi
+    enable_cachyos_arch_repos /mnt/etc/pacman.conf
+
     cat > /mnt/etc/vconsole.conf <<VCONSOLE
 KEYMAP=us
 FONT=ter-116n
@@ -296,6 +375,7 @@ LIMINE_DEFAULT
         echo "[*] pacstrap attempt $attempt of 3..."
         if pacstrap -K /mnt \
             base base-devel cachyos-keyring cachyos-mirrorlist cachyos-v3-mirrorlist \
+            cachyos-v4-mirrorlist paru \
             linux-cachyos linux-cachyos-headers \
             linux-cachyos-lts linux-cachyos-lts-headers \
             linux-firmware $UCODE_PKG \
@@ -323,6 +403,16 @@ LIMINE_DEFAULT
         echo "[!] pacstrap failed after 3 attempts. Check network/mirrors and re-run to resume."
         exit 1
     fi
+
+    # Ranked cachyos mirrorlists into the target, as the installer's
+    # initialize_pacman job does. pacstrap only copies /etc/pacman.d/mirrorlist;
+    # the cachyos-*-mirrorlist packages ship an unranked default, so carry over
+    # the lists ranked above where they exist.
+    for ml in cachyos-mirrorlist cachyos-v3-mirrorlist cachyos-v4-mirrorlist; do
+        if [[ -f "/etc/pacman.d/$ml" ]]; then
+            cp "/etc/pacman.d/$ml" "/mnt/etc/pacman.d/$ml"
+        fi
+    done
 
     echo "[*] Generating fstab..."
     genfstab -U /mnt > /mnt/etc/fstab
@@ -538,10 +628,13 @@ install_paru_from_aur() {
     rm -rf /tmp/paru-build
 }
 
-# 'rust' is needed to build paru and conflicts with the 'rustup' toolchain if
-# that is ever installed; --needed keeps this a no-op when it is already there.
-if pacman -S --noconfirm --needed paru; then
-    echo "[*] Installed paru from the repositories."
+# paru is normally already in the image: pacstrap installed it from [cachyos]
+# in STEP 4 (the same way the CachyOS installer ships it). --needed makes this
+# a no-op then; it is a real install only when resuming from a checkpoint laid
+# down by an older bootstrap. -Sy first: the seeded pacman.conf may name repo
+# sections (v3/v4/znver4) whose databases pacstrap never synced into this root.
+if pacman -Sy --noconfirm --needed paru; then
+    echo "[*] paru present (cachyos repo package)."
 else
     echo "[!] Repo paru unavailable; building paru from the AUR..."
     pacman -S --noconfirm --needed rust
