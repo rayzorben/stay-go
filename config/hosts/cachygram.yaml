@@ -4,7 +4,7 @@ packages:
   - gparted
   - winboat
   - wtype
-  - power-profiles-daemon # powerprofilesctl for auto profile switching
+  - power-profiles-daemon # supplies the balanced EPP baseline lg-gram-thermals pins
   - package: keyd
     services: [keyd]
 
@@ -86,57 +86,60 @@ files:
     target: /etc/environment.d/95-electron-wayland.conf
     sudo: true
 
-  # ── Automatic power-profile switching (performance on AC, balanced on battery) ──
-  - source: ${config_root}/files/power-profile-auto.sh
-    target: /usr/local/bin/power-profile-auto.sh
+  # ── LG Gram (16T90SP) thermal envelope ──
+  # The chassis sheds roughly 15-18 W over one heatpipe and a single blower.
+  # Stock firmware asks for 35 W PL1 / 43 W PL2 with the passive trip at 100 C,
+  # so the die reaches PROCHOT within seconds of any multi-threaded load and then
+  # oscillates down into 400-800 MHz valleys. lg-gram-thermals forces the fan
+  # active, drops turbo, holds EPP at balance_performance and caps PL1/PL2 at
+  # 16 W/22 W; the script header carries the measurement behind each number.
+  #
+  # It also pins power-profiles-daemon to `balanced`. The AC/battery switcher
+  # that used to live here set `performance` on AC, and PPD implements that
+  # profile on this box by writing EPP=performance to every core — precisely the
+  # setting that pinned the package at PROCHOT. See retire-power-profile-auto.
+  - source: ${config_root}/files/lg-gram-thermals.sh
+    target: /usr/local/bin/lg-gram-thermals
     sudo: true
     mode: "+x"
 
+  # A tmpfiles.d drop-in cannot own these knobs: systemd-tmpfiles-setup races the
+  # udev autoload of lg_laptop and intel_rapl_msr (on this box all three landed
+  # inside the same second), so fan_mode and the RAPL constraints may not exist
+  # yet when it runs. A oneshot ordered after the modules — and re-run from the
+  # sleep targets, since the EC resets fan_mode on every resume — is deterministic.
+  #
+  # It is wanted by graphical.target, not multi-user.target: PPD 0.30 orders
+  # itself After=multi-user.target, and a target is implicitly After= what it
+  # wants, so multi-user.target -> lg-gram-thermals -> PPD -> multi-user.target
+  # was a cycle, and systemd broke it on every boot by deleting this job. The
+  # envelope only ever landed after a resume. See reenable-lg-gram-thermals.
   - content: |
       [Unit]
-      Description=Apply power profile based on AC state (managed by stay-go)
+      Description=LG gram thermal envelope: fan, turbo, EPP and RAPL limits (managed by stay-go)
       Wants=power-profiles-daemon.service
-      After=power-profiles-daemon.service
+      After=systemd-modules-load.service power-profiles-daemon.service
+      After=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
 
       [Service]
       Type=oneshot
-      ExecStart=/usr/local/bin/power-profile-auto.sh
+      ExecStart=/usr/local/bin/lg-gram-thermals
 
       [Install]
-      WantedBy=multi-user.target
-    target: /etc/systemd/system/power-profile-auto.service
+      WantedBy=graphical.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+    target: /etc/systemd/system/lg-gram-thermals.service
     sudo: true
     depends:
-      - files: [/usr/local/bin/power-profile-auto.sh]
-
-  # Fire the oneshot on every AC plug/unplug. We start the systemd unit rather
-  # than exec the script directly so it runs in a proper service context (udev's
-  # RUN+= sandbox has a short timeout that can kill powerprofilesctl).
-  - content: |
-      SUBSYSTEM=="power_supply", KERNEL=="AC0", ACTION=="change", RUN+="/usr/bin/systemctl --no-block restart power-profile-auto.service"
-    target: /etc/udev/rules.d/99-power-profile.rules
-    sudo: true
-    depends:
-      - files: [/etc/systemd/system/power-profile-auto.service]
+      - files: [/usr/local/bin/lg-gram-thermals]
 
 services:
-  # Enable + start the oneshot: sets the profile now and re-applies it at boot.
-  - service: power-profile-auto
+  # Enable + start the oneshot: applies the envelope now, at boot and on resume.
+  - service: lg-gram-thermals
     depends:
       - packages: [power-profiles-daemon]
-      - files: [/etc/systemd/system/power-profile-auto.service]
+      - files: [/etc/systemd/system/lg-gram-thermals.service]
 
 commands:
-  # Load the new udev rule so hotplug switching works without a reboot, and fire
-  # a synthetic AC event so the profile is applied to the current state now.
-  # (For commands, depends.files is a skip-if-absent condition, not an ordering
-  # edge — the file is written first anyway because files run before commands.)
-  - name: reload-udev-power-profile
-    command: udevadm control --reload-rules && udevadm trigger --subsystem-match=power_supply --action=change
-    sudo: true
-    depends:
-      - packages: [power-profiles-daemon]
-
   # ── Kernel boot parameter: i915.enable_psr=0 ──
   # Panel Self Refresh on this i915 panel drops atomic display updates. The flag
   # has to be merged into the existing KERNEL_CMDLINE[default] line in
@@ -172,3 +175,56 @@ commands:
     sudo: true
     depends:
       - files: [/etc/modprobe.d/blacklist-ucsi.conf]
+
+  # Retire the AC/battery power-profile switcher. PPD's `performance` profile is
+  # implemented on this box purely as EPP=performance on every core, so setting
+  # it on AC undid the thermal envelope on every boot and every plug event;
+  # the machine now sits on `balanced` full time, which is the same EPP the
+  # envelope wants. stay-go disables the unit through the services resource, but
+  # a file REMOVE only drops state — the unit, script and udev rule are cleared
+  # here. No-op once they are gone.
+  - name: retire-power-profile-auto
+    command: |
+      systemctl disable --now power-profile-auto.service 2>/dev/null || true
+      rm -f /etc/systemd/system/power-profile-auto.service \
+            /usr/local/bin/power-profile-auto.sh \
+            /etc/udev/rules.d/99-power-profile.rules
+      systemctl daemon-reload
+      udevadm control --reload-rules
+    sudo: true
+
+  # Retire the hand-run tmpfiles.d + resume-unit version of the thermal fix.
+  # systemd-tmpfiles-setup races the udev autoload of lg_laptop and
+  # intel_rapl_msr, so its fan_mode and RAPL writes could land on paths that do
+  # not exist yet; lg-gram-thermals.service waits for the nodes instead and
+  # covers boot and resume from one unit. No-op once they are gone.
+  - name: retire-manual-lg-gram-tmpfiles
+    command: |
+      systemctl disable --now lg-gram-resume.service 2>/dev/null || true
+      rm -f /etc/systemd/system/lg-gram-resume.service \
+            /etc/tmpfiles.d/lg-gram-thermals.conf
+      systemctl daemon-reload
+    sudo: true
+
+  # Move lg-gram-thermals.service from multi-user.target.wants to
+  # graphical.target.wants. Its unit file changed WantedBy= to break a boot
+  # ordering cycle with power-profiles-daemon, but a services UPDATE is only
+  # daemon-reload + restart; `enable` never removes the old symlink, so the
+  # cycle would survive. Then start it, so the envelope lands without a reboot.
+  #
+  # Must not depend on running after the unit file is written: a commands
+  # `files:` dep is only a skip condition, and the unit file (which depends on
+  # the script) sorts behind every command — `systemctl reenable` here once read
+  # the old [Install] and recreated the multi-user link. So the link is moved by
+  # hand. On a fresh machine the unit is absent at this point and the services
+  # ADD (`enable --now`, reading the new [Install]) does the linking instead.
+  # Idempotent.
+  - name: reenable-lg-gram-thermals
+    command: |
+      rm -f /etc/systemd/system/multi-user.target.wants/lg-gram-thermals.service
+      systemctl daemon-reload
+      if [ -e /etc/systemd/system/lg-gram-thermals.service ]; then
+        systemctl add-wants graphical.target lg-gram-thermals.service
+        systemctl start lg-gram-thermals.service
+      fi
+    sudo: true
