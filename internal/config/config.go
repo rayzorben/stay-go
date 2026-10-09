@@ -46,6 +46,10 @@ type CommandEntry struct {
 	Command    string                `yaml:"command"`
 	Rollback   string                `yaml:"rollback,omitempty"`
 	Sudo       bool                  `yaml:"sudo,omitempty"`
+	// Check is a read-only probe run (unprivileged) at plan time on every run,
+	// even --dry-run. A non-zero exit re-runs an already-applied command, for
+	// commands that converge drifting system state. Excluded from the hash.
+	Check      string                `yaml:"check,omitempty"`
 	Depends    []map[string][]string `yaml:"depends,omitempty"`
 	SourceFile string                `yaml:"-" json:"-"` // relative path to source YAML, set by LoadAll
 }
@@ -443,6 +447,7 @@ type ContainerEntry struct {
 	StopTimeout string                `yaml:"stop_grace_period,omitempty"` // duration ("30s") or seconds ("30")
 	Pull        string                `yaml:"pull,omitempty"` // always, missing (default), never
 	Lock        bool                  `yaml:"lock,omitempty"` // exclude from --update (no image pull / recreate)
+	Disabled    bool                  `yaml:"disabled,omitempty"` // dropped after layer merge → tracked container is REMOVEd
 	Sudo        bool                  `yaml:"sudo,omitempty"`
 	Depends     []map[string][]string `yaml:"depends,omitempty"`
 	SourceFile  string                `yaml:"-" json:"-"` // relative path to source YAML, set by LoadAll

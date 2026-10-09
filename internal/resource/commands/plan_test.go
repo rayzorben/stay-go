@@ -6,6 +6,7 @@ import (
 
 	"github.com/rayzorben/stay-go/internal/config"
 	"github.com/rayzorben/stay-go/internal/engine"
+	"github.com/rayzorben/stay-go/internal/executor"
 	"github.com/rayzorben/stay-go/internal/state"
 )
 
@@ -45,5 +46,37 @@ func TestBuildPlan_removedCommandExecutesRollback(t *testing.T) {
 	}
 	if nodes[0].AbsentFromSystem {
 		t.Fatal("REMOVE node must not be AbsentFromSystem — engine would skip the rollback")
+	}
+}
+
+// An applied command (hash in state) with a check: exit 0 keeps it TRACK, a
+// non-zero exit plans an UPDATE that carries the check's first output line.
+func TestBuildPlan_checkDrivesRerun(t *testing.T) {
+	for _, tc := range []struct {
+		check string
+		want  engine.ActionType
+		desc  string
+	}{
+		{"true", engine.ActionTrack, ""},
+		{"printf 'a\\nb\\nc\\n'; exit 1", engine.ActionUpdate, "check failed, re-run: a (+2 more)"},
+	} {
+		entry := config.CommandEntry{Name: "c", Command: "echo hi", Check: tc.check}
+		r := New(&config.Config{Commands: config.CommandList{entry}}, &executor.Executor{})
+
+		// Seed state with the hash BuildPlan computes, so the command is applied.
+		st := &state.State{Nodes: make(map[string]state.NodeEntry)}
+		first, err := r.BuildPlan(context.Background(), map[string]bool{"commands/c": true}, st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		st.Set("commands/c", first[0].ConfigHash, first[0].SourceFile, nil)
+
+		nodes, err := r.BuildPlan(context.Background(), map[string]bool{"commands/c": true}, st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if nodes[0].Action != tc.want || nodes[0].Description != tc.desc {
+			t.Errorf("check %q: got %s %q, want %s %q", tc.check, nodes[0].Action, nodes[0].Description, tc.want, tc.desc)
+		}
 	}
 }

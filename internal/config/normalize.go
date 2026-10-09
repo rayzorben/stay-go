@@ -6,11 +6,26 @@ import (
 
 // NormalizeExpandedForms turns shorthand config into the canonical shapes the
 // rest of stay-go expects: package-embedded services become top-level service
-// entries with an implicit depends on that package.
+// entries with an implicit depends on that package, and entries marked
+// disabled: true are dropped.
 // Distrobox package services are intentionally left intact so that writeBoxConfig
 // can expand them into the in-box guest config.
 func NormalizeExpandedForms(cfg *Config) {
+	dropDisabled(cfg)
 	expandPackageEmbeddedServices(cfg)
+}
+
+// dropDisabled removes entries marked disabled: true. It runs after layers are
+// merged, so a higher layer can disable an entry a lower layer defines. The
+// entry is then absent from the config, so a tracked one is planned as REMOVE.
+func dropDisabled(cfg *Config) {
+	kept := cfg.Containers[:0]
+	for _, c := range cfg.Containers {
+		if !c.Disabled {
+			kept = append(kept, c)
+		}
+	}
+	cfg.Containers = kept
 }
 
 func expandPackageEmbeddedServices(cfg *Config) {

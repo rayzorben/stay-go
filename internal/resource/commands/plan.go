@@ -2,11 +2,13 @@ package commands
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 
 	"github.com/rayzorben/stay-go/internal/config"
 	"github.com/rayzorben/stay-go/internal/engine"
+	"github.com/rayzorben/stay-go/internal/executor"
 	"github.com/rayzorben/stay-go/internal/state"
 )
 
@@ -15,12 +17,16 @@ import (
 // Hash: SHA-256 of (name + sudo + command + rollback).
 // Any change to the inline command or rollback triggers UPDATE (re-run).
 //
+// Check: when set, it runs here for an already-applied command (TRACK/LEVEL);
+// a non-zero exit plans an UPDATE so the command re-runs. It is not hashed —
+// it probes the system, it is not part of the desired config.
+//
 // File conditions: checked at plan time.
 //   - "!/path" → skip if path already exists
 //   - "/path"  → skip if path does not exist
 //
 // Implements engine.Planner.
-func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *state.State) ([]*engine.PlanNode, error) {
+func (r *Resource) BuildPlan(ctx context.Context, knowledge map[string]bool, st *state.State) ([]*engine.PlanNode, error) {
 	configSet := make(map[string]bool, len(r.cfg.Commands))
 	var nodes []*engine.PlanNode
 
@@ -50,12 +56,22 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 
 		action, levelDesc := engine.CheckLevelChange(id, level, action, st)
 
+		checkDesc := ""
+		if action == engine.ActionTrack || action == engine.ActionLevel {
+			if drift, ok := r.runCheck(ctx, entry); !ok {
+				action, levelDesc, checkDesc = engine.ActionUpdate, "", drift
+			}
+		}
+
 		// Evaluate file and folder conditions. Any failing condition skips the node.
 		skipReason := commandPlanSkipReason(entry)
 
 		desc := describeCommandChange(action)
 		if levelDesc != "" {
 			desc = levelDesc
+		}
+		if checkDesc != "" {
+			desc = checkDesc
 		}
 		if skipReason != "" {
 			action = engine.ActionSkip
@@ -88,6 +104,29 @@ func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *s
 	// skip Execute on removal and the stored rollback would never run.
 	nodes = append(nodes, engine.StateRemovals("commands", configSet, nil, st)...)
 	return nodes, nil
+}
+
+// runCheck runs entry.Check and reports whether the system is converged
+// (exit 0). When it is not, drift describes the plan change: the first line
+// the check printed, plus how many more it printed.
+func (r *Resource) runCheck(ctx context.Context, entry *config.CommandEntry) (drift string, ok bool) {
+	if strings.TrimSpace(entry.Check) == "" || r.exec == nil {
+		return "", true
+	}
+	result, err := r.exec.Run(ctx, executor.Options{}, "bash", "-c", entry.Check)
+	if err == nil {
+		return "", true
+	}
+	drift = "check failed, re-run"
+	if result != nil {
+		if lines := strings.Split(strings.TrimSpace(result.Stdout), "\n"); lines[0] != "" {
+			drift += ": " + lines[0]
+			if len(lines) > 1 {
+				drift += fmt.Sprintf(" (+%d more)", len(lines)-1)
+			}
+		}
+	}
+	return drift, false
 }
 
 // checkFileConditions evaluates all files: deps and returns a skip reason

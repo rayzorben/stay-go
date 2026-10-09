@@ -7,13 +7,31 @@ packages:
   - power-profiles-daemon # supplies the balanced EPP baseline lg-gram-thermals pins
   - package: keyd
     services: [keyd]
+  # LG Gram keyboard backlight (see the files block further down).
+  - acpi_call-dkms
+  - linux-cachyos-headers # acpi_call-dkms builds against the running kernel
+  - python-evdev # solaar and lutris need it (it once served a keyboard daemon)
 
 files:
   - source: ${config_root}/files/necessary-verbs.sh
     target: /usr/local/sbin/necessary-verbs.sh
     sudo: true
     mode: "+x"
-    
+
+  # Patches the DMS bar to hide the "Scratch" workspace. Copied rather than
+  # symlinked: the pacman hook runs it as root mid-transaction, so it must not
+  # depend on the repo (a Dropbox path) being readable at that moment.
+  - source: ${config_root}/files/dms/hide-scratch-workspace.sh
+    target: /usr/local/bin/dms-hide-scratch-workspace.sh
+    sudo: true
+    mode: "+x"
+
+  - source: ${config_root}/files/dms/dms-hide-scratch.hook
+    target: /etc/pacman.d/hooks/dms-hide-scratch.hook
+    sudo: true
+    depends:
+      - files: [/usr/local/bin/dms-hide-scratch-workspace.sh]
+
   - content: |
       [Unit]
       Description=Run internal speaker fix script at startup
@@ -87,12 +105,12 @@ files:
     sudo: true
 
   # ── LG Gram (16T90SP) thermal envelope ──
-  # The chassis sheds roughly 15-18 W over one heatpipe and a single blower.
+  # The chassis sheds roughly 18 W over one heatpipe and a single blower.
   # Stock firmware asks for 35 W PL1 / 43 W PL2 with the passive trip at 100 C,
   # so the die reaches PROCHOT within seconds of any multi-threaded load and then
   # oscillates down into 400-800 MHz valleys. lg-gram-thermals forces the fan
-  # active, drops turbo, holds EPP at balance_performance and caps PL1/PL2 at
-  # 16 W/22 W; the script header carries the measurement behind each number.
+  # active, caps turbo at ~2.4 GHz, holds EPP at balance_performance and caps
+  # PL1/PL2 at 18 W/24 W; the script header carries the measurement behind each number.
   #
   # It also pins power-profiles-daemon to `balanced`. The AC/battery switcher
   # that used to live here set `performance` on AC, and PPD implements that
@@ -132,6 +150,67 @@ files:
     depends:
       - files: [/usr/local/bin/lg-gram-thermals]
 
+  # ── LG Gram (16T90SP) keyboard backlight ──
+  # The lg_laptop driver's /sys/class/leds/kbd_backlight changes nothing on this
+  # firmware. The ACPI WMI method \_SB.MAP1.WMAB (sub-function 0x0400) drives the
+  # backlight through the Embedded Controller, reached through acpi_call. The
+  # firmware's names for its values are wrong for this keyboard: 0xA4 ("off")
+  # and 0xA2 ("low") light it at full brightness and 0x80 ("high") turns it
+  # off. The EC keeps whatever it was sent, with no idle timeout, so a oneshot
+  # at boot and resume is enough (files/lg-kbd-backlight.sh has the details).
+  # huawei_wmi matches one of LG's WMI GUIDs (59142400-...) and grabs the hotkey
+  # device, so it is kept out.
+  - content: |
+      # Managed by stay-go. huawei_wmi binds LG's WMI GUID and fights lg_laptop.
+      blacklist huawei_wmi
+    target: /etc/modprobe.d/blacklist-huawei.conf
+    sudo: true
+
+  - content: |
+      # Managed by stay-go. Exposes /proc/acpi/call for lg-kbd-backlight.
+      acpi_call
+    target: /etc/modules-load.d/acpi_call.conf
+    sudo: true
+    depends:
+      - packages: [acpi_call-dkms]
+
+  # /proc ignores udev, so the non-root write bit comes from tmpfiles. tmpfiles
+  # setup is not ordered after modules-load, so the service below re-applies
+  # the mode once the module is guaranteed to be there.
+  - content: |
+      # Managed by stay-go. Lets the niri bind toggle the backlight without root.
+      z /proc/acpi/call 0666 root root -
+    target: /etc/tmpfiles.d/acpi-call.conf
+    sudo: true
+
+  - source: ${config_root}/files/lg-kbd-backlight.sh
+    target: /usr/local/bin/lg-kbd-backlight
+    sudo: true
+    mode: "+x"
+
+  # Switch the backlight on at boot and again after every resume, in case the
+  # EC comes back from sleep with it off. Not RemainAfterExit, so the sleep
+  # targets can start it again (same pattern as lg-gram-thermals).
+  - content: |
+      [Unit]
+      Description=LG Gram keyboard backlight on at boot and resume (managed by stay-go)
+      After=systemd-modules-load.service
+      After=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+
+      [Service]
+      Type=oneshot
+      ExecStartPre=-/usr/bin/modprobe acpi_call
+      ExecStartPre=/usr/bin/chmod 0666 /proc/acpi/call
+      ExecStart=/usr/local/bin/lg-kbd-backlight on
+
+      [Install]
+      WantedBy=multi-user.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+    target: /etc/systemd/system/lg-kbd-backlight.service
+    sudo: true
+    depends:
+      - files: [/usr/local/bin/lg-kbd-backlight]
+      - packages: [acpi_call-dkms]
+
 services:
   # Enable + start the oneshot: applies the envelope now, at boot and on resume.
   - service: lg-gram-thermals
@@ -139,7 +218,29 @@ services:
       - packages: [power-profiles-daemon]
       - files: [/etc/systemd/system/lg-gram-thermals.service]
 
+  # Enable + start the oneshot: lights the keyboard now, at boot and on resume.
+  - service: lg-kbd-backlight
+    depends:
+      - packages: [acpi_call-dkms]
+      - files: [/etc/systemd/system/lg-kbd-backlight.service]
+
 commands:
+  # ── Hide the "Scratch" workspace from the DMS bar ──
+  # Scratch is the parking slot for the hidden dropdown terminal (see
+  # files/niri/rules.kdl). DMS has no setting to hide a workspace: its niri
+  # filter only knows "active" or "holds a window", and Scratch always holds the
+  # parked terminal, so it always renders. The patch inserts one line into a
+  # package-owned .qml; the pacman hook above re-applies it after a dms-shell
+  # upgrade reverts it. Safe to run repeatedly — it no-ops when already applied.
+  # Takes effect on `systemctl --user restart dms` (DMS_DISABLE_HOT_RELOAD=1).
+  # No depends: `packages: [dms-shell]` never resolves (dms-shell isn't managed
+  # here), and `files:` is a plan-time skip condition, so it would skip on the
+  # first run — before the very file it names has been written. Files execute
+  # ahead of commands anyway, and the script no-ops if the .qml isn't there.
+  - name: dms-hide-scratch-workspace
+    command: /usr/local/bin/dms-hide-scratch-workspace.sh
+    sudo: true
+
   # ── Kernel boot parameter: i915.enable_psr=0 ──
   # Panel Self Refresh on this i915 panel drops atomic display updates. The flag
   # has to be merged into the existing KERNEL_CMDLINE[default] line in
@@ -175,6 +276,38 @@ commands:
     sudo: true
     depends:
       - files: [/etc/modprobe.d/blacklist-ucsi.conf]
+
+  # The blacklist only stops future autoloads; drop huawei_wmi now if this boot
+  # already loaded it, so lg_laptop owns the WMI device without a reboot.
+  - name: unload-huawei-wmi
+    command: '! grep -q "^huawei_wmi " /proc/modules || modprobe -r huawei_wmi'
+    sudo: true
+    depends:
+      - files: [/etc/modprobe.d/blacklist-huawei.conf]
+
+  # Retire what the hand-run setup scripts left behind (a state-file based
+  # lg-kbd-keepalive service, its shell/python daemons and lg-kbd-toggle);
+  # lg-kbd-backlight.service replaces the lot. No-op once they are gone.
+  # The deploy script was re-run by hand on 2026-09-06, a day after this first
+  # ran, and both daemons ran side by side until the reset-failed line was
+  # added, which changes the hash so stay-go runs this again.
+  - name: retire-manual-lg-kbd-keepalive
+    command: |
+      systemctl disable --now lg-kbd-keepalive.service 2>/dev/null || true
+      rm -f /etc/systemd/system/lg-kbd-keepalive.service \
+            /usr/local/bin/lg-kbd-keepalive /usr/local/bin/lg-kbd-daemon.py \
+            /usr/local/bin/lg-kbd-toggle /tmp/.lg_kbd_state
+      systemctl daemon-reload
+      systemctl reset-failed lg-kbd-keepalive.service 2>/dev/null || true
+    sudo: true
+
+  # Retire lg-kbd-daemon. It re-sent the "high" value every 3s to beat an EC
+  # idle timeout that does not exist, and on this keyboard "high" is dark, so it
+  # held the backlight off. A file REMOVE only drops state, so the binary and
+  # its level file are deleted here. No-op once they are gone.
+  - name: retire-lg-kbd-daemon
+    command: rm -f /usr/local/bin/lg-kbd-daemon /run/lg-kbd-backlight
+    sudo: true
 
   # Retire the AC/battery power-profile switcher. PPD's `performance` profile is
   # implemented on this box purely as EPP=performance on every core, so setting

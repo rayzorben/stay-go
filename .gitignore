@@ -32,3 +32,7 @@ id_dsa
 .env.*.local
 secrets.yaml
 secrets.yml
+
+# Python bytecode from running managed scripts in place (e.g. files/lg-kbd-daemon.py)
+__pycache__/
+*.pyc

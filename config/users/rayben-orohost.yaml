@@ -61,6 +61,11 @@ files:
     symlink: true
     mode: "+x"
 
+  - source: ${config_root}/files/niri/verterm-dropdown-toggle.sh
+    target: ~/.config/niri/verterm-dropdown-toggle.sh
+    symlink: true
+    mode: "+x"
+
   - source: ${config_root}/files/niri/rules.kdl
     target: ~/.config/niri/rules.kdl
     symlink: true
@@ -132,6 +137,12 @@ files:
     depends:
       - packages: [gron]
 
+  # Node, Electron libs, xvfb, neovim and the claude CLI for the code-server container
+  - source: ${config_root}/files/code-server/90-dev-tools.sh
+    target: /storage/apps/code-server-init/90-dev-tools.sh
+    mode: "0755"
+    sudo: true
+
 ghostty: !include "./commands/ghostty.yaml"
 
 commands:
@@ -176,6 +187,20 @@ commands:
       - services: [tailscaled.service]
       - packages: [tailscale]
 
+  # Build output is Dropbox-ignored on the laptop; ignore it here too so a
+  # build in the code-server container never syncs back. build/ is tracked in
+  # git but never synced, so restore it from git.
+  - name: mudengine dropbox ignores
+    command: |
+      cd /storage/dropbox/Dropbox/PC/development/mudengine
+      for d in node_modules out dist build .claude/worktrees; do
+        mkdir -p "$d"
+        setfattr -n user.com.dropbox.ignored -v 1 "$d"
+      done
+      git checkout -- build
+    depends:
+      - folders: [/storage/dropbox/Dropbox/PC/development/mudengine/.git]
+
 scripts:
   - script: ${config_root}/scripts/configure-zoxide.sh
     depends:
@@ -198,6 +223,13 @@ containers:
     volumes:
       - /storage/apps/code-server:/config
       - /storage/dropbox/Dropbox:/storage
+      # linuxserver runs these as root on every start; they must be root-owned
+      - /storage/apps/code-server-init:/custom-cont-init.d:ro
+    # Electron (mudengine smokes) needs more than docker's 64 MB /dev/shm
+    shm_size: 2gb
+    # mudengine's probes and check:live target orohost:2427 by name
+    extra_hosts:
+      - orohost:host-gateway
     environment:
       PUID: 1000
       PGID: 1000
@@ -209,6 +241,7 @@ containers:
       SUDO_PASSWORD: ${secrets.code.pass}
     depends:
       - services: [docker]
+      - files: [/storage/apps/code-server-init/90-dev-tools.sh]
 
 json:
   - file: ~/.config/DankMaterialShell/settings.json

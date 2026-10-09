@@ -3,7 +3,7 @@
 # (16T90SP-G, Core Ultra 7 155H). Run at boot and on resume by
 # lg-gram-thermals.service; see config/hosts/cachygram.yaml.
 #
-# This chassis puts a single blower over one heatpipe, good for roughly 15-18 W
+# This chassis puts a single blower over one heatpipe, good for roughly 18 W
 # sustained. Stock firmware asks for far more than that (PL1 35 W, PL2 43 W,
 # passive trip at 100-106 C), so the die reaches PROCHOT within seconds of any
 # multi-threaded load and then oscillates down into 400-800 MHz valleys — tens
@@ -16,16 +16,25 @@
 #                                       script exists to keep off the machine.
 #   fan_mode       1                    EC drives the blower actively instead of
 #                                       running its silent/passive curve.
-#   no_turbo       1                    Removes the Vcore overshoot that trips
-#                                       PROCHOT on single/dual P-core bursts.
+#   no_turbo       0                    Turbo stays on, but only up to
+#   max_perf_pct   50                   ~2.4 GHz (50% of the 4.8 GHz ceiling).
+#                                       Uncapped, background bursts drive single
+#                                       P-cores to 4 GHz and spike the package to
+#                                       100 C on an idle desktop; a 2.9 GHz cap
+#                                       ran hotter for no all-core gain.
 #   EPP            balance_performance  Lets unloaded cores drop into C6/C10
 #                                       rather than holding a high base clock.
-#   PL1            16 W                 Sustained draw matched to the heatpipe.
-#   PL2            22 W                 Burst ceiling that does not saturate the
+#   PL1            18 W                 Sustained draw matched to the heatpipe.
+#   PL2            24 W                 Burst ceiling that does not saturate the
 #                                       interface material before the fan ramps.
 #
-# Measured after: package 68-71 C (was 99-104 C), 9.6 W (was 15.5-19.5 W), zero
-# throttle events per 10 s window (was 1500-5700), P-cores steady 890-1300 MHz.
+# Measured with 22 busy threads for 150 s (package temp / sustained W / P-core
+# average / package throttle events):
+#   turbo off, 16/22 W        75 C   16 W   ~1050 MHz      0
+#   <=2.4 GHz, 18/24 W        85 C   18 W    1360 MHz      0   <- this file
+#   <=2.4 GHz, 20/28 W        90 C   20 W    1565 MHz    273   (28 W bursts)
+#   <=2.9 GHz, 24/32 W        99 C   24 W    1640 MHz   7314
+# Single-thread bursts reach 2.4 GHz instead of the 1.4 GHz base clock.
 #
 # The EC resets fan_mode to 0 across every ACPI sleep state, which is why the
 # unit is wanted by the sleep targets as well as by multi-user.target.
@@ -35,12 +44,14 @@
 # alone — it is a sub-millisecond ceiling the cooling never sees.
 set -uo pipefail
 
-PL1_UW=16000000              # long_term  constraint
-PL2_UW=22000000              # short_term constraint
+PL1_UW=18000000              # long_term  constraint
+PL2_UW=24000000              # short_term constraint
 EPP=balance_performance
+MAX_PERF_PCT=50              # of max turbo (4.8 GHz) -> ~2.4 GHz
 
 FAN_MODE=/sys/devices/platform/lg-laptop/fan_mode
 NO_TURBO=/sys/devices/system/cpu/intel_pstate/no_turbo
+MAX_PERF=/sys/devices/system/cpu/intel_pstate/max_perf_pct
 
 log() { printf 'lg-gram-thermals: %s\n' "$*"; }
 
@@ -84,7 +95,9 @@ if command -v powerprofilesctl > /dev/null 2>&1; then
 fi
 
 poke 1 "$FAN_MODE"
-poke 1 "$NO_TURBO"
+# Cap first so enabling turbo never briefly allows the full 4.8 GHz.
+poke "$MAX_PERF_PCT" "$MAX_PERF"
+poke 0 "$NO_TURBO"
 
 applied=0
 failed=0

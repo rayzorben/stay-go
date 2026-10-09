@@ -29,7 +29,7 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 		// shell metacharacters, exactly as you would any shell variable.
 		result, err := r.exec.Run(ctx, executor.Options{Sudo: entry.Sudo, AllowInteractive: true}, "bash", "-c", "set -e\n"+entry.Command)
 		if err != nil {
-			return fmt.Errorf("running command %q: %w\nstderr: %s", node.DisplayName, err, result.Stderr)
+			return fmt.Errorf("running command %q: %w%s", node.DisplayName, err, stderrNote(result))
 		}
 		st.Set(node.ID, node.ConfigHash, node.SourceFile, node.StateData)
 
@@ -53,11 +53,21 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 			rollback = config.RenderExternal(rollback, r.cfg)
 			result, err := r.exec.Run(ctx, executor.Options{Sudo: sudo}, "bash", "-c", "set -e\n"+rollback)
 			if err != nil {
-				return fmt.Errorf("rollback for command %q: %w\nstderr: %s", node.DisplayName, err, result.Stderr)
+				return fmt.Errorf("rollback for command %q: %w%s", node.DisplayName, err, stderrNote(result))
 			}
 		}
 		st.Delete(node.ID)
 	}
 
 	return nil
+}
+
+// stderrNote formats captured stderr for appending to an error. It is empty
+// when there is nothing to show — for example when the output was already
+// streamed to the terminal in interactive mode.
+func stderrNote(r *executor.Result) string {
+	if r == nil || strings.TrimSpace(r.Stderr) == "" {
+		return ""
+	}
+	return "\nstderr: " + r.Stderr
 }

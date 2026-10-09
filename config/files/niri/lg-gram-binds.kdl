@@ -1,0 +1,8 @@
+// LG Gram keyboard backlight (the hardware setup lives in hosts/cachygram.yaml).
+// lg_laptop reports the Fn backlight key as F16, and the firmware never changes
+// the level on its own (its WMI handler is a stub), so toggle it from here.
+// The keyboard has one brightness, so it is just on/off; lg-kbd-backlight.service
+// switches it back on at every boot and resume.
+binds {
+    F16 allow-when-locked=true { spawn "/usr/local/bin/lg-kbd-backlight" "toggle"; }
+}

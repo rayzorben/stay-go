@@ -77,6 +77,7 @@ packages:
   - xdg-desktop-portal-gnome
   - xdg-desktop-portal-gtk
   - gnome-keyring
+  - gcr-4 # gcr-ssh-agent: the ssh component gnome-keyring dropped
   - hyprpolkitagent
   - libsecret
   - gst-libav

@@ -59,6 +59,47 @@ files:
     mode: "0644"
     sudo: true
 
+  # Stable per-GPU device names for the two media servers.
+  #
+  # This box has two amdgpu cards: the discrete RX 9070 (Navi 48 / GFX12, PCI
+  # 03:00.0) and the 9950X3D's integrated Radeon (GFX1036, PCI 12:00.0). They
+  # are NOT interchangeable between Plex and Jellyfin, because the two apps
+  # ship completely different VAAPI stacks:
+  #
+  #   Plex     links its transcoder against a private musl libc
+  #            (/usr/lib/plexmediaserver/lib/ld-musl-x86_64.so.1) and can only
+  #            load the musl-built radeonsi driver Plex itself downloads. That
+  #            driver's chip table ends at GFX11, so the RX 9070 dies at init:
+  #              amdgpu: unknown (family_id, chip_external_rev): (152, 81)
+  #              libva: radeonsi_drv_video.so init failed
+  #              Failed to initialise VAAPI connection: 2
+  #            The transcoder exits, the client stalls and retries for ~2
+  #            minutes, then limps on via Direct Play. No distro or host Mesa
+  #            can be substituted in — the glibc/musl split makes it
+  #            unloadable. So Plex gets the iGPU, which its driver does know.
+  #
+  #   Jellyfin is ordinary glibc (Debian trixie) and bundles its own Mesa
+  #            25.0.7 under /usr/lib/jellyfin-ffmpeg/lib/dri, which recognises
+  #            gfx1201 and drives the RX 9070 at ~14x realtime including AV1
+  #            encode. So Jellyfin gets the dGPU.
+  #
+  # /dev/dri/renderD1NN numbering is *not* stable — on this host card0 is the
+  # iGPU while renderD128 is the dGPU, so the two minor pools are already
+  # inverted and probe order cannot be relied on across kernels. Getting these
+  # two swapped would silently break both servers. The by-path links
+  # (pci-0000:12:00.0-render) are stable but contain colons, which docker
+  # cannot parse in a `--device src:dst` spec. Hence this rule: match each card
+  # by PCI vendor:device and give it a colon-free, reboot-stable alias.
+  - content: |
+      # Managed by stay-go — see config/hosts/orohost.yaml
+      # AMD Granite Ridge iGPU (1002:13c0) → /dev/dri/plex-render
+      SUBSYSTEM=="drm", KERNEL=="renderD*", ATTRS{vendor}=="0x1002", ATTRS{device}=="0x13c0", SYMLINK+="dri/plex-render"
+      # AMD Navi 48 / RX 9070 dGPU (1002:7550) → /dev/dri/jellyfin-render
+      SUBSYSTEM=="drm", KERNEL=="renderD*", ATTRS{vendor}=="0x1002", ATTRS{device}=="0x7550", SYMLINK+="dri/jellyfin-render"
+    target: /etc/udev/rules.d/99-media-gpu.rules
+    mode: "0644"
+    sudo: true
+
 commands:
   # Persist the sftp server's host keys outside the container so client
   # known_hosts entries survive a recreate. These files must exist as *files*
@@ -77,18 +118,94 @@ commands:
     rollback: |
       rm -rf /storage/apps/sftp/ssh
 
-  # Scrypted's two bind-mount targets. Docker would create these itself, but as
-  # root:root 0755 wherever the daemon happens to run — creating them here keeps
-  # ownership explicit and, more importantly, makes the recordings directory
-  # exist on the pool before the container starts, so a typo in the path fails
-  # loudly here instead of silently recording into a fresh empty directory.
-  - name: scrypted storage
+  # udev applies /etc/udev/rules.d automatically at boot, so this only matters
+  # on the first apply after the rule lands (and after any edit to it): reload
+  # and re-trigger so /dev/dri/{plex,jellyfin}-render exist before the two
+  # media containers are created. Deliberately carries no files:/folders:
+  # condition — those are evaluated at *plan* time, before the rule file has
+  # been written, so a condition here would skip the command on a fresh build,
+  # and a SKIPped dep propagates as unmet and would drag both containers down
+  # with it. Both udevadm calls are idempotent; the command re-runs only when
+  # its own text changes.
+  - name: media gpu udev reload
     command: |
-      mkdir -p /storage/apps/scrypted/volume
-      mkdir -p /storage/security/scrypted
+      udevadm control --reload-rules
+      udevadm trigger --subsystem-match=drm --action=change
+      udevadm settle
     sudo: true
-    depends:
-      - folders: ["!/storage/security/scrypted"]
+    rollback: |
+      udevadm control --reload-rules
+      udevadm trigger --subsystem-match=drm --action=change
+
+  # ─── media acquisition stack ───────────────────────────────────────────────
+  #
+  # Directory scaffolding for prowlarr/sonarr/radarr/qbittorrent, and the one
+  # decision that makes this stack fast or slow: WHERE downloads land.
+  #
+  # Sonarr and Radarr import by hardlinking the finished download into the
+  # library — one inode, two names, zero bytes copied, and the torrent keeps
+  # seeding from the very same data. link(2) only works within a single
+  # filesystem, and on ZFS every dataset IS a separate filesystem. This pool
+  # carries storage/tv and storage/movies as sibling datasets, so the usual
+  # shared /storage/downloads would sit on a third one and every link would
+  # fail with EXDEV. Measured on this pool:
+  #
+  #   $ ln /storage/tv/f /storage/movies/f
+  #   ln: failed to create hard link: Invalid cross-device link
+  #
+  # The *arrs treat that failure as routine and silently fall back to a full
+  # copy, so nothing ever looks broken — you just pay a whole-season read+write
+  # through the USB-attached raidz1 on every import and hold two copies of
+  # everything for as long as it seeds.
+  #
+  # So the download directories live INSIDE each library dataset instead:
+  #   /storage/tv/.downloads      → dataset storage/tv      (st_dev 161)
+  #   /storage/movies/.downloads  → dataset storage/movies  (st_dev 157)
+  # Same filesystem as the library they feed, so links succeed. Dot-prefixed
+  # because Plex skips hidden directories natively; the .ignore marker is what
+  # makes Jellyfin skip them too.
+  #
+  # install -d rather than mkdir -p: it also *repairs* owner and mode on
+  # directories that already exist, so a botched permission never survives an
+  # apply. 1000:1000 is rayben, which is what all four containers run as
+  # (PUID/PGID below), and 0775 pairs with UMASK=002 so everything the apps
+  # create stays group-writable.
+  #
+  # No rollback on purpose: the only thing it could undo is deleting download
+  # directories, which would take in-flight torrents and not-yet-imported media
+  # with them. Removing this command from the config should not destroy data.
+  - name: media stack directories
+    command: |
+      install -d -o 1000 -g 1000 -m 0775 \
+        /storage/tv/.downloads \
+        /storage/tv/.downloads/complete \
+        /storage/tv/.downloads/incomplete \
+        /storage/movies/.downloads \
+        /storage/movies/.downloads/complete \
+        /storage/movies/.downloads/incomplete \
+        /storage/apps/qbittorrent/config \
+        /storage/apps/qbittorrent/downloads \
+        /storage/apps/sonarr/config \
+        /storage/apps/radarr/config \
+        /storage/apps/prowlarr/config
+      touch /storage/tv/.downloads/.ignore /storage/movies/.downloads/.ignore
+    sudo: true
+
+  # A user-defined bridge so the four containers can address each other by name
+  # (prowlarr → sonarr:8989, sonarr → qbittorrent:8080) instead of hairpinning
+  # back out to 192.168.1.50. Docker's embedded DNS resolves container names
+  # only on user-defined networks — never on the default bridge — and a
+  # name-addressed stack survives the host changing IP.
+  #
+  # No sudo: rayben is in the docker group. Unconditional and idempotent for
+  # exactly the same reason as "media gpu udev reload" above — a files:/folders:
+  # guard is evaluated at plan time and would make this SKIP, and a SKIPped
+  # dependency propagates as unmet, which would strand all four containers.
+  - name: media docker network
+    command: |
+      docker network inspect media >/dev/null 2>&1 || docker network create media
+    rollback: |
+      docker network rm media
 
 # containers: accepts either a sequence of entries (stay-go's native form) or a
 # docker-compose-style mapping keyed by container name (used below).
@@ -161,6 +278,9 @@ containers:
 
   plex:
     container_name: plex
+    # Disabled: the entry is dropped from the config, so the tracked container
+    # is planned as REMOVE. Delete this line to bring Plex back.
+    disabled: true
     restart: unless-stopped
     image: plexinc/pms-docker:latest
     # Host networking is what Plex recommends on Linux — GDM discovery, DLNA
@@ -168,7 +288,13 @@ containers:
     # port individually. The server lives at http://192.168.1.50:32400/web.
     network_mode: host
     devices:
-      - /dev/dri:/dev/dri # AMD VAAPI hardware transcoding (needs Plex Pass)
+      # Exactly one render node, and it is the iGPU. Plex builds its hardware
+      # transcode device list by enumerating /dev/dri/renderD*, so handing it
+      # the whole directory let it auto-select the RX 9070 and fail (see the
+      # 99-media-gpu.rules file entry above for the full story). The host alias
+      # is the udev symlink, presented inside the container under the
+      # conventional renderD128 name that Plex expects to find.
+      - /dev/dri/plex-render:/dev/dri/renderD128
     environment:
       TZ: "America/Phoenix"
       # First run only: links the server to the Plex account. Claim tokens from
@@ -189,14 +315,336 @@ containers:
       # ALLOWED_NETWORKS: "192.168.1.0/24"
     volumes:
       - /storage/apps/plex/config:/config # database + metadata; grows large
-      - /storage/apps/plex/transcode:/transcode # transcoder scratch space; swap
-      #                                           for a tmpfs mount (as frigate
-      #                                           does) to keep it off the pool
+      # Transcoder scratch space. This used to bind-mount /storage/apps/plex/
+      # transcode, which put every segment write on the USB-attached raidz1 —
+      # the pool reads media at ~112 MB/s but there is no reason to make it
+      # absorb scratch writes too. The host has 60 GB of RAM; segments are
+      # deleted as the client consumes them, so this never approaches its cap.
+      - type: tmpfs
+        target: /transcode
+        tmpfs:
+          size: 16g
       - /storage/movies:/movies:ro # add as a library in the UI: /movies
       - /storage/tv:/tv:ro
       - /etc/localtime:/etc/localtime:ro
     depends:
       - packages: [docker]
+      # The udev rule must be on disk and loaded before `docker run --device
+      # /dev/dri/plex-render` can resolve. Both are unconditional nodes, so
+      # neither can plan as SKIP and strand the container.
+      - files: [/etc/udev/rules.d/99-media-gpu.rules]
+      - commands: [media gpu udev reload]
+
+  # Jellyfin — running alongside plex, not replacing it, so the two can be
+  # compared on the same library and the same clients before anything is
+  # retired. Nothing is shared between them: separate ports, separate config
+  # trees, separate GPUs, and both media mounts are read-only, so neither can
+  # disturb the other or the pool.
+  #
+  # FIRST-RUN GOTCHA (10.11.11), worth knowing before you burn an afternoon:
+  # after the initial library scan, series pages can come up with an empty
+  # Seasons row and every play attempt fails with
+  #   "Unable to find a valid media source to play."
+  # That message is a lie on two counts — it is the web client's
+  # PlaybackError.NO_MEDIA_ERROR, raised when the <video> element reports 0x0,
+  # and the real cause is server-side. The episodes scan fine and are fully
+  # playable (/Items?includeItemTypes=Episode&recursive=true returns them all,
+  # and the HLS transcode serves real segments), but the *hierarchy* queries
+  # return nothing:
+  #   /Shows/{series}/Episodes  -> 0
+  #   /Shows/{series}/Seasons   -> 0
+  #   /Shows/NextUp             -> 0
+  # because the series' PresentationUniqueKey is written provider-style
+  # ("390430-en-<libraryid>") while its children get GUID-style
+  # SeriesPresentationUniqueKeys. The two never join, so nothing resolves.
+  # AncestorIds is fine, which is why the library view itself looks healthy.
+  #
+  # Fix is a full metadata refresh per series, which recomputes the keys:
+  #   POST /Items/{seriesId}/Refresh?metadataRefreshMode=FullRefresh
+  #        &replaceAllMetadata=true&Recursive=true
+  # or in the UI: series → ⋯ → Refresh metadata → "Replace all metadata".
+  # Takes seconds and survives a restart. Doing it also merges series that are
+  # split across sibling folders (e.g. "Landman Season 1 …" + "Landman Season
+  # 2"), so the library layout does NOT need reorganising for this.
+  jellyfin:
+    container_name: jellyfin
+    restart: unless-stopped
+    image: jellyfin/jellyfin:latest
+    # Host networking, same as plex: 8096/tcp (web UI / API) and 7359/udp (LAN
+    # client auto-discovery) are reachable directly, and DLNA (1900/udp) plus
+    # the server's own client-discovery broadcasts work without publishing
+    # each port individually. The server lives at http://192.168.1.50:8096.
+    network_mode: host
+    devices:
+      # The RX 9070. Jellyfin's bundled Mesa 25.0.7 recognises gfx1201 and
+      # does full VAAPI decode+encode on it — h264 and AV1 both measured at
+      # ~14.4x realtime on a 1080p HEVC source, against 6.0x on the iGPU.
+      # Presented inside as renderD128 because that is the literal default in
+      # Jellyfin's "VA-API Device" setting, so hardware acceleration works
+      # from a clean config without anyone editing a device path in the UI.
+      - /dev/dri/jellyfin-render:/dev/dri/renderD128
+    environment:
+      TZ: "America/Phoenix"
+    volumes:
+      # JELLYFIN_DATA_DIR — database, metadata, plugins. Grows like plex's.
+      - /storage/apps/jellyfin/config:/config
+      # JELLYFIN_CACHE_DIR — image cache, worth keeping across restarts since
+      # regenerating it re-reads the whole library off the pool.
+      - /storage/apps/jellyfin/cache:/cache
+      # Transcode scratch only. Jellyfin defaults this to <cache>/transcodes;
+      # docker orders mounts by path depth so this tmpfs lands on top of the
+      # /cache bind above rather than racing it. Segments are deleted as the
+      # client consumes them, so it never approaches the cap — and it keeps
+      # scratch writes off the USB-attached raidz1 entirely.
+      - type: tmpfs
+        target: /cache/transcodes
+        tmpfs:
+          size: 16g
+      # Read-only on purpose: neither media server should ever be able to
+      # modify or delete the library. This has a consequence that is NOT
+      # obvious and cost an afternoon once — Jellyfin defaults to writing its
+      # metadata next to the media, and every one of those writes fails with
+      #   System.IO.IOException: Read-only file system : '/tv/<show>/x.nfo'
+      # Worse, the trickplay generator still runs a full ffmpeg pass per
+      # episode *before* discovering it cannot write, so it pins a core at
+      # 100% producing nothing. If a rebuild ever recreates the Jellyfin
+      # libraries from scratch, turn these three off again per library
+      # (Dashboard → Libraries → <library> → Manage Library):
+      #   SaveLocalMetadata, SaveSubtitlesWithMedia, SaveTrickplayWithMedia
+      # They live in /storage/apps/jellyfin/config/root/default/<lib>/
+      # options.xml, which Jellyfin owns and rewrites, so it is deliberately
+      # not managed as a stay-go file entry — fighting the app over its own
+      # config would be worse than this note.
+      - /storage/movies:/movies:ro
+      - /storage/tv:/tv:ro
+      - /etc/localtime:/etc/localtime:ro
+    depends:
+      - packages: [docker]
+      - files: [/etc/udev/rules.d/99-media-gpu.rules]
+      - commands: [media gpu udev reload]
+
+  # ─── Media acquisition: prowlarr → {sonarr,radarr} → qbittorrent ───────────
+  #
+  # Division of labour: prowlarr holds every tracker definition once and pushes
+  # them into both *arrs; sonarr and radarr decide what to fetch and own the
+  # library layout; qbittorrent moves the bytes. Plex and Jellyfin only ever
+  # read what lands, and their mounts stay :ro — these three are the only
+  # things on the box allowed to write into the library.
+  #
+  # ── WHY THE MOUNTS LOOK LIKE THIS (two separate traps, both measured here) ──
+  #
+  # Sonarr and Radarr import by hardlinking the finished download into the
+  # library: one inode, two names, zero bytes copied, and the torrent keeps
+  # seeding from the very same data. When link(2) fails they fall back to a
+  # full copy without complaint, so a broken setup looks fine and merely costs
+  # a whole-season read+write through the USB raidz1 on every import, plus two
+  # copies of everything for as long as it seeds. Two separate things can break
+  # it, and only the first one is widely known:
+  #
+  # 1. ZFS datasets are separate filesystems. storage/tv and storage/movies are
+  #    siblings, so a shared /storage/downloads dataset could never be linked
+  #    from either. Measured on this pool:
+  #      $ ln /storage/tv/f /storage/movies/f
+  #      ln: failed to create hard link: Invalid cross-device link
+  #    Hence downloads live INSIDE the library dataset they feed:
+  #      /storage/tv/.downloads      → dataset storage/tv
+  #      /storage/movies/.downloads  → dataset storage/movies
+  #    Dot-prefixed because plex skips hidden directories natively, and the
+  #    .ignore marker written by "media stack directories" makes jellyfin skip
+  #    them too — neither should ever index a half-finished download.
+  #
+  # 2. Same filesystem is NOT sufficient inside a container. do_linkat() also
+  #    rejects a link whose two paths sit on different *mounts*, even when both
+  #    are bind mounts of the identical dataset:
+  #      old_path.mnt != new_path.mnt  →  -EXDEV
+  #    The first cut of this config mounted the library and its download
+  #    directory separately (/tv and /downloads/tv). st_dev matched — 161 on
+  #    both sides — and links still failed:
+  #      ln: hard link '/tv/…': Cross-device link
+  #      /proc/self/mountinfo: mountid 2512 → /tv, mountid 2514 → /downloads/tv
+  #                            both major:minor 0:161
+  #    So each dataset is exposed through exactly ONE bind mount per container,
+  #    and the download directory is reached as a subdirectory of it. Verified:
+  #    a single mount links fine, two mounts of the same dataset do not.
+  #
+  # ── THE PATH CONTRACT ──
+  # Sonarr asks qBittorrent where a finished torrent is and qBittorrent answers
+  # with a path from inside *its own* container; if Sonarr cannot resolve that
+  # exact string it demands a remote-path mapping or gives up and copies. So
+  # the download directories carry an identical container path in both apps:
+  #
+  #   host                        │ container       │ mounted in
+  #   ────────────────────────────┼─────────────────┼──────────────────────
+  #   /storage/tv                 │ /tv             │ sonarr
+  #   /storage/tv/.downloads      │ /tv/.downloads  │ sonarr (via /tv), qbittorrent
+  #   /storage/movies             │ /movies         │ radarr
+  #   /storage/movies/.downloads  │ /movies/.downl… │ radarr (via /movies), qbittorrent
+  #
+  # qBittorrent gets only the .downloads subtree, never the library itself, but
+  # at the same path Sonarr and Radarr use — so the strings match without the
+  # torrent client being able to touch a single library file.
+  #
+  # Verified on this host: with the categories below in place, Sonarr's health
+  # page is clean. DownloadClientRootFolderCheck only fires when the download
+  # directory *is* a root folder, not when it sits beneath one, so nesting
+  # .downloads inside /tv costs nothing. Get the categories wrong and Sonarr
+  # instead falls back to qBittorrent's global save path and reports:
+  #   "You are using docker; download client X places downloads in /downloads
+  #    but this directory does not appear to exist inside the container."
+  # That message means the category is missing or misnamed — not that the
+  # volumes are wrong.
+  #
+  # ── SETTINGS THAT LIVE IN qBITTORRENT, NOT HERE ──
+  # These are in /storage/apps/qbittorrent/config, which qBittorrent owns and
+  # rewrites, so they are deliberately not stay-go file entries (same reasoning
+  # as jellyfin's options.xml). A rebuild with a fresh /config loses them, and
+  # imports silently degrade to cross-dataset copies until they are restored:
+  #
+  #   Category "tv"      save /tv/.downloads/complete
+  #                      incomplete /tv/.downloads/incomplete
+  #   Category "movies"  save /movies/.downloads/complete
+  #                      incomplete /movies/.downloads/incomplete
+  #
+  # Both halves must be on the same dataset, so the completion move is a rename
+  # rather than a copy. Setting the incomplete path over the API needs
+  # downloadPathEnabled — without it the field silently stays null and every
+  # torrent falls back to the global temp path:
+  #   POST /api/v2/torrents/editCategory
+  #        category=tv savePath=/tv/.downloads/complete
+  #        downloadPath=/tv/.downloads/incomplete downloadPathEnabled=true
+  # The global "Keep incomplete torrents in" is left OFF on purpose: it points
+  # at /downloads on storage/apps, a different dataset, and any torrent that
+  # used it would be copied across datasets on completion. The per-category
+  # paths override it.
+  #
+  # All four run as PUID/PGID 1000 (rayben, who already owns /storage/tv and
+  # /storage/movies) with UMASK 002. One uid across the whole stack is what lets
+  # qBittorrent write a file that Sonarr can later hardlink and rename, and what
+  # keeps the library owned consistently no matter which app created a file.
+  #
+  # NOT included, and worth knowing they exist: bazarr (subtitles, :6767),
+  # recyclarr (syncs TRaSH quality profiles into sonarr/radarr instead of
+  # hand-tuning them), jellyseerr (request UI in front of jellyfin/plex). Each
+  # is one more container of the same shape; none is required for media to flow.
+  #
+  # NOT included and deliberately flagged: this box has no VPN. Tailscale is
+  # not one for this purpose — it carries traffic to your own devices, not out
+  # to trackers. qBittorrent below talks to the internet on the host's own IP.
+  # The usual remedy is to put it behind gluetun (network_mode:
+  # "container:gluetun", with the port publishing moved onto gluetun), which
+  # needs provider credentials that are not in this config.
+
+  qbittorrent:
+    container_name: qbittorrent
+    restart: unless-stopped
+    image: lscr.io/linuxserver/qbittorrent:latest
+    networks: [media]
+    ports:
+      - 8080:8080 # web UI
+      - 6881:6881 # BitTorrent peer port, TCP
+      - 6881:6881/udp # …and uTP/DHT. Forward both at the router for seeding.
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      UMASK: "002"
+      TZ: "America/Phoenix"
+      # LSIO writes these into qBittorrent.conf on first start. Setting the web
+      # port here as well as in ports: keeps the two from drifting apart.
+      WEBUI_PORT: "8080"
+      TORRENTING_PORT: "6881"
+    volumes:
+      - /storage/apps/qbittorrent/config:/config
+      # Catch-all default save path for anything added by hand without a
+      # category. Docker orders bind mounts by path depth, so this lands before
+      # the two below — the same layering jellyfin's transcode tmpfs relies on.
+      # Without it an uncategorised torrent would write into the container's
+      # own filesystem and vanish on the next recreate. It sits on storage/apps,
+      # a different dataset, so nothing saved here can ever be hardlinked.
+      - /storage/apps/qbittorrent/downloads:/downloads
+      # Category save paths. Mounted at the SAME container path sonarr and
+      # radarr see them at, so no remote-path mapping is ever needed:
+      #   category "tv"     → /tv/.downloads/{incomplete,complete}
+      #   category "movies" → /movies/.downloads/{incomplete,complete}
+      # Only the .downloads subtree is exposed — qbittorrent cannot reach, and
+      # therefore cannot damage, the library it feeds.
+      - /storage/tv/.downloads:/tv/.downloads
+      - /storage/movies/.downloads:/movies/.downloads
+      - /etc/localtime:/etc/localtime:ro
+    depends:
+      - packages: [docker]
+      - commands: [media stack directories, media docker network]
+
+  sonarr:
+    container_name: sonarr
+    restart: unless-stopped
+    image: lscr.io/linuxserver/sonarr:latest
+    networks: [media]
+    ports:
+      - 8989:8989
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      UMASK: "002"
+      TZ: "America/Phoenix"
+    volumes:
+      - /storage/apps/sonarr/config:/config
+      # ONE mount for the whole dataset — library at /tv, finished downloads at
+      # /tv/.downloads/complete. Splitting these into two bind mounts is what
+      # breaks hardlinking (see the mountinfo evidence above), so do not "tidy"
+      # this into a separate /downloads entry. Read-write, unlike plex's and
+      # jellyfin's /tv: sonarr renames episodes into place, creates season
+      # folders and deletes files it has upgraded.
+      # Root folder to add in the UI: /tv
+      - /storage/tv:/tv
+      - /etc/localtime:/etc/localtime:ro
+    depends:
+      - packages: [docker]
+      - commands: [media stack directories, media docker network]
+
+  radarr:
+    container_name: radarr
+    restart: unless-stopped
+    image: lscr.io/linuxserver/radarr:latest
+    networks: [media]
+    ports:
+      - 7878:7878
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      UMASK: "002"
+      TZ: "America/Phoenix"
+    volumes:
+      - /storage/apps/radarr/config:/config
+      # Single mount, same reasoning as sonarr's /tv above.
+      # Root folder to add in the UI: /movies
+      - /storage/movies:/movies
+      - /etc/localtime:/etc/localtime:ro
+    depends:
+      - packages: [docker]
+      - commands: [media stack directories, media docker network]
+
+  # Indexer manager. Sonarr and Radarr never get trackers configured directly —
+  # they are added once here and pushed out over the API, so adding or fixing a
+  # tracker is a one-place change instead of two. Holds no media, so it needs no
+  # mounts beyond its own config.
+  prowlarr:
+    container_name: prowlarr
+    restart: unless-stopped
+    image: lscr.io/linuxserver/prowlarr:latest
+    networks: [media]
+    ports:
+      - 9696:9696
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      UMASK: "002"
+      TZ: "America/Phoenix"
+    volumes:
+      - /storage/apps/prowlarr/config:/config
+      - /etc/localtime:/etc/localtime:ro
+    depends:
+      - packages: [docker]
+      - commands: [media stack directories, media docker network]
 
   sftp:
     container_name: sftp
@@ -254,18 +702,3 @@ compose:
   - path: ${config_root}/files/docker/photoprism
     depends:
       - packages: [docker]
-
-  # Scrypted — second NVR alongside frigate. Host-networked, AMD GPU passed
-  # through, database in /storage/apps/scrypted, recordings in
-  # /storage/security/scrypted. Locked like frigate: an NVR should be upgraded
-  # deliberately, not swept up in a bulk --update, because a bad plugin/image
-  # combination means missed recordings rather than a broken UI you notice.
-  # Upgrade explicitly with --update=compose/scrypted.
-  - path: ${config_root}/files/docker/scrypted
-    lock: true
-    depends:
-      - packages: [docker]
-    # NOTE: deliberately does NOT depend on the "scrypted storage" command. That
-    # command is folder-guarded and plans as SKIP once the directories exist, and
-    # a SKIP dep propagates as unmet — depending on it would skip this project on
-    # every run after the first. Same trap as documented on the sftp container.

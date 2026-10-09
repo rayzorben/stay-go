@@ -1,0 +1,13 @@
+# Re-apply the "hide Scratch workspace" patch after dms-shell is upgraded or
+# reinstalled — pacman restores its own copy of WorkspaceSwitcher.qml, which
+# drops the patch. Managed by stay-go; see config/files/dms/.
+[Trigger]
+Type = Package
+Operation = Install
+Operation = Upgrade
+Target = dms-shell
+
+[Action]
+Description = Re-applying stay-go DMS Scratch-workspace patch...
+When = PostTransaction
+Exec = /usr/local/bin/dms-hide-scratch-workspace.sh

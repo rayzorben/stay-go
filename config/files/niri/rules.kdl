@@ -1,11 +1,59 @@
-// Workspaces are named dynamically by wintelligent (P-BRW, S-DEV, M-OFF, …),
-// so there are no static `workspace` declarations here. Declaring one would
-// pin it permanently and stop it being reclaimed when it empties.
-// See ~/Dropbox/PC/development/wintelligent.
+// Static, pinned workspaces — one set of 8, ordered so Mod+1..Mod+8 (bound in
+// dms/binds.kdl via focus-workspace <N>) always land on the same project.
+// Declaring them here (rather than leaving niri's dynamic-workspace default)
+// is what makes them persist even when empty — see README notes below if you
+// ever revisit this: an earlier iteration used a runtime daemon
+// (wintelligent, ~/Dropbox/PC/development/wintelligent) to name/reclaim
+// workspaces dynamically; it was dropped because per-activity granularity
+// made windows hard to find. This is deliberately coarser: one workspace per
+// project, not per project+app-type.
+//
+// Terminals are NOT routed by rule — same reasoning as before: a single
+// terminal process serves every window, so niri can't tell a Sedanos shell
+// from a Personal one by app-id. They're left alone and simply open on
+// whatever workspace is currently focused (niri's default), same as any
+// app with no matching rule below.
+
+workspace "Personal"
+workspace "Sedanos-Dev"
+workspace "Sedanos-Office"
+workspace "Motion"
+workspace "Stoneridge"
+workspace "Visionet"
+workspace "Comms"
+workspace "System"
+
+// Parking slot for windows that should exist but not be seen: the dropdown
+// terminal when hidden, and WinBoat's invisible RemoteApp marker. Referenced
+// by name everywhere, so it doesn't matter where it lands in the index order.
+workspace "Scratch"
 
 window-rule {
     match title="RemoteApp Marker Window"
-    open-on-workspace "9"
+    open-on-workspace "Scratch"
+}
+
+// Dedicated dropdown terminal — toggled by Mod+grave via
+// verterm-dropdown-toggle.sh. verterm exists solely as this dropdown, so the
+// bare app-id is enough to identify it; no --class tagging is needed and no
+// other terminal window is affected. Starts parked on "Scratch" so it's silent
+// at login; the toggle script pulls it to whichever workspace you're on.
+window-rule {
+    match app-id="^verterm$"
+    open-on-workspace "Scratch"
+    open-floating true
+    // Spawned at login and parked out of sight — must not yank focus over to
+    // Scratch when it appears.
+    open-focused false
+    default-column-width { proportion 0.8; }
+    default-window-height { proportion 0.8; }
+    // No default-floating-position: niri centers floating windows on its own,
+    // and "center" is not a valid relative-to anchor.
+    opacity 0.95
+    background-effect {
+	    xray true
+	    //blur true
+    }
 }
 
 window-rule {
@@ -25,15 +73,6 @@ window-rule {
     }
 }
 
-window-rule {
-    match title="FreeRDP"
-    match app-id="wlfreerdp"
-    open-floating true
-}
-
-// Workspace routing for these now lives in wintelligent's config.toml — the
-// org markers below (- SED -, -sedanos$, - VIS -, - SSI -) are matched there.
-// Only the sizing behaviour is kept here.
 window-rule {
     match app-id="firefox$"
     open-maximized true
@@ -57,6 +96,25 @@ window-rule {
     open-maximized true
 }
 
+// FreeRDP session windows (sdl-freerdp3).
+// Why it needed a rule: SDL creates the session window *without*
+// SDL_WINDOW_RESIZABLE and only flips it resizable later, once
+// /dynamic-resolution's display-control channel is up. At map time the
+// xdg_toplevel therefore advertises min size == max size, and niri's
+// auto-float heuristic (windows with a parent, and fixed-size windows, open
+// floating) drops it in the floating layer instead of a column.
+// open-floating false switches that heuristic off for this app-id.
+// app-id is FreeRDP's SDL app metadata identifier — pass /wm-class:<name> to
+// override it per connection if different RDP targets need different rules.
+window-rule {
+    match app-id=r#"^com\.freerdp\.client\."#
+
+    open-floating false
+    // Matches what Mod+F (maximize-column) does. For the Mod+Shift+F kind of
+    // fullscreen — no bars, no gaps — use open-fullscreen true instead.
+    open-maximized true
+}
+
 layer-rule {
     match namespace="dms:spotlight"
 
@@ -64,3 +122,79 @@ layer-rule {
     opacity 0.9
     block-out-from "screencast"
 }
+
+//  ─── Project routing ──────────────────────────────────────────────────
+//  Rules apply in order; the LAST matching rule wins for a given property,
+//  so broad "everything from this project" rules come first and narrower
+//  overrides (e.g. Sedanos dev tools) come after.
+
+// -- Sedanos: default lane is Office, dev tools override to Dev --
+window-rule {
+    match app-id="-sedanos$"
+    match title="- SED -"
+    open-on-workspace "Sedanos-Office"
+}
+
+window-rule {
+    // Editors, IDEs and DB tools exported from the sedanos distrobox.
+    // Add to this alternation as you export more dev-focused apps.
+    match app-id=r#"^(code|code-oss|codium|cursor|windsurf|zed|jetbrains-[a-z]+|dbeaver|datagrip|azuredatastudio|beekeeper-studio|pgadmin4)-sedanos$"#
+    open-on-workspace "Sedanos-Dev"
+}
+
+// WinBoat + the FreeRDP session it drives are sedanos's VM — group with Office.
+window-rule {
+    match app-id="^winboat$"
+    open-on-workspace "Sedanos-Office"
+}
+
+// -- Motion: one lane, everything exported from the motion distrobox --
+window-rule {
+    match app-id="-motion$"
+    open-on-workspace "Motion"
+}
+
+// -- Stoneridge: one lane --
+window-rule {
+    match app-id="-stoneridge$"
+    match title="- SSI -"
+    open-on-workspace "Stoneridge"
+}
+
+// -- Visionet: one lane --
+window-rule {
+    match app-id="-visionet$"
+    match title="- VIS -"
+    match title="- OCS -"
+    open-on-workspace "Visionet"
+}
+
+// -- Comms: chat apps always land here, regardless of which project you're
+//    currently in --
+window-rule {
+    match app-id="^discord$"
+    match app-id="^vesktop$"
+    match app-id="^Slack$"
+    match app-id="^signal$"
+    match app-id="^org\\.telegram"
+    match app-id="^io\\.element\\.Element$"
+    match app-id="^webcord$"
+    open-on-workspace "Comms"
+}
+
+// -- System: settings and utility apps --
+window-rule {
+    match app-id="^org\\.gnome\\.Nautilus$"
+    match app-id="^gnome-control-center$"
+    match app-id="^pavucontrol$"
+    match app-id="^blueman-manager$"
+    match app-id="^nm-connection-editor$"
+    match app-id="^org\\.gnome\\.SystemMonitor$"
+    match app-id="^io\\.missioncenter"
+    open-on-workspace "System"
+}
+
+// Personal gets no rule — it's workspace 1 and the implicit home for
+// anything unmatched above, the same way terminals are handled: it opens
+// wherever you're focused, and if you're on Personal already, that's where
+// it lands.

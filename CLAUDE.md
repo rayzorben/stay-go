@@ -118,7 +118,7 @@ cmd/stay-go ← all of the above
 |--------|-----------|--------|
 | TRACK  | In knowledge (+ matches config or first-time) | Add to state; no command |
 | ADD    | In config, not in knowledge | Install/create/run |
-| UPDATE | In state with different hash | Modify existing / re-run |
+| UPDATE | In state with different hash, or a command's `check:` exits non-zero | Modify existing / re-run |
 | UPGRADE | --update mode only (tracked entry) | Refresh to latest version; state untouched |
 | REMOVE | In state, not in config | Uninstall/delete (scripts: state only) |
 | SKIP   | Dependency REMOVE/SKIP/FAIL, folder condition not met, or `lock: true` in a bulk --update | Log only |
@@ -290,6 +290,16 @@ Actions:
 
 ---
 
+## Command Checks
+
+A `commands` entry may carry `check:` — a read-only shell probe run unprivileged
+at plan time on every run (including `--dry-run`) once the command is applied.
+Exit 0 keeps it TRACK; non-zero plans an UPDATE (re-run), described with the
+check's first stdout line. `check` is excluded from the hash. Used for commands
+that converge drifting state, e.g. `dropbox-exclude-regenerable` on cachygram.
+
+---
+
 ## Sudo Pre-Authentication
 
 If any active plan node has `NeedsSudo: true` (packages with sudo manager, groups,
@@ -398,6 +408,7 @@ stay-go [flags]
 - **No global state**: all config/state/exec passed explicitly
 - **Atomic writes**: state file always written via tmp+rename
 - **Non-interactive by default**: stdin → /dev/null; package managers get `-y`/`--noconfirm`
+- **Interactive commands**: `commands` entries run with `AllowInteractive`. Without `sudo` they get a full PTY (live output, keystrokes forwarded). With `sudo` a new session would break sudo's per-terminal credential cache, so only stdout/stderr go through a PTY while stdin and the controlling terminal stay real; output is captured quietly and, if the process is silent for 10s (`executor.stallTimeout`), the captured tail (usually a prompt) is shown and output streams live from then on
 - **Debug mode**: `--debug` streams stdout/stderr via `io.MultiWriter` (capture + terminal)
 - **NeedsSudo**: set on PlanNode by resources that require privilege escalation; engine pre-auths once
 - **Tests**: unit tests for config, state, engine graph logic, and package manager parsers; run with `make test`

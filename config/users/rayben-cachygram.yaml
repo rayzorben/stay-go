@@ -61,6 +61,11 @@ services:
   - service: gcr-ssh-agent.socket
     user: true
   - service: tailscaled.service
+  - service: dropbox-monitor.timer
+    user: true
+    depends:
+      - packages: [dropbox]
+      - files: [~/.config/systemd/user/dropbox-monitor.timer]
 
 files:
   # SSH keys and config (written first; dotfiles clone depends on them)
@@ -75,9 +80,62 @@ files:
   - source: ${secrets.ssh.config}
     target: "~/.ssh/config"
 
+  # ── SSH passphrases, typed once ──────────────────────────────────────────
+  # gcr-ssh-agent (gcr-4's replacement for the ssh component gnome-keyring
+  # dropped, enabled as gcr-ssh-agent.socket above) is what answers on
+  # $SSH_AUTH_SOCK. On the first agent request it scans ~/.ssh for *.pub and
+  # runs ssh-add over each match with /usr/lib/gcr4-ssh-askpass: the passphrase
+  # is looked up in the Secret Service first, and only on a miss does it
+  # prompt — with an "Automatically unlock this key whenever I'm logged in"
+  # checkbox that writes the passphrase back into the default keyring under
+  # "ssh-store:<path>". Tick it once and the key loads silently from then on.
+  #
+  # The two entries below are what that mechanism was missing here.
+
+  # Public halves of the keys. The secrets above ship only the private halves,
+  # so ~/.ssh held no *.pub at all: gcr-ssh-agent preloaded nothing and
+  # `ssh-add -l` came back empty. Their absence also defeats the github.com
+  # block in ~/.ssh/config — under `IdentitiesOnly yes` ssh matches agent keys
+  # against the public half of each IdentityFile, and with no .pub on disk it
+  # has to decrypt the private key to derive it, which is a passphrase prompt
+  # on every connection even when the agent already holds the key. Public by
+  # definition: these are derived from the encrypted secrets above, nothing more.
+  - content: |
+      ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKBoMkTnztfde1TGffhY4EBd4fYlPCSU3Ltcy//4abR3 raymond.bennett@gmail.com
+    target: ~/.ssh/id_ed25519.pub
+    mode: "0644"
+
+  - content: |
+      ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCjKda239tzwtWEM3Z17r2U6+TCak6zXX8CmU7fLJy/17NGfTF9RvfvoJQcme2CXRG41niTj27tLn/cWRI+dbslTpKX4GTxKc1DhrNLjRXv1Q2QkfCLJx6ny0TlzFf/Ti8xruErHx6ldHVNMQd9qqK4SG6KdUFmp9lntefJ+2EqNNi0Vjyj4QfM6mxu/uQSDsYReHyI6b62b+teckVKv+SCke0Ncm9HdQXbLmry+4Yz6RPcLFCjd3673p5pL0H2FNhx/xDRFmK61+c3hwmD9p4+iItKl+x4NhY0/qDYGIivRCpODicyV910kADVa+WlAs1EINUKr5ivjJx2OMC9lbiz raymond.bennett@gmail.com
+    target: ~/.ssh/id_rsa.pub
+    mode: "0644"
+
+  # Point the default keyring at Login. gcr-ssh-agent stores through libsecret
+  # with a NULL collection, i.e. into whatever this alias file names. This box
+  # carries two password-protected keyrings — "Login" (login.keyring) and a
+  # separately created "Default keyring" — and the alias named the latter, so a
+  # remembered passphrase would land in a keyring nothing opens automatically.
+  # Only Login is free: /etc/pam.d/sddm runs pam_gnome_keyring with auto_start,
+  # handing the daemon the password typed at the greeter and unlocking
+  # login.keyring with it. Anything in the other keyring costs one unlock prompt
+  # per session, which is exactly the prompt this change exists to remove.
+  #
+  # Only new secrets follow the alias; items already in "Default keyring" stay
+  # put and keep resolving while it is unlocked. Written with |- so the file is
+  # the bare keyring identifier with no trailing newline, byte-for-byte what
+  # gnome-keyring writes here itself.
+  - content: |-
+      login
+    target: ~/.local/share/keyrings/default
+
   # Niri compositor config
   - source: ${config_root}/files/niri/screenshot.sh
     target: ~/.config/niri/screenshot.sh
+    symlink: true
+    mode: "+x"
+
+  - source: ${config_root}/files/niri/verterm-dropdown-toggle.sh
+    target: ~/.config/niri/verterm-dropdown-toggle.sh
     symlink: true
     mode: "+x"
 
@@ -93,12 +151,18 @@ files:
     target: ~/.config/niri/binds.kdl
     symlink: true
 
+  # LG Gram keyboard backlight key (hardware side in hosts/cachygram.yaml)
+  - source: ${config_root}/files/niri/lg-gram-binds.kdl
+    target: ~/.config/niri/lg-gram-binds.kdl
+    symlink: true
+
   - content: |
 
       // added by stay
       include "rules.kdl"
       include "spawn.kdl"
       include "binds.kdl"
+      include "lg-gram-binds.kdl"
     target: ~/.config/niri/config.kdl
     add: true
 
@@ -179,6 +243,49 @@ files:
     depends:
       - packages: [gron]
 
+  # ── Dropbox sync monitor ──
+  # Oct 2026: the daemon sat frozen for 8 days (alive, 2m40s CPU in 9 days) and
+  # nothing noticed. Every 5 min the monitor checks the process, that its
+  # command socket answers, that its status isn't an error / stuck, and that an
+  # hourly canary file in ~/Dropbox/.dropbox-monitor/ actually syncs (rules in
+  # the script). A failure lasting 10 min sends a critical notification (at most
+  # every 30 min until fixed) and leaves an alert for SSH logins.
+  # Copied, not symlinked: the monitor must not live in the thing it watches.
+  - source: ${config_root}/files/dropbox-monitor.py
+    target: ~/.local/bin/dropbox-monitor
+    mode: "0755"
+
+  - content: |
+      [Unit]
+      Description=Check that Dropbox is running and syncing
+
+      [Service]
+      Type=oneshot
+      ExecStart=%h/.local/bin/dropbox-monitor
+      TimeoutStartSec=2min
+    target: ~/.config/systemd/user/dropbox-monitor.service
+
+  - content: |
+      [Unit]
+      Description=Check Dropbox sync every 5 minutes
+
+      [Timer]
+      OnStartupSec=5min
+      OnUnitActiveSec=5min
+
+      [Install]
+      WantedBy=timers.target
+    target: ~/.config/systemd/user/dropbox-monitor.timer
+
+  # On SSH login, live-check Dropbox and print a banner if it isn't syncing.
+  # Live rather than just reading the timer's alert: with no graphical session
+  # neither Dropbox nor the timer may be running at all.
+  - content: |
+      if status is-interactive; and set -q SSH_CONNECTION; and test -x ~/.local/bin/dropbox-monitor
+          ~/.local/bin/dropbox-monitor --motd
+      end
+    target: ~/.config/fish/conf.d/dropbox-monitor.fish
+
 ghostty: !include "./commands/ghostty.yaml"
 
 commands:
@@ -223,6 +330,18 @@ commands:
       - services: [tailscaled.service]
       - packages: [tailscale]
 
+  # ── Keep regenerable folders out of Dropbox sync ──
+  # Marks node_modules, __pycache__, venvs, .claude/worktrees, git-ignored
+  # build output and the like with user.com.dropbox.ignored so new projects
+  # never churn (rules in the script). `check` re-scans on every stay-go run,
+  # so the command re-runs only when a new folder needs excluding.
+  # Opt a folder out with an empty .dropbox-keep file inside it.
+  - name: dropbox-exclude-regenerable
+    command: bash ${config_root}/scripts/dropbox-exclude.sh
+    check: bash ${config_root}/scripts/dropbox-exclude.sh --check
+    depends:
+      - packages: [dropbox]
+
 scripts:
   - script: ${config_root}/scripts/configure-zoxide.sh
     depends:
@@ -235,16 +354,6 @@ flatpak:
 
   apps:
     - app: com.usebottles.bottles
-
-containers:
-  - name: redis
-    image: redis:alpine
-    restart: unless-stopped
-    network_mode: host
-    volumes:
-      - "${config_root}/data/redis:/data"
-    depends:
-      - services: [docker]
 
 distrobox:
   - name: sedanos

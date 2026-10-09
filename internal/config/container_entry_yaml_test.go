@@ -94,3 +94,24 @@ containers:
 		t.Errorf("environment: %+v", cfg.Containers[0].Environment)
 	}
 }
+
+// TestDisabledContainerDropped verifies that disabled: true removes the entry
+// after normalisation, while leaving its siblings intact.
+func TestDisabledContainerDropped(t *testing.T) {
+	const src = `
+containers:
+  plex:
+    image: plexinc/pms-docker:latest
+    disabled: true
+  neolink:
+    image: quantumentangledandy/neolink:latest
+`
+	var cfg Config
+	if err := yaml.Unmarshal([]byte(src), &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	NormalizeExpandedForms(&cfg)
+	if len(cfg.Containers) != 1 || cfg.Containers[0].ContainerName() != "neolink" {
+		t.Fatalf("want only neolink, got %+v", cfg.Containers)
+	}
+}

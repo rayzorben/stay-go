@@ -1,3 +1,28 @@
 binds {
     Print { spawn "~/.config/niri/screenshot.sh"; }
+    Mod+grave { spawn "~/.config/niri/verterm-dropdown-toggle.sh"; }
+
+    // Project workspaces by NAME, not index. dms/binds.kdl binds these same
+    // keys to `focus-workspace <N>`, which is positional — and niri does not
+    // guarantee named workspaces land in declaration order (on a live config
+    // reload it inserts each new one at the front, reversing them). Names are
+    // stable no matter where the workspace sits, so these override the
+    // index-based binds and always go to the right project.
+    Mod+1 { focus-workspace "Personal"; }
+    Mod+2 { focus-workspace "Sedanos-Dev"; }
+    Mod+3 { focus-workspace "Sedanos-Office"; }
+    Mod+4 { focus-workspace "Motion"; }
+    Mod+5 { focus-workspace "Stoneridge"; }
+    Mod+6 { focus-workspace "Visionet"; }
+    Mod+7 { focus-workspace "Comms"; }
+    Mod+8 { focus-workspace "System"; }
+
+    Mod+Shift+1 { move-column-to-workspace "Personal"; }
+    Mod+Shift+2 { move-column-to-workspace "Sedanos-Dev"; }
+    Mod+Shift+3 { move-column-to-workspace "Sedanos-Office"; }
+    Mod+Shift+4 { move-column-to-workspace "Motion"; }
+    Mod+Shift+5 { move-column-to-workspace "Stoneridge"; }
+    Mod+Shift+6 { move-column-to-workspace "Visionet"; }
+    Mod+Shift+7 { move-column-to-workspace "Comms"; }
+    Mod+Shift+8 { move-column-to-workspace "System"; }
 }

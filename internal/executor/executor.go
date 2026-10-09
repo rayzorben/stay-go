@@ -11,8 +11,10 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"regexp"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/creack/pty"
 	"golang.org/x/term"
@@ -46,19 +48,50 @@ type Options struct {
 	// even when the executor is not in Debug mode. Use for long-running
 	// commands where the user needs to see live progress (e.g. in-box apply).
 	Stream bool
-	// AllowInteractive streams output in real time and detects when no newline
-	// has been written for 15 seconds. The user is then prompted to cancel or
-	// enter interactive mode (connecting os.Stdin to the process). Falls back
-	// to normal non-streaming behaviour when stdin is not a terminal.
+	// AllowInteractive lets the user answer prompts the process may raise.
+	// It requires os.Stdin to be a terminal; otherwise the normal captured,
+	// non-interactive behaviour applies. The mode depends on Sudo:
+	//
+	//   - Without Sudo the process runs under a PTY in a new session with the
+	//     terminal in raw mode: output streams live and keystrokes are
+	//     forwarded (runInteractive).
+	//   - With Sudo a new session would give the process a different
+	//     controlling terminal, defeating sudo's per-terminal credential cache
+	//     and prompting for a password again. So the process keeps the real
+	//     terminal as stdin and controlling terminal, and only its stdout and
+	//     stderr go through a PTY. Output is captured quietly; if none arrives
+	//     for stallTimeout the tail (typically a prompt) is shown and output
+	//     streams live from then on. Keystrokes already reach the process via
+	//     the inherited terminal (runStallAware).
 	AllowInteractive bool
 }
 
 // Result holds the captured output of a completed command.
 type Result struct {
-	Stdout   string
+	// Stdout holds the process's standard output. In the PTY modes (see
+	// Options.AllowInteractive) stdout and stderr share one PTY, so Stdout
+	// holds the merged transcript with terminal escape sequences removed.
+	Stdout string
+	// Stderr holds the process's standard error. In the PTY modes it holds the
+	// merged transcript when that was never shown on the terminal, and is
+	// empty when the output was streamed — so callers that append Stderr to an
+	// error surface exactly the output the user has not seen.
 	Stderr   string
 	ExitCode int
 }
+
+// stallTimeout is how long a stall-aware process may stay silent before its
+// output is surfaced. A variable so tests can shorten it.
+var stallTimeout = 10 * time.Second
+
+// stallTailLines is how many trailing lines of captured output are shown when
+// a stall is detected — enough to include a multi-line prompt.
+const stallTailLines = 12
+
+const (
+	ansiDim   = "\033[2m"
+	ansiReset = "\033[0m"
+)
 
 // Run executes name with args under the given options. If Debug is true, output
 // is both streamed to the terminal and captured in Result. Returns a non-nil
@@ -80,11 +113,12 @@ func (e *Executor) Run(ctx context.Context, opts Options, name string, args ...s
 		fmt.Fprintf(os.Stderr, "  $ %s\n", strings.Join(cmd.Args, " "))
 	}
 
-	// Interactive mode: streams output via PTY so the process sees a real
-	// terminal. Not used when sudo is involved — the PTY creates a new TTY
-	// device which breaks sudo's per-tty credential cache, causing a second
-	// password prompt even after preSudo has already authenticated.
-	if opts.AllowInteractive && isTerminalStdin() && !opts.Sudo {
+	// Interactive modes need a terminal to hand keystrokes to. See
+	// Options.AllowInteractive for why sudo gets a different mode.
+	if opts.AllowInteractive && isTerminalStdin() {
+		if opts.Sudo {
+			return e.runStallAware(ctx, cmd, opts)
+		}
 		return e.runInteractive(ctx, cmd)
 	}
 
@@ -168,6 +202,26 @@ func isTerminalStdin() bool {
 	return fi.Mode()&os.ModeCharDevice != 0
 }
 
+// mirrorWinsize sizes ptmx to match our terminal (so TUI layouts render
+// correctly) and keeps it in sync on resize until the returned stop function
+// is called.
+func mirrorWinsize(ptmx *os.File) (stop func()) {
+	resize := func() {
+		if cols, rows, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
+			pty.Setsize(ptmx, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)}) //nolint:errcheck
+		}
+	}
+	resize()
+	winch := make(chan os.Signal, 1)
+	signal.Notify(winch, syscall.SIGWINCH)
+	go func() {
+		for range winch {
+			resize()
+		}
+	}()
+	return func() { signal.Stop(winch); close(winch) }
+}
+
 // runInteractive executes cmd under a PTY so the process sees a real terminal
 // (preserving ANSI colours, box-drawing, and correct isatty detection). The
 // terminal is put in raw mode and stdin is forwarded directly to the PTY so
@@ -176,26 +230,10 @@ func isTerminalStdin() bool {
 func (e *Executor) runInteractive(ctx context.Context, cmd *exec.Cmd) (*Result, error) {
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
-		return nil, fmt.Errorf("pty start: %w", err)
+		return &Result{ExitCode: -1}, fmt.Errorf("pty start: %w", err)
 	}
 	defer ptmx.Close()
-
-	// Match PTY dimensions to our terminal so TUI layouts render correctly.
-	if cols, rows, sizeErr := term.GetSize(int(os.Stdout.Fd())); sizeErr == nil {
-		pty.Setsize(ptmx, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)}) //nolint:errcheck
-	}
-
-	// Forward terminal resize events into the PTY.
-	winch := make(chan os.Signal, 1)
-	signal.Notify(winch, syscall.SIGWINCH)
-	defer func() { signal.Stop(winch); close(winch) }()
-	go func() {
-		for range winch {
-			if cols, rows, sizeErr := term.GetSize(int(os.Stdout.Fd())); sizeErr == nil {
-				pty.Setsize(ptmx, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)}) //nolint:errcheck
-			}
-		}
-	}()
+	defer mirrorWinsize(ptmx)()
 
 	// Raw mode: pass all bytes (including Ctrl+C) straight through to the PTY.
 	if oldState, rawErr := term.MakeRaw(int(os.Stdin.Fd())); rawErr == nil {
@@ -222,7 +260,7 @@ func (e *Executor) runInteractive(ctx context.Context, cmd *exec.Cmd) (*Result, 
 	}()
 
 	buildResult := func() *Result {
-		r := &Result{Stdout: outBuf.String()}
+		r := &Result{Stdout: cleanPTYText(outBuf.String())}
 		if cmd.ProcessState != nil {
 			r.ExitCode = cmd.ProcessState.ExitCode()
 		}
@@ -243,8 +281,177 @@ func (e *Executor) runInteractive(ctx context.Context, cmd *exec.Cmd) (*Result, 
 	}
 }
 
-// lastLineWriter captures output line by line and calls fn with each non-empty line.
-// Partial lines (no trailing newline yet) are held in buf until the next Write.
+// runStallAware executes cmd with its stdout and stderr on a PTY that we read,
+// while stdin stays on the real terminal and no new session is created. The
+// controlling terminal — and with it sudo's credential cache, which is keyed
+// on it — is therefore unchanged. sudo (use_pty enabled, the default since
+// 1.9.14) passes through an output fd that is a tty other than the user's, so
+// the PTY still receives everything; verified against sudo 1.9.17.
+//
+// Output is captured quietly, feeding ProgressFn if set. If the process stays
+// silent for stallTimeout while still running it is most likely waiting on a
+// prompt the user cannot see: the tail of the captured output is printed and
+// everything after it streams live. No input forwarding is needed — the
+// process reads the inherited terminal directly, in cooked mode — and stay-go
+// never reads stdin itself here, so it cannot race the process for keystrokes.
+func (e *Executor) runStallAware(ctx context.Context, cmd *exec.Cmd, opts Options) (*Result, error) {
+	ptmx, tty, err := pty.Open()
+	if err != nil {
+		return &Result{ExitCode: -1}, fmt.Errorf("pty open: %w", err)
+	}
+	defer ptmx.Close()
+	defer mirrorWinsize(ptmx)()
+
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = tty
+	cmd.Stderr = tty
+	if err := cmd.Start(); err != nil {
+		tty.Close()
+		return &Result{ExitCode: -1}, err
+	}
+	// The child holds its own copy of the slave; once every holder is gone,
+	// reads on ptmx fail with EIO, which ends the reader below.
+	tty.Close()
+
+	streaming := opts.Stream || (e.Debug && e.Verbose)
+	var hint *lastLineWriter
+	if !streaming && e.ProgressFn != nil {
+		hint = &lastLineWriter{fn: e.ProgressFn}
+	}
+
+	chunks := make(chan []byte)
+	go func() {
+		defer close(chunks)
+		buf := make([]byte, 4096)
+		for {
+			n, readErr := ptmx.Read(buf)
+			if n > 0 {
+				c := make([]byte, n)
+				copy(c, buf[:n])
+				chunks <- c
+			}
+			if readErr != nil {
+				return
+			}
+		}
+	}()
+
+	var timer *time.Timer
+	var timerC <-chan time.Time
+	if !streaming {
+		timer = time.NewTimer(stallTimeout)
+		defer timer.Stop()
+		timerC = timer.C
+	}
+
+	var transcript bytes.Buffer
+	cancelled := false
+loop:
+	for {
+		select {
+		case c, ok := <-chunks:
+			if !ok {
+				break loop
+			}
+			transcript.Write(c)
+			switch {
+			case streaming:
+				os.Stdout.Write(c) //nolint:errcheck
+			case hint != nil:
+				hint.Write(c) //nolint:errcheck
+			}
+			if timer != nil {
+				timer.Reset(stallTimeout)
+			}
+		case <-timerC:
+			streaming = true
+			timer, timerC = nil, nil
+			announceStall(os.Stdout, transcript.Bytes(), hint != nil)
+		case <-ctx.Done():
+			cancelled = true
+			cmd.Process.Kill() //nolint:errcheck
+			for range chunks { // drain until the reader hits EIO
+			}
+			break loop
+		}
+	}
+	waitErr := cmd.Wait()
+
+	text := cleanPTYText(transcript.String())
+	r := &Result{Stdout: text}
+	if !streaming {
+		r.Stderr = text
+	}
+	if cmd.ProcessState != nil {
+		r.ExitCode = cmd.ProcessState.ExitCode()
+	}
+	if e.Debug && !e.Verbose && !streaming && text != "" {
+		fmt.Fprint(os.Stdout, truncateDebugOutput(text))
+	}
+	if cancelled {
+		return r, ctx.Err()
+	}
+	return r, waitErr
+}
+
+// announceStall reports that a stall-aware process has gone quiet. It commits
+// the caller's progress line if one is being drawn, prints a dim notice, and
+// echoes the tail of the output captured so far — usually the prompt the
+// process is waiting on — so the user can answer it.
+func announceStall(w io.Writer, transcript []byte, progressLineOpen bool) {
+	if progressLineOpen {
+		fmt.Fprintln(w)
+	}
+	fmt.Fprintf(w, "%s     ┆ no output for %s: showing live output (type to answer prompts, Ctrl+C to cancel)%s\n",
+		ansiDim, stallTimeout, ansiReset)
+	if tail := lastLines(transcript, stallTailLines); len(tail) > 0 {
+		w.Write(tail) //nolint:errcheck
+	}
+}
+
+// lastLines returns the final n lines of b. A trailing partial line counts as
+// a line (that is where a prompt lives); a trailing newline does not start one.
+func lastLines(b []byte, n int) []byte {
+	if n <= 0 {
+		return nil
+	}
+	i := len(b)
+	if i > 0 && b[i-1] == '\n' {
+		i--
+	}
+	for count := 0; ; {
+		j := bytes.LastIndexByte(b[:i], '\n')
+		if j < 0 {
+			return b
+		}
+		if count++; count == n {
+			return b[j+1:]
+		}
+		i = j
+	}
+}
+
+// ansiRE matches CSI sequences (colours, cursor movement), OSC sequences
+// (titles, sudo's session markers) and any other two-byte ESC sequence.
+var ansiRE = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_]`)
+
+// stripANSI removes terminal escape sequences from s.
+func stripANSI(s string) string {
+	return ansiRE.ReplaceAllString(s, "")
+}
+
+// cleanPTYText strips escape sequences and normalises the CRLF line endings a
+// PTY produces, so captured output reads like ordinary pipe output.
+func cleanPTYText(s string) string {
+	s = stripANSI(s)
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.ReplaceAll(s, "\r", "\n")
+}
+
+// lastLineWriter captures output line by line and calls fn with each non-empty
+// line. A bare carriage return also ends a line so that progress bars redrawn
+// with \r (common once a program sees a tty) update the hint. Partial lines are
+// held in buf until the next Write. Escape sequences are stripped from lines.
 type lastLineWriter struct {
 	fn  func(string)
 	buf []byte
@@ -253,11 +460,11 @@ type lastLineWriter struct {
 func (w *lastLineWriter) Write(p []byte) (int, error) {
 	w.buf = append(w.buf, p...)
 	for {
-		idx := bytes.IndexByte(w.buf, '\n')
+		idx := bytes.IndexAny(w.buf, "\r\n")
 		if idx < 0 {
 			break
 		}
-		line := strings.TrimSpace(string(w.buf[:idx]))
+		line := strings.TrimSpace(stripANSI(string(w.buf[:idx])))
 		w.buf = w.buf[idx+1:]
 		if line != "" {
 			w.fn(line)
