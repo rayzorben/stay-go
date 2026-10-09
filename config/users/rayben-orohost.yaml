@@ -143,6 +143,27 @@ files:
     mode: "0755"
     sudo: true
 
+  # The container's own ~/.ssh (/config is its home): the same github.com
+  # key and config as the desktop, so pushes go out as rayzorben
+  - source: ${secrets.ssh.id_ed25519}
+    target: /storage/apps/code-server/.ssh/id_ed25519
+    mode: "0600"
+
+  - content: |
+      ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKBoMkTnztfde1TGffhY4EBd4fYlPCSU3Ltcy//4abR3 raymond.bennett@gmail.com
+    target: /storage/apps/code-server/.ssh/id_ed25519.pub
+    mode: "0644"
+
+  - source: ${secrets.ssh.config}
+    target: /storage/apps/code-server/.ssh/config
+    mode: "0600"
+
+  # Holds the key's passphrase for the container; `ssh-add ~/.ssh/id_ed25519` once per start
+  - source: ${config_root}/files/code-server/ssh-agent
+    target: /storage/apps/code-server-services/ssh-agent
+    mode: "0755"
+    sudo: true
+
 ghostty: !include "./commands/ghostty.yaml"
 
 commands:
@@ -225,6 +246,7 @@ containers:
       - /storage/dropbox/Dropbox:/storage
       # linuxserver runs these as root on every start; they must be root-owned
       - /storage/apps/code-server-init:/custom-cont-init.d:ro
+      - /storage/apps/code-server-services:/custom-services.d:ro
     # Electron (mudengine smokes) needs more than docker's 64 MB /dev/shm
     shm_size: 2gb
     # mudengine's probes and check:live target orohost:2427 by name
@@ -239,9 +261,10 @@ containers:
       PROXY_DOMAIN: ${secrets.code.proxy_domain}
       PASSWORD: ${secrets.code.pass}
       SUDO_PASSWORD: ${secrets.code.pass}
+      SSH_AUTH_SOCK: /config/.ssh/agent.sock
     depends:
       - services: [docker]
-      - files: [/storage/apps/code-server-init/90-dev-tools.sh]
+      - files: [/storage/apps/code-server-init/90-dev-tools.sh, /storage/apps/code-server-services/ssh-agent]
 
 json:
   - file: ~/.config/DankMaterialShell/settings.json

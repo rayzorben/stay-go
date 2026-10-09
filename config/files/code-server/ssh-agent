@@ -1,0 +1,9 @@
+#!/usr/bin/with-contenv bash
+# Long-running s6 service in the code-server container (linuxserver
+# custom-services.d). id_ed25519 has a passphrase and nothing in the container
+# can prompt for it, so an agent listens on a fixed socket that the container's
+# SSH_AUTH_SOCK names. After each container start, run `ssh-add ~/.ssh/id_ed25519`
+# once in a code-server terminal; every terminal and Claude session can then push.
+sock=/config/.ssh/agent.sock
+rm -f "$sock"
+exec s6-setuidgid abc ssh-agent -D -a "$sock"
