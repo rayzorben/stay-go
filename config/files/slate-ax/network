@@ -1,0 +1,159 @@
+
+config interface 'loopback'
+	option device 'lo'
+	option proto 'static'
+	option ipaddr '127.0.0.1'
+	option netmask '255.0.0.0'
+
+config globals 'globals'
+	option ula_prefix 'fdaa:7b25:a4de::/48'
+
+config device
+	option name 'br-lan'
+	option type 'bridge'
+	list ports 'eth2'
+	option macaddr '94:83:c4:8c:ae:fb'
+
+config device
+	option name 'eth1'
+	option macaddr '94:83:c4:8c:ae:fb'
+
+config device
+	option name 'eth2'
+	option macaddr '94:83:c4:8c:ae:fb'
+
+config interface 'lan'
+	option device 'br-lan'
+	option proto 'static'
+	option ipaddr '192.168.8.1'
+	option netmask '255.255.255.0'
+	option ip6assign '60'
+	option isolate '0'
+
+config device
+	option name 'eth0'
+	option macaddr '94:83:c4:8c:ae:fa'
+
+config interface 'wan'
+	option device 'eth0'
+	option proto 'dhcp'
+	option force_link '0'
+	option ipv6 '0'
+	option classlessroute '0'
+	option metric '1'
+
+config interface 'wan6'
+	option proto 'dhcpv6'
+	option device '@wan'
+	option disabled '1'
+
+config switch
+	option name 'switch0'
+	option reset '0'
+	option enable_vlan '0'
+
+config interface 'guest'
+	option force_link '1'
+	option type 'bridge'
+	option proto 'static'
+	option ipaddr '192.168.9.1'
+	option netmask '255.255.255.0'
+	option ip6assign '60'
+	option multicast_querier '1'
+	option igmp_snooping '0'
+	option isolate '0'
+	option bridge_empty '1'
+	option disabled '1'
+
+config rule 'policy_relay_lo_rt_lan'
+	option lookup '16800'
+	option in 'loopback'
+	option priority '1'
+
+config interface 'tethering6'
+	option device '@tethering'
+	option proto 'dhcpv6'
+	option disabled '1'
+
+config interface 'wwan6'
+	option device '@wwan'
+	option proto 'dhcpv6'
+	option disabled '1'
+
+config rule 'novpn_to_main'
+	option gl_vpn_rules '1'
+	option mark '0x8000/0xf000'
+	option priority '6000'
+	option lookup 'main'
+	option disabled '0'
+
+config rule 'vpn_to_main'
+	option gl_vpn_rules '1'
+	option mark '0x0/0xf000'
+	option priority '9000'
+	option lookup 'main'
+	option invert '1'
+	option disabled '0'
+
+config rule 'vpn_leak_block'
+	option gl_vpn_rules '1'
+	option mark '0x0/0xf000'
+	option priority '9910'
+	option action 'blackhole'
+	option invert '1'
+	option disabled '0'
+
+config rule 'vpn_block_lan_leak'
+	option gl_vpn_rules '1'
+	option in 'lan'
+	option priority '9920'
+	option action 'blackhole'
+	option disabled '0'
+
+config rule 'vpn_block_guest_leak'
+	option gl_vpn_rules '1'
+	option in 'guest'
+	option priority '9920'
+	option action 'blackhole'
+	option disabled '0'
+
+config rule 'vpn_block_wgserver_leak'
+	option gl_vpn_rules '1'
+	option in 'wgserver'
+	option priority '9920'
+	option action 'blackhole'
+	option disabled '0'
+
+config rule 'vpn_block_ovpnserver_leak'
+	option gl_vpn_rules '1'
+	option in 'ovpnserver'
+	option priority '9920'
+	option action 'blackhole'
+	option disabled '0'
+
+config interface 'tethering'
+	option proto 'dhcp'
+	option metric '3'
+	option ifname 'eth3'
+
+config rule 'main_static_net'
+	option gl_vpn_rules '1'
+	option suppress_prefixlength '0'
+	option priority '800'
+	option lookup '9910'
+	option disabled '0'
+
+config interface 'wwan'
+	option proto 'dhcp'
+	option classlessroute '0'
+	option metric '2'
+	option hostname '*'
+	option mtu '1500'
+
+config interface 'wan2'
+	option device 'eth1'
+	option proto 'dhcp'
+	option metric '4'
+	option ipv6 '0'
+	option classlessroute '0'
+
