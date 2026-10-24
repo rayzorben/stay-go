@@ -10,12 +10,19 @@
 # The AR300M must hand out a subnet other than 192.168.8.0/24 on the port
 # facing the Slate (its GL default LAN is 192.168.8.1, same as the Slate).
 #
+# Rule wan2_subnet sends that subnet (SUBNET, the AR300M's LAN) to the main
+# table at pref 700. Without it GL's VPN rule (pref 800, table 9910 with the
+# bond's full-tunnel /1 routes) pushes traffic for 192.168.10.1 into the bond,
+# and the AR300M's admin page and SSH look "refused" (GL only exempts the
+# subnets it knows, such as Starlink's 192.168.1.0/24).
+#
 # Idempotent. Run on the router:
 #   ssh root@192.168.8.1 'sh -s' < deploy/router/wan2.sh            # apply
 #   ssh root@192.168.8.1 'sh -s revert' < deploy/router/wan2.sh     # undo
 set -eu
 
 PORT=${PORT:-eth1}
+SUBNET=${SUBNET:-192.168.10.0/24}
 IFACE=wan2
 
 wan_zone() {
@@ -40,6 +47,7 @@ BR=$(lan_bridge)
 if [ "${1:-}" = revert ]; then
 	uci -q del_list firewall.$Z.network=$IFACE || true
 	uci -q delete network.$IFACE || true
+	uci -q delete network.${IFACE}_subnet || true
 	uci -q del_list network.$BR.ports=$PORT || true
 	uci add_list network.$BR.ports=$PORT
 	reload
@@ -55,6 +63,10 @@ uci set network.$IFACE.proto=dhcp
 uci set network.$IFACE.metric=4
 uci set network.$IFACE.ipv6=0
 uci set network.$IFACE.classlessroute=0
+uci set network.${IFACE}_subnet=rule
+uci set network.${IFACE}_subnet.dest=$SUBNET
+uci set network.${IFACE}_subnet.lookup=main
+uci set network.${IFACE}_subnet.priority=700
 uci -q del_list firewall.$Z.network=$IFACE || true
 uci add_list firewall.$Z.network=$IFACE
 reload

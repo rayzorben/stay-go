@@ -10,6 +10,9 @@ Reference copy of the travel router's UCI config. stay-go does not apply it
 | dhcp      | /etc/config/dhcp       |
 | wan2.sh   | applies the wan2 change below (idempotent; `revert` undoes it) |
 
+Rule `wan2_subnet` (pref 700) keeps 192.168.10.0/24 out of the bond tunnel so the
+AR300M itself stays reachable.
+
 Ports: WAN eth0 = Starlink (`wan`). LAN eth1 = **wan2**, a second wired WAN
 from the GL-AR300M Wi-Fi uplink box (DHCP, metric 4, wan firewall zone; the
 AR300M serves 192.168.10.0/24, not 192.168.8.0/24). LAN eth2 stays in br-lan.
