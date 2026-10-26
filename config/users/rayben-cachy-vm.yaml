@@ -75,6 +75,17 @@ files:
   - source: ${secrets.ssh.config}
     target: "~/.ssh/config"
 
+  # ── Folder links into ~ ──────────────────────────────────────────────────
+  # ~/code and ~/work are the stable paths everything else refers to, so a
+  # Dropbox reorganisation only changes these two sources.
+  - source: ~/Dropbox/PC/development
+    target: ~/code
+    symlink: true
+
+  - source: ~/Dropbox/PC
+    target: ~/work
+    symlink: true
+
   # Niri compositor config
   - source: ${config_root}/files/niri/screenshot.sh
     target: ~/.config/niri/screenshot.sh
@@ -284,9 +295,9 @@ distrobox:
           - packages: [azure-cli]
       - name: link dev folder
         command: |
-          ln -sf /home/${env:USER}/Dropbox/PC/sedanos/development ${home.sedanos}/development
+          ln -sfn /home/${env:USER}/work/sedanos/development ${home.sedanos}/development
         depends:
-          - folders: ["/home/${env:USER}/Dropbox/PC/sedanos/development"]
+          - folders: ["/home/${env:USER}/work/sedanos/development"]
       - name: fish config
         command: |
           curl https://raw.githubusercontent.com/oh-my-fish/oh-my-fish/master/bin/install | fish

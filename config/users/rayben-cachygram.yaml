@@ -80,6 +80,31 @@ files:
   - source: ${secrets.ssh.config}
     target: "~/.ssh/config"
 
+  # ── Folder links into ~ ──────────────────────────────────────────────────
+  # ~/code and ~/work are the stable paths everything else refers to, so a
+  # Dropbox reorganisation only changes these two sources.
+  - source: ~/Dropbox/PC/development
+    target: ~/code
+    symlink: true
+
+  - source: ~/Dropbox/PC
+    target: ~/work
+    symlink: true
+
+  # Life runs as a user service straight from its repo.
+  - source: ~/code/life/systemd/life.service
+    target: ~/.config/systemd/user/life.service
+    symlink: true
+
+  - source: ~/code/life/systemd/life.service
+    target: ~/.config/systemd/user/graphical-session.target.wants/life.service
+    symlink: true
+
+  # mudengine loads the private konami-engine extension from its build output.
+  - source: ~/code/konami-engine/dist
+    target: ~/.config/mudengine/extensions/konami
+    symlink: true
+
   # ── SSH passphrases, typed once ──────────────────────────────────────────
   # gcr-ssh-agent (gcr-4's replacement for the ssh component gnome-keyring
   # dropped, enabled as gcr-ssh-agent.socket above) is what answers on
@@ -393,9 +418,9 @@ distrobox:
           - packages: [azure-cli]
       - name: link dev folder
         command: |
-          ln -sf /home/${env:USER}/Dropbox/PC/sedanos/development ${home.sedanos}/development
+          ln -sfn /home/${env:USER}/work/sedanos/development ${home.sedanos}/development
         depends:
-          - folders: ["/home/${env:USER}/Dropbox/PC/sedanos/development"]
+          - folders: ["/home/${env:USER}/work/sedanos/development"]
       - name: fish config
         command: |
           curl https://raw.githubusercontent.com/oh-my-fish/oh-my-fish/master/bin/install | fish

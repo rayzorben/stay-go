@@ -55,6 +55,17 @@ files:
   - source: ${secrets.ssh.config}
     target: "~/.ssh/config"
 
+  # ── Folder links into ~ ──────────────────────────────────────────────────
+  # ~/code and ~/work are the stable paths everything else refers to, so a
+  # Dropbox reorganisation only changes these two sources.
+  - source: ~/Dropbox/PC/development
+    target: ~/code
+    symlink: true
+
+  - source: ~/Dropbox/PC
+    target: ~/work
+    symlink: true
+
   # Niri compositor config
   - source: ${config_root}/files/niri/screenshot.sh
     target: ~/.config/niri/screenshot.sh
@@ -213,14 +224,14 @@ commands:
   # git but never synced, so restore it from git.
   - name: mudengine dropbox ignores
     command: |
-      cd /storage/dropbox/Dropbox/PC/development/mudengine
+      cd ~/code/mudengine
       for d in node_modules out dist build .claude/worktrees; do
         mkdir -p "$d"
         setfattr -n user.com.dropbox.ignored -v 1 "$d"
       done
       git checkout -- build
     depends:
-      - folders: [/storage/dropbox/Dropbox/PC/development/mudengine/.git]
+      - folders: [~/code/mudengine/.git]
 
 scripts:
   - script: ${config_root}/scripts/configure-zoxide.sh

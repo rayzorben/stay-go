@@ -3,7 +3,7 @@
 // Declaring them here (rather than leaving niri's dynamic-workspace default)
 // is what makes them persist even when empty — see README notes below if you
 // ever revisit this: an earlier iteration used a runtime daemon
-// (wintelligent, ~/Dropbox/PC/development/wintelligent) to name/reclaim
+// (wintelligent, archived at orohost:/storage/backup/archive/dev) to name/reclaim
 // workspaces dynamically; it was dropped because per-activity granularity
 // made windows hard to find. This is deliberately coarser: one workspace per
 // project, not per project+app-type.
