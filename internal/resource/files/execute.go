@@ -209,9 +209,11 @@ func placeFile(ctx context.Context, exec *executor.Executor, src, dst string, su
 // makeSymlink creates a symlink dst → src, using sudo ln -sf when required.
 func makeSymlink(ctx context.Context, exec *executor.Executor, src, dst string, sudo bool) error {
 	if sudo {
-		result, err := exec.Run(ctx, executor.Options{Sudo: true}, "ln", "-sf", src, dst)
+		// -n: when dst is an existing link to a directory, replace the link
+		// rather than creating a new one inside the directory it points to.
+		result, err := exec.Run(ctx, executor.Options{Sudo: true}, "ln", "-sfn", src, dst)
 		if err != nil {
-			return fmt.Errorf("ln -sf %q %q: %w\nstderr: %s", src, dst, err, result.Stderr)
+			return fmt.Errorf("ln -sfn %q %q: %w\nstderr: %s", src, dst, err, result.Stderr)
 		}
 		return nil
 	}

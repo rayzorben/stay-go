@@ -153,6 +153,18 @@ func computeHash(entry *config.FileEntry, kind sourceKind, cfg *config.Config) (
 		}
 		// plaintext (not yet encrypted): use raw value as-is
 	case kindLocal:
+		info, err := os.Stat(entry.Source)
+		if err != nil {
+			return "", fmt.Sprintf("source file not found: %s", entry.Source)
+		}
+		if info.IsDir() {
+			// A directory can only be linked, and a link doesn't care what is
+			// inside it — hash the path so edits under it never trigger UPDATE.
+			if !entry.Symlink {
+				return "", fmt.Sprintf("source is a directory (needs symlink: true): %s", entry.Source)
+			}
+			break
+		}
 		content, err := os.ReadFile(entry.Source)
 		if err != nil {
 			return "", fmt.Sprintf("source file not found: %s", entry.Source)

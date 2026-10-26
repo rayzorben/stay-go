@@ -164,7 +164,8 @@ services:
 #   target: string              # required — destination path (~ and vars expanded)
 #   mode: string                # optional — permission mode, e.g. "0600" or "+x"
 #   symlink: bool               # optional — create a symlink instead of copying (default: false)
-#                               #   only valid for local source paths
+#                               #   only valid for local source paths; required when
+#                               #   source is a directory (the link is hashed by path)
 #   sudo: bool                  # optional — write target with sudo (default: false)
 #   ssh_key: [string]           # optional — SSH private key paths for git SSH auth
 #   depends: [{resource: [names]}]  # optional — resource deps; use "file" key to depend
