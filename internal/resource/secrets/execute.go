@@ -14,7 +14,7 @@ import (
 //
 //   - ADD: unlock the manager (prompting if needed), encrypt the plaintext
 //     value in-place in its source file, populate cfg.DecryptedSecrets.
-//   - TRACK/UPDATE: unlock the manager, decrypt the ciphertext, populate
+//   - TRACK/ADOPT/LEVEL/UPDATE: unlock the manager, decrypt the ciphertext, populate
 //     cfg.DecryptedSecrets, and substitute the plaintext into the shared config.
 //   - REMOVE: clear the state entry only; no file modification.
 //
@@ -52,7 +52,10 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 		stateHash := config.Hash(newCT)
 		st.Set(node.ID, stateHash, node.SourceFile, nil)
 
-	case engine.ActionTrack, engine.ActionAdopt, engine.ActionUpdate:
+	// LEVEL (the secret's source file moved, e.g. a new config path) must
+	// decrypt too: skipping it leaves ciphertext in every config string, and
+	// any file or container written in the same run gets the ciphertext.
+	case engine.ActionTrack, engine.ActionAdopt, engine.ActionLevel, engine.ActionUpdate:
 		entry := r.entries[node.ID]
 		if !entry.Encrypted {
 			break

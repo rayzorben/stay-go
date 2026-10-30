@@ -32,6 +32,12 @@ type Manager struct {
 // New returns an uninitialised Manager. Call Unlock before Encrypt/Decrypt.
 func New() *Manager { return &Manager{} }
 
+// NewUnlocked returns a Manager already unlocked with password, bypassing the
+// keyring and prompts. For tests of code that drives a Manager.
+func NewUnlocked(password string) *Manager {
+	return &Manager{password: password, unlocked: true}
+}
+
 // IsUnlocked reports whether the Manager has a cached password.
 func (m *Manager) IsUnlocked() bool { return m.unlocked }
 
