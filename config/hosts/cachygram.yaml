@@ -12,6 +12,46 @@ packages:
   - linux-cachyos-headers # acpi_call-dkms builds against the running kernel
   - python-evdev # solaar and lutris need it (it once served a keyboard daemon)
 
+  # ── Hardware stack the CachyOS installer used to provide ──
+  # bootstrap.sh installs a bare system; these came with the original desktop
+  # install and nothing else pulls them in.
+
+  # Audio: the Meteor Lake codec loads its DSP topology from sof-firmware, so
+  # without it there is no sound card at all (necessary-verbs only patches the
+  # speaker amp on top). PipeWire is the server; these are its ALSA/Pulse shims.
+  - sof-firmware
+  - alsa-firmware
+  - alsa-utils
+  - pipewire-pulse
+  - pipewire-alsa
+  - wireplumber
+  - gst-plugin-pipewire
+
+  # Bluetooth: bt-headset-watchdog and the autosuspend rule below assume it.
+  - package: bluez
+    services: [bluetooth]
+  - bluez-utils
+  - bluez-obex
+  - bluez-hid2hci
+
+  # Intel Arc (Meteor Lake) GPU: Vulkan, VA-API/VPL video decode, OpenCL.
+  - vulkan-intel
+  - intel-media-driver
+  - vpl-gpu-rt
+  - mesa-utils
+  - opencl-mesa
+  - lib32-opencl-mesa
+
+  # OOM killer ahead of the kernel's, so a runaway process dies before the
+  # desktop freezes on swap.
+  - package: earlyoom
+    services: [earlyoom]
+
+  # mDNS (.local names). avahi-daemon was enabled by the installer.
+  # /etc/nsswitch.conf has no mdns entry, so glibc lookups do not use it yet.
+  - package: nss-mdns
+    services: [avahi-daemon]
+
 files:
   - source: ${config_root}/files/necessary-verbs.sh
     target: /usr/local/sbin/necessary-verbs.sh
@@ -121,6 +161,16 @@ files:
       ELECTRON_OZONE_PLATFORM_HINT=auto
     target: /etc/environment.d/95-electron-wayland.conf
     sudo: true
+
+  # Mesa's rusticl is the OpenCL driver for Intel here; it stays off unless a
+  # driver is named.
+  - content: |
+      # Managed by stay-go.
+      RUSTICL_ENABLE=iris
+    target: /etc/environment.d/30-opencl.conf
+    sudo: true
+    depends:
+      - packages: [opencl-mesa]
 
   # ── LG Gram (16T90SP) thermal envelope ──
   # The chassis sheds roughly 18 W over one heatpipe and a single blower.

@@ -63,6 +63,14 @@ packages:
   - attr # getfattr/setfattr, used by dropbox-exclude.sh
   - python # dropbox-monitor
   - libnotify # notify-send, used by dropbox-monitor alerts
+  - xwayland-satellite # niri starts it on demand for X11 apps
+  - noto-fonts-emoji
+  - noto-fonts-cjk
+  - cantarell-fonts
+  - ttf-opensans
+  - awesome-terminal-fonts
+  - btop
+  - pavucontrol # floated by a window rule in files/niri/rules.kdl
 
 services:
   - service: gcr-ssh-agent.socket
@@ -82,6 +90,13 @@ services:
       - files:
           - ~/.config/systemd/user/bt-headset-watchdog.service
           - ~/.local/bin/bt-headset-watchdog
+  # Nightly backup of Life's data to orohost.
+  - service: life-backup.timer
+    user: true
+    depends:
+      - files:
+          - ~/.config/systemd/user/life-backup.service
+          - ~/.config/systemd/user/life-backup.timer
 
 files:
   # SSH keys and config (written first; dotfiles clone depends on them)
@@ -114,6 +129,14 @@ files:
 
   - source: ~/code/life/systemd/life.service
     target: ~/.config/systemd/user/graphical-session.target.wants/life.service
+    symlink: true
+
+  - source: ~/code/life/systemd/life-backup.service
+    target: ~/.config/systemd/user/life-backup.service
+    symlink: true
+
+  - source: ~/code/life/systemd/life-backup.timer
+    target: ~/.config/systemd/user/life-backup.timer
     symlink: true
 
   # mudengine loads the private konami-engine extension from its build output.
@@ -510,17 +533,29 @@ distrobox:
       - npm
       - opentofu
       - claude-desktop
+      - databricks-cli-bin
+      - graphify-bin
+      - ninjarmm-ncplayer
+      - ruff
+      - jq
+      - zoxide
     commands:
-      - name: Install Databricks CLI
-        command: |
-          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+      # The CLI used to come from Databricks' curl installer, which drops a
+      # binary in /usr/local/bin; that sits ahead of /usr/bin on PATH and would
+      # shadow databricks-cli-bin. No-op once it is gone.
+      - name: retire curl databricks cli
+        command: rm -f /usr/local/bin/databricks
         sudo: true
+        depends:
+          - packages: [databricks-cli-bin]
       - name: Install uv
         command: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
-      - name: azure devops
+      - name: azure cli extensions
         command: |
-          az extension add --name azure-devops
+          for ext in azure-devops containerapp databricks datafactory scheduled-query; do
+            az extension add --upgrade --name $ext
+          done
         depends:
           - packages: [azure-cli]
       - name: link dev folder
