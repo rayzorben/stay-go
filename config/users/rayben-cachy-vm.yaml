@@ -50,6 +50,8 @@ packages:
   - slurp
   - wayfreeze
   - satty
+  - psmisc # killall, used by screenshot.sh
+  - lib32-fontconfig # fc-cache-32, used by the windows fonts command
   - cachyos-gaming-meta
   - cachyos-gaming-applications
   - 7zip
@@ -78,11 +80,11 @@ files:
   # ── Folder links into ~ ──────────────────────────────────────────────────
   # ~/code and ~/work are the stable paths everything else refers to, so a
   # Dropbox reorganisation only changes these two sources.
-  - source: ~/Dropbox/PC/development
+  - source: ~/Dropbox/Ray/Code
     target: ~/code
     symlink: true
 
-  - source: ~/Dropbox/PC
+  - source: ~/Dropbox/Ray/Work
     target: ~/work
     symlink: true
 
@@ -125,11 +127,6 @@ files:
     target: ~/.config/electron-flags.conf
     symlink: true
 
-  - source: ${config_root}/files/config/firefox-user.js
-    target: '~/.config/mozilla/firefox/$(awk -F= "/^\[Install/ {getline; print \$2}" ~/.config/mozilla/firefox/profiles.ini)/user.js'
-    depends:
-      - packages: ['firefox']
-
   - content: |
       [prod-man]
       host = https://adb-7405608649113470.10.azuredatabricks.net
@@ -139,7 +136,7 @@ files:
       azure_client_secret = ${secrets.databricks.client_secret}
 
       [test-man]
-      host = https://adb-7405619906526803.3.azuredatabricks.net 
+      host = https://adb-7405619906526803.3.azuredatabricks.net
       auth_type = azure-client-secret
       azure_tenant_id = 10895ab2-90e3-4778-a157-855870900fb7
       azure_client_id = ca971a3e-1cc2-41b4-a76c-db4bf4c9494d
@@ -147,8 +144,8 @@ files:
       
       [test]
       host = https://adb-1871084061330888.8.azuredatabricks.net
-      DATABRICKS_CLIENT_ID = a667e418-f433-4dfa-a2f3-33132684eb93
-      DATABRICKS_CLIENT_SECRET = ${secrets.databricks.test_client_secret}
+      client_id = a667e418-f433-4dfa-a2f3-33132684eb93
+      client_secret = ${secrets.databricks.test_client_secret}
     target: ~/.databrickscfg
     mode: "0600"
 
@@ -220,7 +217,7 @@ commands:
       fc-cache-32 --force
     sudo: true
     depends:
-      - packages: [7zip]
+      - packages: [7zip, lib32-fontconfig] # lib32-fontconfig: fc-cache-32
       - files: [~/Downloads/isos/Win11_25H2_English_x64_v2.iso]
       - folders: ["!/usr/local/share/fonts/WindowsFonts"]
       
@@ -233,6 +230,16 @@ commands:
     depends:
       - services: [tailscaled.service]
       - packages: [tailscale]
+
+  # Firefox user.js. A command rather than a files: entry because the profile
+  # directory has to be read from profiles.ini when it runs, not when the
+  # config loads (before Firefox has created a profile on a fresh machine).
+  # The check re-runs it when the profile's copy drifts from the repo's.
+  - name: firefox user.js
+    command: bash ${config_root}/scripts/firefox-user-js.sh
+    check: bash ${config_root}/scripts/firefox-user-js.sh --check
+    depends:
+      - packages: [firefox]
 
 scripts:
   - script: ${config_root}/scripts/configure-zoxide.sh
@@ -317,6 +324,8 @@ distrobox:
 
 json:
   - file: ~/.config/DankMaterialShell/settings.json
+    depends:
+      - commands: [install dms]
     json:
       use24HourClock: false
       showSeconds: true

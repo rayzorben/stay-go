@@ -32,6 +32,9 @@ files:
     depends:
       - files: [/usr/local/bin/dms-hide-scratch-workspace.sh]
 
+  # Oneshot: the script applies the verbs and exits in ~2s. It used to be
+  # Type=simple with Restart=always, so systemd re-ran it on every clean exit
+  # until it hit the start limit and parked the unit as failed.
   - content: |
       [Unit]
       Description=Run internal speaker fix script at startup
@@ -40,9 +43,9 @@ files:
       [Service]
       User=root
       Group=root
-      Type=simple
+      Type=oneshot
+      RemainAfterExit=yes
       ExecStart=/usr/local/sbin/necessary-verbs.sh
-      Restart=always
       TimeoutStartSec=0
 
       [Install]
@@ -84,7 +87,22 @@ files:
 
       # Encourage reclaiming cached dentries/inodes instead of thrashing anonymous pages
       vm.vfs_cache_pressure = 100
+
+      # No watermark boosting. CachyOS ships 15000, which makes kswapd reclaim
+      # (swap out) on every fragmentation event even with gigabytes free; with
+      # zram full that spills to the dm-crypt swapfile and stalls the UI on I/O.
+      vm.watermark_boost_factor = 0
     target: /etc/sysctl.d/99-zram-tuning.conf
+    sudo: true
+
+  # THP `always` (CachyOS default) shreds the free lists into sub-2M pieces on a
+  # long-uptime desktop full of Electron/browser processes: 540k+ THP fault
+  # fallbacks and constant compaction stalls. madvise keeps huge pages for the
+  # apps that ask for them. sysfs is not a sysctl, so tmpfiles writes it at boot.
+  - content: |
+      # Managed by stay-go.
+      w /sys/kernel/mm/transparent_hugepage/enabled - - - - madvise
+    target: /etc/tmpfiles.d/thp-madvise.conf
     sudo: true
 
   # The ACPI UCSI typec modules flap with -110 timeouts on this board and wedge
@@ -211,7 +229,26 @@ files:
       - files: [/usr/local/bin/lg-kbd-backlight]
       - packages: [acpi_call-dkms]
 
+  # ── Intel AX211 Bluetooth: no USB autosuspend ──
+  # btusb is built into this kernel with enable_autosuspend=Y, so the
+  # controller (8087:0033, USB 3-10) idles between packets. With the Poly
+  # headset in a call that shows up as "SCO packet for unknown connection
+  # handle", call audio failing until the headset is power-cycled, and
+  # occasional "Hardware error 0x0c" chip crashes. Pinning it awake is the usual
+  # fix; the watchdog in the user layer recovers whatever still slips through.
+  - content: |
+      # Managed by stay-go. Keep the Intel Bluetooth controller out of USB autosuspend.
+      ACTION=="add|bind", SUBSYSTEM=="usb", ATTR{idVendor}=="8087", ATTR{idProduct}=="0033", TEST=="power/control", ATTR{power/control}="on"
+    target: /etc/udev/rules.d/50-intel-bt-no-autosuspend.rules
+    sudo: true
+
 services:
+  # The speaker fix. It was enabled by hand, never by stay-go.
+  - service: necessary-verbs
+    depends:
+      - packages: [alsa-tools]
+      - files: [/etc/systemd/system/necessary-verbs.service]
+
   # Enable + start the oneshot: applies the envelope now, at boot and on resume.
   - service: lg-gram-thermals
     depends:
@@ -263,27 +300,96 @@ commands:
     depends:
       - files: [/etc/default/limine]
 
+  # Apply the Bluetooth autosuspend rule now; udev only runs it on the next
+  # add/bind (boot or a chip reset). Writing power/control directly needs no
+  # replug, so a headset call in progress is not interrupted. Backticks, not
+  # $(...): stay-go expands $(...) at load time even in command strings.
+  - name: intel-bt-no-autosuspend
+    command: |
+      udevadm control --reload-rules
+      for d in /sys/bus/usb/devices/*; do
+        [ "`cat $d/idVendor 2>/dev/null`:`cat $d/idProduct 2>/dev/null`" = 8087:0033 ] && echo on > $d/power/control
+      done
+      true
+    check: |
+      for d in /sys/bus/usb/devices/*; do
+        [ "`cat $d/idVendor 2>/dev/null`:`cat $d/idProduct 2>/dev/null`" = 8087:0033 ] || continue
+        [ "`cat $d/power/control`" = on ] || { echo "Intel Bluetooth USB autosuspend is on"; exit 1; }
+      done
+    sudo: true
+
+  # ── Applying the drop-ins above ──
+  # A command re-runs only when its own text changes, never when the file it
+  # applies changes, so each one carries a check: that compares the live system
+  # (or a copy taken when it last ran) against the file. None has a files:
+  # guard: that is a plan-time condition, so on a fresh machine it would skip
+  # before the file was written. Files with no depends run ahead of commands.
+  # Stamps live in /var/lib/stay-go/applied, readable by the unprivileged check.
+
   # Apply the sysctl drop-in now so a reboot is not required.
   - name: reload-sysctl-zram-tuning
     command: sysctl --system
+    check: |
+      sysctl -n vm.page-cluster | grep -qx 0 && sysctl -n vm.vfs_cache_pressure | grep -qx 100 \
+        && sysctl -n vm.watermark_boost_factor | grep -qx 0 \
+        || { echo "live vm.* sysctls differ from 99-zram-tuning.conf"; exit 1; }
     sudo: true
-    depends:
-      - files: [/etc/sysctl.d/99-zram-tuning.conf]
 
-  # The UCSI blacklist lives in the initramfs, so it needs a rebuild to take effect.
-  - name: rebuild-initramfs-ucsi-blacklist
-    command: mkinitcpio -P
+  # Apply the THP drop-in now so a reboot is not required.
+  - name: apply-thp-madvise
+    command: systemd-tmpfiles --create /etc/tmpfiles.d/thp-madvise.conf
+    check: |
+      grep -q '\[madvise\]' /sys/kernel/mm/transparent_hugepage/enabled \
+        || { echo "THP is not madvise: $(cat /sys/kernel/mm/transparent_hugepage/enabled)"; exit 1; }
     sudo: true
-    depends:
-      - files: [/etc/modprobe.d/blacklist-ucsi.conf]
+
+  # The UCSI blacklist lives in the initramfs, so it needs a rebuild to take
+  # effect. The stamp is the blacklist as of the last rebuild; an edit re-runs it.
+  # limine-mkinitcpio, not mkinitcpio -P: this box has no /etc/mkinitcpio.d
+  # presets (limine-mkinitcpio-hook builds the images itself), and the
+  # /usr/local/bin/mkinitcpio wrapper answers -P with an interactive prompt.
+  - name: rebuild-initramfs-ucsi-blacklist
+    command: |
+      limine-mkinitcpio
+      install -Dm644 /etc/modprobe.d/blacklist-ucsi.conf /var/lib/stay-go/applied/blacklist-ucsi.conf
+    check: |
+      cmp -s /etc/modprobe.d/blacklist-ucsi.conf /var/lib/stay-go/applied/blacklist-ucsi.conf \
+        || { echo "blacklist-ucsi.conf changed since the last initramfs rebuild"; exit 1; }
+    sudo: true
 
   # The blacklist only stops future autoloads; drop huawei_wmi now if this boot
   # already loaded it, so lg_laptop owns the WMI device without a reboot.
   - name: unload-huawei-wmi
     command: '! grep -q "^huawei_wmi " /proc/modules || modprobe -r huawei_wmi'
+    check: '! grep -q "^huawei_wmi " /proc/modules || { echo "huawei_wmi is loaded"; exit 1; }'
+    sudo: true
+
+  # keyd reads /etc/keyd/default.conf only at start; reload it after an edit.
+  - name: keyd-reload
+    command: |
+      keyd reload
+      install -Dm644 /etc/keyd/default.conf /var/lib/stay-go/applied/keyd-default.conf
+    check: |
+      cmp -s /etc/keyd/default.conf /var/lib/stay-go/applied/keyd-default.conf \
+        || { echo "keyd config changed since the last reload"; exit 1; }
     sudo: true
     depends:
-      - files: [/etc/modprobe.d/blacklist-huawei.conf]
+      - packages: [keyd]
+      - services: [keyd]
+
+  # The speaker unit used to sit failed (start-limit-hit, see its file entry).
+  # Pick up the oneshot unit, clear the failure and apply the verbs now. The
+  # services entry above plans TRACK because the unit is already enabled, so
+  # nothing else would reload it before the next boot.
+  - name: necessary-verbs-recover
+    command: |
+      systemctl daemon-reload
+      systemctl reset-failed necessary-verbs.service 2>/dev/null || true
+      systemctl restart necessary-verbs.service
+    check: '! systemctl is-failed --quiet necessary-verbs.service || { echo "necessary-verbs.service has failed"; exit 1; }'
+    sudo: true
+    depends:
+      - packages: [alsa-tools]
 
   # Retire what the hand-run setup scripts left behind (a state-file based
   # lg-kbd-keepalive service, its shell/python daemons and lg-kbd-toggle);

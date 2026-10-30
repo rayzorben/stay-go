@@ -1,3 +1,4 @@
 spawn-at-startup "gnome-keyring-daemon" "-s"
 spawn-at-startup "solaar" "-w" "hide"
 spawn-at-startup "verterm"
+spawn-at-startup "~/.config/niri/verterm-dropdown-autohide.sh"
