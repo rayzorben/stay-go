@@ -46,6 +46,7 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 			r.cfg.DecryptedSecrets = make(map[string]string)
 		}
 		r.cfg.DecryptedSecrets[key] = entry.RawValue
+		r.redact(entry.RawValue)
 
 		// State hash is based on the new ciphertext (stable until re-encrypted).
 		newCT := ciphertexts[key]
@@ -58,6 +59,7 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 	case engine.ActionTrack, engine.ActionAdopt, engine.ActionLevel, engine.ActionUpdate:
 		entry := r.entries[node.ID]
 		if !entry.Encrypted {
+			r.redact(entry.RawValue) // a not-yet-encrypted value is plaintext too
 			break
 		}
 
@@ -73,6 +75,7 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 			r.cfg.DecryptedSecrets = make(map[string]string)
 		}
 		r.cfg.DecryptedSecrets[node.DisplayName] = pt
+		r.redact(pt)
 		config.SubstituteSecret(r.cfg, entry.RawValue, pt)
 		if node.Action != engine.ActionTrack {
 			st.Set(node.ID, node.ConfigHash, node.SourceFile, nil)
@@ -102,4 +105,11 @@ func (r *Resource) ensureUnlocked() error {
 	}
 
 	return r.mgr.Unlock(verifyToken)
+}
+
+// redact passes a plaintext secret to the Redact hook, if one is set.
+func (r *Resource) redact(plaintext string) {
+	if r.Redact != nil {
+		r.Redact(plaintext)
+	}
 }

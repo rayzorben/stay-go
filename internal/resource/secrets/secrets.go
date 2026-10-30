@@ -18,6 +18,10 @@ type Resource struct {
 	cfg     *config.Config
 	mgr     *secretspkg.Manager
 	entries map[string]secretspkg.Entry // nodeID → entry; populated in BuildPlan
+
+	// Redact, when set, is called with each plaintext secret value as it
+	// becomes available, so the run log can mask it (see runlog.Log.Redact).
+	Redact func(plaintext string)
 }
 
 // New creates a secrets Resource. The Manager is unlocked lazily on first Execute.

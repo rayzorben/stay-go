@@ -18,6 +18,8 @@ import (
 
 	"github.com/creack/pty"
 	"golang.org/x/term"
+
+	"github.com/rayzorben/stay-go/internal/runlog"
 )
 
 // Executor is a stateless command runner. Debug controls whether command output
@@ -33,6 +35,9 @@ type Executor struct {
 	// progress row. Not called in Debug or Stream mode (output is already visible).
 	// Safe to set/clear from the engine's sequential execute loop.
 	ProgressFn func(string)
+	// Log, when set, records every command run (argv, caller-supplied env,
+	// exit code, duration, captured output) in the run log. Nil disables it.
+	Log *runlog.Log
 }
 
 // Options configures a single command invocation.
@@ -103,6 +108,19 @@ func (e *Executor) Run(ctx context.Context, opts Options, name string, args ...s
 	}
 
 	cmd := exec.CommandContext(ctx, name, args...)
+
+	id := e.Log.CommandStart(cmd.Args, opts.Env)
+	start := time.Now()
+	result, err := e.run(ctx, cmd, opts)
+	if result == nil {
+		result = &Result{ExitCode: -1}
+	}
+	e.Log.CommandEnd(id, result.ExitCode, time.Since(start), result.Stdout, result.Stderr, err)
+	return result, err
+}
+
+// run carries out Run for a prepared cmd.
+func (e *Executor) run(ctx context.Context, cmd *exec.Cmd, opts Options) (*Result, error) {
 
 	// Inherit the base environment and append caller-supplied vars.
 	if len(opts.Env) > 0 {

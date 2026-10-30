@@ -6,9 +6,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/rayzorben/stay-go/internal/runlog"
 )
 
 // A binary that fails to START must not report ExitCode 0: callers that only
@@ -47,6 +50,29 @@ func TestRun_successIsZero(t *testing.T) {
 	}
 	if result.ExitCode != 0 {
 		t.Fatalf("ExitCode = %d, want 0", result.ExitCode)
+	}
+}
+
+// Every command is recorded in the run log with its argv, exit code, and
+// captured output — including commands that fail.
+func TestRun_recordsCommandInRunLog(t *testing.T) {
+	lg, err := runlog.Open(filepath.Join(t.TempDir(), "logs"), 0)
+	if err != nil {
+		t.Fatalf("runlog.Open: %v", err)
+	}
+	e := &Executor{Log: lg}
+	e.Run(context.Background(), Options{}, "sh", "-c", "echo to-out; echo to-err >&2; exit 4") //nolint:errcheck
+	lg.Close(0)
+
+	data, err := os.ReadFile(lg.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	for _, want := range []string{"$ sh -c 'echo to-out; echo to-err >&2; exit 4'", "exit=4", "│ to-out", "│ to-err"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("run log missing %q:\n%s", want, got)
+		}
 	}
 }
 

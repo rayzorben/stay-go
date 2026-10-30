@@ -13,6 +13,7 @@
 //	-n, --dry-run  print the plan without executing
 //	    --version  print build version (YYYYMMDD.nn when built via make)
 //	    --state    path to state file (default: ~/.local/share/stay-go/state.json)
+//	    --log-dir  directory for per-run logs (default: <state dir>/logs)
 package main
 
 import (
@@ -24,6 +25,8 @@ import (
 	"os"
 	"os/signal"
 	"os/user"
+	"path/filepath"
+	rtdebug "runtime/debug"
 	"strings"
 	"syscall"
 
@@ -43,6 +46,7 @@ import (
 	rsecrets "github.com/rayzorben/stay-go/internal/resource/secrets"
 	"github.com/rayzorben/stay-go/internal/resource/services"
 	"github.com/rayzorben/stay-go/internal/resource/users"
+	"github.com/rayzorben/stay-go/internal/runlog"
 	"github.com/rayzorben/stay-go/internal/state"
 )
 
@@ -112,6 +116,7 @@ func main() {
 	var (
 		configDir      string
 		statePath      string
+		logDir         string
 		debug          bool
 		verbose        bool
 		dryRun         bool
@@ -129,6 +134,7 @@ func main() {
 	flag.StringVar(&configDir, "config", "config", "path to config directory")
 	flag.StringVar(&configDir, "c", "config", "path to config directory (shorthand)")
 	flag.StringVar(&statePath, "state", state.DefaultPath(), "path to state JSON file")
+	flag.StringVar(&logDir, "log-dir", "", "directory for per-run logs (default: <state dir>/logs)")
 	flag.BoolVar(&debug, "debug", false, "stream all command output to the terminal (truncates >5 lines)")
 	flag.BoolVar(&debug, "d", false, "stream all command output (shorthand)")
 	flag.BoolVar(&verbose, "verbose", false, "with --debug, stream all output without truncation")
@@ -156,23 +162,46 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Every run that can plan or change anything gets a log file, so failures
+	// can be analysed after the fact. --show and --guest-knowledge are
+	// read-only reports (the latter runs once per distrobox per run and would
+	// crowd real runs out of the retention window), so they are not logged.
+	var lg *runlog.Log
+	if show.scope == "" && !guestKnowledge {
+		if logDir == "" {
+			logDir = filepath.Join(filepath.Dir(statePath), "logs")
+		}
+		var err error
+		if lg, err = runlog.Open(logDir, runlog.DefaultKeep); err != nil {
+			fmt.Fprintf(os.Stderr, "stay-go: warning: run log disabled: %v\n", err)
+		}
+		logRunHeader(lg, configDir, statePath)
+		defer func() {
+			if r := recover(); r != nil {
+				lg.Printf("PANIC: %v\n%s", r, rtdebug.Stack())
+				lg.Close(2)
+				panic(r)
+			}
+		}()
+	}
+
 	// --update is a distinct mode: it refreshes tracked items rather than
 	// applying config, so mixing it with apply/sync selectors is a user error.
 	if update.set && (len(applyTargets) > 0 || sync || show.scope != "") {
-		fatalf("--update cannot be combined with --apply, --sync, or --show")
+		fatalf(lg, "--update cannot be combined with --apply, --sync, or --show")
 	}
 
 	// Load and merge config. Host/user layers are declared as !include directives
 	// in default.yaml using ${env:USER} and $(hostname) expressions.
 	cfg, err := config.LoadAll(configDir)
 	if err != nil {
-		fatalf("config: %v", err)
+		fatalf(lg, "config: %v", err)
 	}
 
 	// Load (or initialise) state.
 	st, err := state.Load(statePath)
 	if err != nil {
-		fatalf("state: %v", err)
+		fatalf(lg, "state: %v", err)
 	}
 
 	// --show: print tracking info and exit without executing.
@@ -182,7 +211,7 @@ func main() {
 	}
 
 	// Shared process executor.
-	exec := &executor.Executor{Debug: debug, Verbose: verbose}
+	exec := &executor.Executor{Debug: debug, Verbose: verbose, Log: lg}
 
 	// --guest-knowledge: gather what packages are installed (runs inside a distrobox).
 	// Outputs a JSON map of nodeID → true and exits. Used internally by the distrobox resource.
@@ -191,14 +220,14 @@ func main() {
 		defer cancel()
 		entries, err := packages.New(cfg, exec).GatherKnowledge(ctx)
 		if err != nil {
-			fatalf("guest-knowledge: %v", err)
+			fatalf(lg, "guest-knowledge: %v", err)
 		}
 		knowledge := make(map[string]bool, len(entries))
 		for _, e := range entries {
 			knowledge[e.ID] = true
 		}
 		if err := json.NewEncoder(os.Stdout).Encode(knowledge); err != nil {
-			fatalf("guest-knowledge encode: %v", err)
+			fatalf(lg, "guest-knowledge encode: %v", err)
 		}
 		return
 	}
@@ -215,11 +244,14 @@ func main() {
 		ShowSkipped:  showSkipped,
 		ApplyTargets: applyTargets,
 		Sync:         sync,
+		Log:          lg,
 	}
 	eng := engine.New(opts, exec)
 	// Secrets first: it decrypts every ${secrets.x} and substitutes the
 	// plaintext into the shared config before any other resource executes.
-	eng.Register(rsecrets.New(cfg))
+	secretsRes := rsecrets.New(cfg)
+	secretsRes.Redact = lg.Redact
+	eng.Register(secretsRes)
 	eng.Register(packages.New(cfg, exec))
 	eng.Register(groups.New(cfg, exec))
 	eng.Register(users.New(cfg, exec))
@@ -243,10 +275,28 @@ func main() {
 	}
 	if err := run(); err != nil {
 		if !errors.Is(err, engine.ErrExecutionFailed) {
-			fatalf("%v", err)
+			fatalf(lg, "%v", err)
 		}
-		os.Exit(1) // failures already reported by the engine's final report
+		// Failures were already reported by the engine's final report.
+		if lg != nil {
+			fmt.Fprintf(os.Stderr, "  log: %s\n\n", lg.Path())
+		}
+		lg.Close(1)
+		os.Exit(1)
 	}
+	lg.Close(0)
+}
+
+// logRunHeader records who ran what, where, and how at the top of the run log.
+func logRunHeader(lg *runlog.Log, configDir, statePath string) {
+	if lg == nil {
+		return
+	}
+	host, _ := os.Hostname()
+	cwd, _ := os.Getwd()
+	lg.Printf("stay-go %s  host=%s user=%s pid=%d", version, host, currentUsername(), os.Getpid())
+	lg.Printf("args: %s", strings.Join(os.Args[1:], " "))
+	lg.Printf("cwd=%s config=%s state=%s", cwd, configDir, statePath)
 }
 
 func usage() {
@@ -258,6 +308,8 @@ Usage:
 Flags:
   -c, --config string   path to config directory (default "config")
       --state  string   path to state file (default %q)
+      --log-dir string  directory for per-run logs (default: <state dir>/logs;
+                        latest.log links the newest, last %d kept)
   -d, --debug           stream command output; outputs >5 lines are truncated
       --verbose, -v     with --debug: stream all output without truncation
   -n, --dry-run         show plan without executing
@@ -280,7 +332,7 @@ Flags:
 
 Config is loaded from default.yaml in the config directory.
 Host- and user-specific entries are included via !include directives.
-`, version, state.DefaultPath())
+`, version, state.DefaultPath(), runlog.DefaultKeep)
 }
 
 // currentUsername returns the current user's login name, falling back to the
@@ -295,7 +347,15 @@ func currentUsername() string {
 	return "unknown"
 }
 
-func fatalf(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "stay-go: "+format+"\n", args...)
+// fatalf reports a fatal error, records it in the run log (lg may be nil), and
+// exits 1.
+func fatalf(lg *runlog.Log, format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	fmt.Fprintf(os.Stderr, "stay-go: %s\n", msg)
+	lg.Printf("FATAL: %s", msg)
+	if lg != nil {
+		fmt.Fprintf(os.Stderr, "  log: %s\n", lg.Path())
+	}
+	lg.Close(1)
 	os.Exit(1)
 }

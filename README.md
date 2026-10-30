@@ -256,6 +256,7 @@ stay-go [flags]
 
   -c, --config string   path to config directory (default "config")
       --state  string   path to state file (default ~/.local/share/stay-go/state.json)
+      --log-dir string  per-run log directory (default ~/.local/share/stay-go/logs)
   -d, --debug           stream command output to the terminal
   -n, --dry-run         show plan without executing
   -y, --yes             auto-confirm without prompting
@@ -263,6 +264,19 @@ stay-go [flags]
   -u, --update [target] upgrade tracked resources to their latest versions
       --show [scope]    print tracked state and exit (all, packages, users, …)
       --version         print version and exit
+```
+
+### Run logs
+
+Every run (including `--dry-run` and `--update`) writes a plain-text log to
+`~/.local/share/stay-go/logs/` — `latest.log` links the newest, and the last
+100 are kept. Each log holds the invocation, every command executed (argv,
+exit code, duration, stdout/stderr), the plan, each node's result, and a
+summary listing failed nodes. When a run fails, its log path is printed.
+Decrypted secret values are masked as `«redacted»`; files are mode 0600.
+
+```bash
+less ~/.local/share/stay-go/logs/latest.log
 ```
 
 ---

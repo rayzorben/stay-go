@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/rayzorben/stay-go/internal/executor"
+	"github.com/rayzorben/stay-go/internal/runlog"
 	"github.com/rayzorben/stay-go/internal/state"
 )
 
@@ -37,6 +38,9 @@ type Options struct {
 	// Use this when you have manually applied a change and want stay-go to stop
 	// re-attempting it.
 	Sync bool
+	// Log records the plan, confirmation, and each node's execution result in
+	// the run log. Nil disables it.
+	Log *runlog.Log
 }
 
 // Engine orchestrates knowledge gathering, plan building, and execution
@@ -69,6 +73,7 @@ func (e *Engine) Register(r Resource) {
 //  7. SaveState
 func (e *Engine) Run(ctx context.Context, st *state.State) error {
 	// ── Step 1: Gather knowledge in parallel ──────────────────────────────────
+	e.opts.Log.Printf("gathering knowledge")
 	knowledgeResults := make([][]KnowledgeEntry, len(e.resources))
 	knowledgeErrors := make([]error, len(e.resources))
 	var wg sync.WaitGroup
@@ -97,6 +102,7 @@ func (e *Engine) Run(ctx context.Context, st *state.State) error {
 	}
 
 	// ── Step 2: Build plan ────────────────────────────────────────────────────
+	e.opts.Log.Printf("building plan")
 	var allNodes []*PlanNode
 	for _, r := range e.resources {
 		nodes, err := r.BuildPlan(ctx, knowledge, st)
@@ -107,6 +113,7 @@ func (e *Engine) Run(ctx context.Context, st *state.State) error {
 	}
 
 	if len(allNodes) == 0 {
+		e.opts.Log.Printf("nothing to do — no resources configured")
 		if !e.opts.QuietPlan {
 			fmt.Fprintf(os.Stdout, "\n  Nothing to do — no resources configured.\n\n")
 		}
@@ -137,6 +144,7 @@ func (e *Engine) Run(ctx context.Context, st *state.State) error {
 	if err != nil {
 		return fmt.Errorf("sorting plan: %w", err)
 	}
+	logPlan(e.opts.Log, sorted)
 
 	// ── Step 5: Display plan and confirm ─────────────────────────────────────
 	// Check whether any node requires actual system changes.
@@ -178,6 +186,7 @@ func (e *Engine) Run(ctx context.Context, st *state.State) error {
 			}
 		}
 		if e.opts.DryRun {
+			e.opts.Log.Printf("dry-run — no changes applied")
 			fmt.Fprintf(os.Stdout, "  %s(dry-run — no changes applied)%s\n\n", ansiDim, ansiReset)
 			return nil
 		}
@@ -187,6 +196,7 @@ func (e *Engine) Run(ctx context.Context, st *state.State) error {
 		}
 
 		if e.opts.DryRun {
+			e.opts.Log.Printf("dry-run — no changes applied")
 			fmt.Fprintf(os.Stdout, "  %s(dry-run — no changes applied)%s\n\n", ansiDim, ansiReset)
 			return nil
 		}
@@ -217,6 +227,7 @@ func (e *Engine) Run(ctx context.Context, st *state.State) error {
 					}
 					continue
 				} else if resp == ConfirmAbort {
+					e.opts.Log.Printf("aborted at confirmation prompt")
 					fmt.Fprintf(os.Stdout, "\n  Aborted.\n\n")
 					return nil
 				}
@@ -242,6 +253,7 @@ func (e *Engine) Run(ctx context.Context, st *state.State) error {
 	// Always save — per-node state updates from successful nodes must be
 	// persisted even when other nodes failed.
 	if err := state.Save(st, e.opts.StatePath); err != nil {
+		e.opts.Log.Printf("ERROR saving state: %v", err)
 		fmt.Fprintf(os.Stderr, "warning: failed to save state: %v\n", err)
 	}
 	return executeErr
@@ -368,6 +380,7 @@ func (e *Engine) startSudoKeepalive(ctx context.Context) func() {
 // REMOVE nodes are executed first (in their pre-sorted reverse-dep order),
 // then ADD/UPDATE nodes (forward dep order), then TRACK nodes (state update only).
 func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State) error {
+	e.opts.Log.Printf("executing")
 	if e.preSudo(ctx, nodes) {
 		stopKeepalive := e.startSudoKeepalive(ctx)
 		defer stopKeepalive()
@@ -399,6 +412,8 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 			// (e.g. secrets resource decrypts values into cfg.DecryptedSecrets).
 			r := resourceByType[node.ResourceType]
 			if execErr := r.Execute(ctx, node, st); execErr != nil {
+				node.ExecutionErr = execErr
+				logResult(e.opts.Log, node, 0)
 				DisplayExecutionResult(os.Stdout, node, execErr, 0)
 				succeeded[node.ID] = false
 				hasFailed = true
@@ -409,6 +424,7 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 			if !e.depsSucceeded(node, succeeded) {
 				node.Action = ActionSkip
 				node.SkipReason = "dependency failed during execution"
+				logResult(e.opts.Log, node, 0)
 				if !node.Hidden {
 					DisplayExecutionResult(os.Stdout, node, nil, 0)
 				}
@@ -421,6 +437,7 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 			if node.Action == ActionRemove && node.AbsentFromSystem {
 				st.Delete(node.ID)
 				succeeded[node.ID] = true
+				e.opts.Log.Printf("%s %s: absent from system, state entry removed", node.Action, node.ID)
 				if !node.Hidden {
 					DisplayExecutionResult(os.Stdout, node, nil, 0)
 				}
@@ -438,6 +455,7 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 					DisplayExecutionProgress(os.Stdout, node, line)
 				}
 			}
+			e.opts.Log.Printf("%s %s: start", node.Action, node.ID)
 			start := time.Now()
 			r := resourceByType[node.ResourceType]
 			execErr := r.Execute(ctx, node, st)
@@ -448,6 +466,7 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 			if execErr != nil {
 				hasFailed = true
 			}
+			logResult(e.opts.Log, node, dur)
 			if !node.Hidden {
 				DisplayExecutionResult(os.Stdout, node, execErr, dur)
 			}
@@ -462,6 +481,7 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 		}
 	}
 
+	logSummary(e.opts.Log, nodes)
 	if !e.opts.QuietPlan {
 		e.printFinalReport(nodes)
 	}
@@ -475,6 +495,7 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 // system commands. ADD/UPDATE nodes are written to state as if they succeeded;
 // REMOVE nodes are deleted from state; SKIP nodes are left untouched.
 func (e *Engine) syncState(nodes []*PlanNode, st *state.State) error {
+	e.opts.Log.Printf("sync — marking plan done in state, no commands executed")
 	for _, node := range nodes {
 		switch node.Action {
 		case ActionTrack, ActionAdopt, ActionLevel:
@@ -540,4 +561,83 @@ func (e *Engine) printFinalReport(nodes []*PlanNode) {
 		)
 	}
 	fmt.Fprintln(os.Stdout)
+}
+
+// logPlan records the sorted plan in the run log: one line per node that is
+// not a plain TRACK (those are counted), with its reason, declared deps, and
+// notes.
+func logPlan(lg *runlog.Log, nodes []*PlanNode) {
+	if lg == nil {
+		return
+	}
+	tracked := 0
+	for _, n := range nodes {
+		if n.Action == ActionTrack {
+			tracked++
+			continue
+		}
+		line := fmt.Sprintf("plan: %-7s %s", n.Action, n.ID)
+		if n.Hidden {
+			line += " (hidden)"
+		}
+		if n.Description != "" {
+			line += " — " + n.Description
+		}
+		if n.SkipReason != "" {
+			line += " — skip: " + n.SkipReason
+		}
+		// The secrets barrier makes every node depend on every secret; listing
+		// those on each line would bury the deps the config actually declares.
+		var deps []string
+		for _, d := range n.DependsOn {
+			if n.ResourceType == "secrets" || !strings.HasPrefix(d, "secrets/") {
+				deps = append(deps, d)
+			}
+		}
+		if len(deps) > 0 {
+			line += " [deps: " + strings.Join(deps, ", ") + "]"
+		}
+		lg.Printf("%s", line)
+		for _, note := range n.Notes {
+			lg.Printf("plan:           ↳ %s", note)
+		}
+	}
+	lg.Printf("plan: %d node(s), %d tracked unchanged", len(nodes), tracked)
+}
+
+// logResult records one node's execution outcome in the run log.
+func logResult(lg *runlog.Log, node *PlanNode, dur time.Duration) {
+	switch {
+	case node.ExecutionErr != nil:
+		lg.Printf("%s %s: FAILED after %s: %v", node.Action, node.ID, dur.Round(time.Millisecond), node.ExecutionErr)
+	case node.Action == ActionSkip:
+		lg.Printf("SKIP %s: %s", node.ID, node.SkipReason)
+	default:
+		lg.Printf("%s %s: ok in %s", node.Action, node.ID, dur.Round(time.Millisecond))
+	}
+}
+
+// logSummary records the execution totals and lists every failed node, so the
+// failures can be found without reading the whole log.
+func logSummary(lg *runlog.Log, nodes []*PlanNode) {
+	if lg == nil {
+		return
+	}
+	var applied, skipped int
+	var failed []string
+	for _, n := range nodes {
+		switch {
+		case n.ExecutionErr != nil:
+			failed = append(failed, n.ID)
+		case n.Action == ActionSkip:
+			skipped++
+		case n.Action == ActionTrack, n.Action == ActionAdopt, n.Action == ActionLevel:
+		default:
+			applied++
+		}
+	}
+	lg.Printf("summary: %d failed, %d applied, %d skipped", len(failed), applied, skipped)
+	for _, id := range failed {
+		lg.Printf("summary: FAILED %s", id)
+	}
 }

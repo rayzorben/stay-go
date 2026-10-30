@@ -84,6 +84,7 @@ func (e *Engine) RunUpdate(ctx context.Context, st *state.State, targets []strin
 	if err != nil {
 		return fmt.Errorf("sorting update plan: %w", err)
 	}
+	logPlan(e.opts.Log, sorted)
 
 	// ── Step 4: Display and confirm ──────────────────────────────────────────
 	hasChanges := false
@@ -103,6 +104,7 @@ func (e *Engine) RunUpdate(ctx context.Context, st *state.State, targets []strin
 		return nil
 	}
 	if e.opts.DryRun {
+		e.opts.Log.Printf("dry-run — no changes applied")
 		fmt.Fprintf(os.Stdout, "  %s(dry-run — no changes applied)%s\n\n", ansiDim, ansiReset)
 		return nil
 	}
@@ -112,6 +114,7 @@ func (e *Engine) RunUpdate(ctx context.Context, st *state.State, targets []strin
 			return fmt.Errorf("reading confirmation: %w", err)
 		}
 		if resp != ConfirmProceed {
+			e.opts.Log.Printf("aborted at confirmation prompt")
 			fmt.Fprintf(os.Stdout, "\n  Aborted.\n\n")
 			return nil
 		}
@@ -122,6 +125,7 @@ func (e *Engine) RunUpdate(ctx context.Context, st *state.State, targets []strin
 
 	// Secrets TRACK nodes touch state (sourceFile sync); upgrades do not.
 	if err := state.Save(st, e.opts.StatePath); err != nil {
+		e.opts.Log.Printf("ERROR saving state: %v", err)
 		fmt.Fprintf(os.Stderr, "warning: failed to save state: %v\n", err)
 	}
 	return executeErr

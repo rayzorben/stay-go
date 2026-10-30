@@ -24,7 +24,9 @@ internal/
     config.go                — Config struct, entry types, LoadAll (merges layers + resolves vars)
     vars.go                  — Variable resolution: ${var_name}, ~ expansion, iterative passes
   state/                     — JSON state persistence (~/.local/share/stay-go/state.json)
-  executor/                  — os/exec wrapper (capture/stream stdout+stderr, sudo, env)
+  executor/                  — os/exec wrapper (capture/stream stdout+stderr, sudo, env);
+                               records every command in the run log
+  runlog/                    — per-run log file (~/.local/share/stay-go/logs/), redaction, retention
   engine/
     resource.go              — Resource interface (ISP: Knowledger+Planner+NodeExecutor)
                                + shared helpers: DetermineAction, StateRemovals
@@ -65,10 +67,11 @@ internal/
 ### Import Layering (no circular imports)
 
 ```
-executor  ← stdlib only
+runlog    ← stdlib only
+executor  ← runlog
 config    ← yaml.v3 only
 state     ← stdlib only
-engine    ← executor + config + state   (defines Resource interface + PlanNode)
+engine    ← executor + config + state + runlog   (defines Resource interface + PlanNode)
 resource/* ← engine + config + state + executor
 cmd/stay-go ← all of the above
 ```
@@ -109,6 +112,8 @@ cmd/stay-go ← all of the above
 
 9. SaveState        — atomic write (tmp + rename)
 ```
+
+Every step is recorded in the run log (see **Run Log** below).
 
 ---
 
@@ -306,6 +311,37 @@ that converge drifting state, e.g. `dropbox-exclude-regenerable` on cachygram.
 
 ---
 
+## Run Log
+
+Every run that can plan or change anything writes one plain-text log file to
+`<state dir>/logs/` (`--log-dir` overrides; default
+`~/.local/share/stay-go/logs/`). Files are named
+`YYYYMMDD-HHMMSS.mmm-<pid>.log`, mode 0600; `latest.log` symlinks the newest
+and only the last `runlog.DefaultKeep` (100) are kept. `--show` and
+`--guest-knowledge` are not logged.
+
+Contents, all timestamped:
+- header: version, host, user, pid, args, cwd, config and state paths
+- every command the executor runs: `cmd#N $ argv` (shell-quoted), caller env,
+  then `cmd#N exit=… <duration> err=…` with captured stdout/stderr (each stream
+  capped at 64 KiB, head + tail kept). The id pairs start and end lines, which
+  interleave during parallel knowledge gathering.
+- the plan (every non-TRACK node with reason, declared deps, notes; barrier
+  deps on secrets are omitted), confirmation outcome, each node's
+  start / ok / FAILED / SKIP with duration and error, and a summary listing
+  every failed node
+- fatal errors and panics (with stack), and `run finished: exit=N`
+
+Writes are unbuffered so a crash keeps everything up to that point. Escape
+sequences are stripped. The secrets resource reports each plaintext value via
+its `Redact` hook as it is decrypted, and the log replaces it with
+`«redacted»` in everything written afterwards. `*runlog.Log` methods are
+nil-safe, so `Executor.Log` / `engine.Options.Log` may be left nil.
+
+On failure, main prints the log path after the final report.
+
+---
+
 ## Sudo Pre-Authentication
 
 If any active plan node has `NeedsSudo: true` (packages with sudo manager, groups,
@@ -394,6 +430,7 @@ stay-go [flags]
 
   -c, --config string     path to config directory (default "config")
       --state  string     path to state file (default ~/.local/share/stay-go/state.json)
+      --log-dir string    per-run log directory (default <state dir>/logs)
   -d, --debug             stream all command stdout/stderr to terminal
   -n, --dry-run           show plan without executing
   -u, --update [targets]  upgrade tracked resources to latest; bare = all,
