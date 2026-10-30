@@ -1,6 +1,7 @@
 #!/bin/sh
-# kopia-root — the kopia CLI, as root, against orohost's Google Drive repository
-# (managed by stay-go — config/hosts/orohost.yaml).
+# kopia-root — the kopia CLI, as root, against this host's repository: orohost's
+# Google Drive one, or cachygram's on orohost (managed by stay-go —
+# config/hosts/orohost/backups.yaml, config/hosts/cachygram/backups.yaml).
 #
 # The repository connection, password and caches belong to root (the server
 # runs as root), so a bare `kopia` as rayben sees no repository. Examples:

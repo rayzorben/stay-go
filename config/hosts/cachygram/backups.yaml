@@ -1,0 +1,136 @@
+# ─── Backups: Kopia → orohost ────────────────────────────────────────────────
+# Included from config/hosts/cachygram.yaml.
+#
+# Once a day, Kopia snapshots the folders listed in
+# config/files/kopia/cachygram-backup-set.conf into an encrypted, deduplicated,
+# zstd-compressed repository on orohost (/storage/backup/kopia-cachygram),
+# reached over SFTP on the tailnet. Kept: 7 daily, 4 weekly, 12 monthly.
+#
+#   What                 config/files/kopia/cachygram-backup-set.conf
+#   Back up now          kopia-backup
+#   List snapshots       kopia-backup list
+#   Restore after a wipe kopia-backup restore      (systemctl --user stop life first)
+#   Anything else        kopia-root ...            (the kopia CLI against this repository)
+#
+# Pieces:
+#   kopia-backup.timer     root; daily (and on the next boot if a day was missed)
+#   kopia-backup.service   runs /usr/local/bin/kopia-backup; retries hourly on failure
+#   /etc/kopia/kopia.env   repository password, read by kopia-root
+#   /etc/kopia/known_hosts orohost's SSH host key, so the SFTP login is verified
+#
+# ── ONE-TIME SETUP ──
+# Fill in the secret below in plaintext (stay-go encrypts it in place on the
+# next run), then uncomment the block. Store it in your password manager too:
+# without it nobody can ever decrypt these backups, and a reinstall needs it
+# to reconnect.
+#   openssl rand -base64 32     (no single quotes: kopia.env single-quotes it)
+#
+# Until it exists, kopia-cachygram-repository.sh stops with a message and the
+# timer is skipped; nothing half-configured reaches orohost.
+
+# Uncomment as a whole: an empty `kopia:` group would itself be read as a secret.
+# secrets:
+#   kopia:
+#     repository_password: <paste here>
+
+packages:
+  - kopia
+  - sqlite # sqlite3 .backup, for consistent database copies
+  - rsync
+
+files:
+  - content: |
+      # Managed by stay-go — config/hosts/cachygram/backups.yaml
+      KOPIA_CONFIG_PATH='/var/lib/kopia/repository.config'
+      KOPIA_CACHE_DIRECTORY='/var/cache/kopia'
+      KOPIA_LOG_DIR='/var/log/kopia'
+      KOPIA_CHECK_FOR_UPDATES='false'
+      KOPIA_PASSWORD='${secrets.kopia.repository_password}'
+    target: /etc/kopia/kopia.env
+    mode: "0600"
+    sudo: true
+
+  # orohost's host key (ssh-keyscan -t ed25519 orohost). Kopia's SFTP client
+  # refuses to connect without a known_hosts entry.
+  - content: |
+      orohost ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL8HBK2LExKZZhpphS7RafazQhm+IwTt0Boy5csfVTfU
+    target: /etc/kopia/known_hosts
+    mode: "0644"
+    sudo: true
+
+  - source: ${config_root}/files/kopia/kopia-root
+    target: /usr/local/bin/kopia-root
+    mode: "0755"
+    sudo: true
+
+  - source: ${config_root}/files/kopia/kopia-backup.sh
+    target: /usr/local/bin/kopia-backup
+    mode: "0755"
+    sudo: true
+
+  # The backup set. Copied, not linked: root reads it from the timer, and must
+  # not depend on the repo (a Dropbox path) being readable at that moment.
+  - source: ${config_root}/files/kopia/cachygram-backup-set.conf
+    target: /etc/kopia/backup-set.conf
+    mode: "0644"
+    sudo: true
+
+  # Restart=on-failure retries every hour while orohost is unreachable (away
+  # from home without the tailnet up), until a run succeeds.
+  - content: |
+      # Managed by stay-go — see config/hosts/cachygram/backups.yaml
+      [Unit]
+      Description=Back up cachygram to orohost (Kopia)
+      Wants=network-online.target
+      After=network-online.target tailscaled.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/kopia-backup
+      Restart=on-failure
+      RestartSec=1h
+      Nice=10
+      IOSchedulingClass=idle
+    target: /etc/systemd/system/kopia-backup.service
+    mode: "0644"
+    sudo: true
+
+  - content: |
+      # Managed by stay-go — see config/hosts/cachygram/backups.yaml
+      [Unit]
+      Description=Daily Kopia backup to orohost
+
+      [Timer]
+      OnCalendar=*-*-* 12:00:00
+      RandomizedDelaySec=30min
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+    target: /etc/systemd/system/kopia-backup.timer
+    mode: "0644"
+    sudo: true
+
+scripts:
+  # Connect (or, the first time, create) the repository and set retention.
+  # Re-runs only when the script changes.
+  - script: ${config_root}/scripts/kopia-cachygram-repository.sh
+    sudo: true
+    depends:
+      - packages: [kopia]
+      - files:
+          - /etc/kopia/kopia.env
+          - /etc/kopia/known_hosts
+          - /usr/local/bin/kopia-root
+          - ~/.ssh/id_rsa
+
+services:
+  - service: kopia-backup.timer
+    depends:
+      - packages: [kopia, sqlite, rsync, jq]
+      - files:
+          - /usr/local/bin/kopia-backup
+          - /etc/kopia/backup-set.conf
+          - /etc/systemd/system/kopia-backup.service
+          - /etc/systemd/system/kopia-backup.timer
+      - scripts: ["${config_root}/scripts/kopia-cachygram-repository.sh"]

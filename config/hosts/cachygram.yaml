@@ -517,3 +517,5 @@ commands:
         systemctl start lg-gram-thermals.service
       fi
     sudo: true
+
+backups: !include "./cachygram/backups.yaml"
