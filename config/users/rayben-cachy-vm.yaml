@@ -22,6 +22,7 @@ secrets:
     client_secret: !encrypted CLmAj/yRvCT61C9Ze3lZu/cbnVrFmnMwE7e2KkNNVKIRxpRHXNfKJYrT1cFiMoxKG+jwfqyWnBUY57TFwn5M1ahHYEhv7q+k9s3KBtkX2iSKehtu
     production_pat: !encrypted c4gdGfaIHqUuh857LIEpP/2PjNt4k1xI5CNtjRgbeqdCFSrkz8d48MqNdfWplmsZF5KiaClhxpbuNKcIMnRne1l3wPzVW0NdakYtUoBLSjpS7w==
     test_client_secret: !encrypted 3Qlb79G+Nul/5iuBKNUFUu6XMAFRBUwERcBmFnq/AE7OhjY+R6t7lw+AQEhENW7mRDkyTWAYb0eJSS12a1s34Gl4LSgNdugtKZoc8XZPctQ=
+    prod_client_secret: !encrypted Ao2yEY+mcAJsJgZwNPthyr7op3mM0sA5M4vmOJo5FV4a/HZXJ0UuRr12/7q3purYMVZwZFiJMNHZ6r6+xyLBgEcfzs822D2nhQsW13O3oUk=
   tailscale_key: !encrypted /MmhlkwH/6N6CSpTaBF20RkArtTJPIEBjOljykiYBwyZmH6zVCMabXDSCJL6yZDqaQuvPlfRiis+SZiDSXWIYqPtQQUBIkh95aGeuIElJeglr85sMR0oTPl5i+dwPfGD9fUgJmux6rnVhw==
 
 packages:
@@ -147,6 +148,56 @@ files:
       client_id = a667e418-f433-4dfa-a2f3-33132684eb93
       client_secret = ${secrets.databricks.test_client_secret}
     target: ~/.databrickscfg
+    mode: "0600"
+
+  # The sedanos box's own Databricks config: the profiles above plus [prod]
+  # (service principal) and the two U2M browser-login profiles. U2M tokens are
+  # not in this file -- auth_storage = secure keeps them in the GNOME keyring.
+  - content: |
+      ; The profile defined in the DEFAULT section is to be used as a fallback when no profile is explicitly specified.
+      [DEFAULT]
+
+      [prod-man]
+      host                = https://adb-7405608649113470.10.azuredatabricks.net
+      auth_type           = azure-client-secret
+      azure_tenant_id     = 10895ab2-90e3-4778-a157-855870900fb7
+      azure_client_id     = ca971a3e-1cc2-41b4-a76c-db4bf4c9494d
+      azure_client_secret = ${secrets.databricks.client_secret}
+
+      [test-man]
+      host                = https://adb-7405619906526803.3.azuredatabricks.net/
+      auth_type           = azure-client-secret
+      azure_tenant_id     = 10895ab2-90e3-4778-a157-855870900fb7
+      azure_client_id     = ca971a3e-1cc2-41b4-a76c-db4bf4c9494d
+      azure_client_secret = ${secrets.databricks.client_secret}
+
+      [test]
+      host          = https://adb-1871084061330888.8.azuredatabricks.net
+      auth_type     = oauth-m2m
+      client_id     = a667e418-f433-4dfa-a2f3-33132684eb93
+      client_secret = ${secrets.databricks.test_client_secret}
+
+      [prod]
+      host          = https://adb-3748765281244117.17.azuredatabricks.net
+      client_id     = 69294183-8bc8-46a7-9d22-2cf9335bf0e2
+      client_secret = ${secrets.databricks.prod_client_secret}
+      auth_type     = oauth-m2m
+
+      [prod-u2m]
+      host         = https://adb-3748765281244117.17.azuredatabricks.net
+      account_id   = 6113a58e-f9c6-4565-8ef8-3751321f8b13
+      workspace_id = 3748765281244117
+      auth_type    = databricks-cli
+
+      [__settings__]
+      auth_storage = secure
+
+      [dev-u2m]
+      host         = https://adb-7405606637327328.8.azuredatabricks.net
+      account_id   = 6113a58e-f9c6-4565-8ef8-3751321f8b13
+      workspace_id = 7405606637327328
+      auth_type    = databricks-cli
+    target: ${home.sedanos}/.databrickscfg
     mode: "0600"
 
   # Fish shell functions
