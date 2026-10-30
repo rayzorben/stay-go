@@ -1,0 +1,222 @@
+# ─── Backups: Kopia → Google Drive ───────────────────────────────────────────
+# Included from config/hosts/orohost.yaml.
+#
+# Kopia snapshots chosen folders on a schedule into an encrypted, deduplicated,
+# zstd-compressed repository in Google Drive (gdrive:Backups/kopia-orohost),
+# reached through rclone. Every snapshot stays browsable and restorable — a
+# single file, or a whole folder, as it was at any snapshot time.
+#
+#   What / how often / how long   config/scripts/kopia-policies.sh
+#   Web UI (tailnet only)         https://orohost.tawny-tailor.ts.net:51515  (user rayben)
+#   CLI                           kopia-root snapshot list /storage/apps
+#                                 kopia-root mount all /mnt/kopia
+#
+# Pieces:
+#   kopia-server.service   root; schedules snapshots, retention, maintenance; UI on 127.0.0.1:51515
+#   kopia-watchdog.timer   every 15 min: restarts the server when snapshots have stopped
+#   tailscale serve        HTTPS on the tailnet → that loopback port; nothing listens on the LAN
+#   zfs-snapshot-*.sh      each run reads a ZFS snapshot, not the live tree (consistent DBs)
+#   /etc/kopia/kopia.env   repository + UI passwords, shared by the server and kopia-root
+#   /etc/kopia/rclone.conf Google Drive OAuth client and token
+#
+# ── ONE-TIME SETUP (before the first apply that includes this file) ──
+# 1. Google Cloud console → new project → enable "Google Drive API".
+#    OAuth consent screen: External, add yourself as a test user, then PUBLISH
+#    the app ("In production"). An app left in "Testing" gets refresh tokens
+#    that expire after 7 days, and backups would quietly stop a week in.
+#    Credentials → Create OAuth client ID → "Desktop app" → note the id/secret.
+#    (Your own client, not rclone's built-in one, which every rclone user shares
+#    and which Google throttles hard.)
+# 2. On a machine with a browser (rclone in a throwaway config):
+#      rclone config create gdrive drive client_id=<id> client_secret=<secret> \
+#        scope=drive.file --config /tmp/gdrive.conf
+#      grep '^token' /tmp/gdrive.conf; rm /tmp/gdrive.conf
+#    drive.file = rclone can only see files it created itself, not the rest of
+#    your Drive. Keep using the same client id: files created under one OAuth
+#    client are invisible to another under this scope.
+# 3. Fill in the secrets below in plaintext (stay-go encrypts them in place on
+#    the next run). Store repository_password in your password manager too —
+#    without it the backups cannot be decrypted by anyone, ever.
+#      repository_password / ui_password:  openssl rand -base64 32
+#      (no single quotes: kopia.env single-quotes every value)
+#
+# Until all five exist, kopia-repository.sh stops with a message and everything
+# downstream is skipped; nothing half-configured reaches Drive.
+#
+# Initial upload: ~250 GB. Google caps uploads at 750 GB/day per account, so
+# the first snapshot finishes in one go; each later run uploads only changes.
+
+# Uncomment as a whole: an empty `kopia:` group would itself be read as a secret.
+secrets:
+  kopia:
+    repository_password: !encrypted ofUucJKw/b0CgVc+8ZSLX5jlVE0KAo1z1AKWiDqnFibizyRwJRYIQiN5Gq8qNyosewOVRhdx+w==
+    ui_password: !encrypted RbSVll1HM1Wc34JzXn8ISNQokpDyBtkCHq3kMkfm0IQDC01jwXoo0yjuqfcI+JVr8iE84bIQPw==
+    gdrive_client_id: !encrypted 6D1dNDmMfYitzEYvhzKcKxSAWezhm8NpBXPbfJm40EWyI6PskNwXMV2Wxs/WbkEFGv1/JAo4TY4ltuil73xmMOm4Bnq8bE7XRcRnYckzfIFTgjMVZw79j7XwKNvsrvC5Orb5VhBWwBIpWWwQYCeXj9LyaF0=
+    gdrive_client_secret: !encrypted 7KfBFUpZhrTRWsE1uSevxUfxuNjBmoxyVWBEiEY/6GTttkQGvNyWuqP0MZg3fjY2iAVGtZbcH6e81HVHqT31rJs6FzkidJWA8Avda0uLMQ==
+    gdrive_token: !encrypted rksxQmnj5htpjnkJOACeAu3LSHA7Bubf0tro0JEr0UD7SaucoeWiEwYdH/3pB5eHta9eOmRL7iaEvDvcnMghIOlXNNt+HirrE2DwpnqKKmBc2GFE2OOFOgcR2J04DDKtU9v8mV8WcE18+NNDiIbtRagk4pmdzLy6TRQH/Ce2THGSHYWTnNSY49XA2nMTp4prIgKyP660WC2mrcc1YqazJl5MIq2Tw/kV6hXluBs/YGIol7W1VH5RWTDe4uptIzXu+E3uW20Ue6SaPVdAjIhnW2y628Td0utfFEhfVrY38JsIsaAEQNZyhn0U2vCIl2LUqh5hl6lMHWOC3jvAihf0Vbqi+d1yml6TSiyQdHZeknedv817CDG6m+MnavDyNwqAGlT8JegXpxvPTDJKayzPK25cGtwZfYUCyaY4DVSXiuymiGNSTs2ZHVLbIj8gQqb+ej2OgauuJY6ex7pAQfkDQaxSAGkqY+qSvXHHM2zdSD14+6l5MeG35wO4rrM03TlGgUozkqNkBicZbk5iR9YA6glgYDkv2KDUOEudCTz/iMuxqDwtfjBuDZ59fs+79S1M1oKfPCi0wgMCq6mACM1kj0K4HGJtSAR3ml4Vq7sDeIAGQuea/dmi+b5XuQ+4RhEnNpt5tO/4YwRknLO9KQH2fSIFjrM+FeUtPVjCiWPN7nkLbTtt74P8M/9mjcDi
+
+packages:
+  - kopia
+  - rclone
+
+files:
+  # Single-quoted so systemd's EnvironmentFile and sh's `.` (kopia-root) read
+  # the same values. Two users on the server: rayben is the UI login, and
+  # server-control is what `kopia server refresh` authenticates as.
+  - content: |
+      # Managed by stay-go — config/hosts/orohost/backups.yaml
+      KOPIA_CONFIG_PATH='/var/lib/kopia/repository.config'
+      KOPIA_CACHE_DIRECTORY='/var/cache/kopia'
+      KOPIA_LOG_DIR='/var/log/kopia'
+      KOPIA_CHECK_FOR_UPDATES='false'
+      KOPIA_PASSWORD='${secrets.kopia.repository_password}'
+      KOPIA_SERVER_USERNAME='rayben'
+      KOPIA_SERVER_PASSWORD='${secrets.kopia.ui_password}'
+      KOPIA_SERVER_CONTROL_USER='server-control'
+      KOPIA_SERVER_CONTROL_PASSWORD='${secrets.kopia.ui_password}'
+    target: /etc/kopia/kopia.env
+    mode: "0600"
+    sudo: true
+
+  # rclone writes refreshed access tokens back into this file. That is fine:
+  # stay-go tracks this entry by its config, not the file's bytes, and the
+  # refresh token it is rewritten from never changes.
+  - content: |
+      # Managed by stay-go — config/hosts/orohost/backups.yaml
+      [gdrive]
+      type = drive
+      scope = drive.file
+      client_id = ${secrets.kopia.gdrive_client_id}
+      client_secret = ${secrets.kopia.gdrive_client_secret}
+      token = ${secrets.kopia.gdrive_token}
+    target: /etc/kopia/rclone.conf
+    mode: "0600"
+    sudo: true
+
+  - source: ${config_root}/files/kopia/zfs-snapshot-before.sh
+    target: /etc/kopia/zfs-snapshot-before.sh
+    mode: "0755"
+    sudo: true
+
+  - source: ${config_root}/files/kopia/zfs-snapshot-after.sh
+    target: /etc/kopia/zfs-snapshot-after.sh
+    mode: "0755"
+    sudo: true
+
+  - source: ${config_root}/files/kopia/kopia-root
+    target: /usr/local/bin/kopia-root
+    mode: "0755"
+    sudo: true
+
+  - source: ${config_root}/files/kopia/kopia-server.service
+    target: /etc/systemd/system/kopia-server.service
+    mode: "0644"
+    sudo: true
+
+  # Restarts the server when snapshots stop (see the script for why).
+  - source: ${config_root}/files/kopia/kopia-watchdog.sh
+    target: /usr/local/bin/kopia-watchdog
+    mode: "0755"
+    sudo: true
+
+  - content: |
+      # Managed by stay-go — see config/hosts/orohost/backups.yaml
+      [Unit]
+      Description=Restart kopia-server when backups have stopped
+      After=kopia-server.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/kopia-watchdog
+    target: /etc/systemd/system/kopia-watchdog.service
+    mode: "0644"
+    sudo: true
+
+  - content: |
+      # Managed by stay-go — see config/hosts/orohost/backups.yaml
+      [Unit]
+      Description=Check Kopia backups every 15 minutes
+
+      [Timer]
+      OnBootSec=30min
+      OnUnitActiveSec=15min
+      AccuracySec=1min
+
+      [Install]
+      WantedBy=timers.target
+    target: /etc/systemd/system/kopia-watchdog.timer
+    mode: "0644"
+    sudo: true
+
+scripts:
+  # Connect (or, the first time, create) the repository. Re-runs only when the
+  # script changes; rotating a secret is applied by the server restart below.
+  - script: ${config_root}/scripts/kopia-repository.sh
+    sudo: true
+    depends:
+      - packages: [kopia, rclone]
+      - files: [/etc/kopia/kopia.env, /etc/kopia/rclone.conf, /usr/local/bin/kopia-root]
+
+  # Retention, compression, and the list of folders backed up.
+  - script: ${config_root}/scripts/kopia-policies.sh
+    sudo: true
+    depends:
+      - scripts: ["${config_root}/scripts/kopia-repository.sh"]
+      - files: [/etc/kopia/zfs-snapshot-before.sh, /etc/kopia/zfs-snapshot-after.sh]
+
+commands:
+  # The services resource restarts a unit only when its own entry changes, so
+  # edits to the unit file or kopia.env (a rotated password) are picked up
+  # here: reload, restart if running, and stamp what was applied. On the first
+  # apply the server is not running yet and try-restart does nothing; the
+  # service entry below then starts it. A checksum stamp rather than a copy,
+  # because kopia.env holds the passwords.
+  - name: kopia server reload
+    command: |
+      systemctl daemon-reload
+      systemctl try-restart kopia-server.service
+      mkdir -p /var/lib/stay-go/applied
+      sha256sum /etc/systemd/system/kopia-server.service /etc/kopia/kopia.env > /var/lib/stay-go/applied/kopia-server.sha256
+    check: |
+      sudo -n sha256sum --check --status /var/lib/stay-go/applied/kopia-server.sha256 \
+        || { echo "kopia-server.service or kopia.env changed since the server last started"; exit 1; }
+    sudo: true
+    depends:
+      - packages: [kopia]
+      - scripts: ["${config_root}/scripts/kopia-repository.sh"]
+
+  # Publish the loopback-only UI to the tailnet over HTTPS, with a real
+  # certificate for orohost.tawny-tailor.ts.net. Persists in tailscaled's
+  # state across reboots.
+  - name: kopia tailscale serve
+    command: tailscale serve --bg --https=51515 http://127.0.0.1:51515
+    check: |
+      tailscale serve status --json | jq -e 'any(.Web[]?; .Handlers["/"].Proxy == "http://127.0.0.1:51515")' >/dev/null \
+        || { echo "the Kopia UI is not published on the tailnet"; exit 1; }
+    rollback: tailscale serve --https=51515 off
+    sudo: true
+    depends:
+      - packages: [tailscale, jq]
+      - commands: [tailscale]
+      - services: [kopia-server.service] # never publish a port with nothing behind it
+
+services:
+  # Started last: with the repository connected and the policies written, the
+  # server schedules /storage/apps the moment it comes up.
+  - service: kopia-server.service
+    depends:
+      - packages: [kopia]
+      - files: [/etc/systemd/system/kopia-server.service, /etc/kopia/kopia.env]
+      - scripts:
+          - ${config_root}/scripts/kopia-repository.sh
+          - ${config_root}/scripts/kopia-policies.sh
+      - commands: [kopia server reload]
+
+  - service: kopia-watchdog.timer
+    depends:
+      - packages: [jq]
+      - services: [kopia-server.service]
+      - files:
+          - /usr/local/bin/kopia-watchdog
+          - /etc/systemd/system/kopia-watchdog.service
+          - /etc/systemd/system/kopia-watchdog.timer

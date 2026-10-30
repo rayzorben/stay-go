@@ -18,12 +18,37 @@ secrets:
     ha_password: !encrypted XJ9s+kHkKn4Zi5MeSGTHN0KMOl94cTkUJYDDGS+Wqw9KJBBGYPO+dDRqraMli134vg/s
 
 services:
-  - sshd
+  - service: sshd
+    depends:
+      - packages: [openssh]
+
+  # ZFS import and mount at boot. These were enabled by hand; declaring them
+  # means a rebuild gets them too. Everything under /storage hangs off them.
+  - service: zfs-import-cache
+    depends:
+      - packages: [zfs-utils]
+  - service: zfs-import.target
+    depends:
+      - packages: [zfs-utils]
+  - service: zfs-mount
+    depends:
+      - packages: [zfs-utils]
+  - service: zfs.target
+    depends:
+      - packages: [zfs-utils]
+
+  # Monthly scrub of the pool (zfs-utils ships the timer template). A scrub
+  # reads every block, so on the USB raidz1 it is a few hours of heavy I/O;
+  # Persistent= catches a missed month after downtime.
+  - service: zfs-scrub-monthly@storage.timer
+    depends:
+      - packages: [zfs-utils]
 
 packages:
   - solaar
   - cachyos-zfs
   - zfs-utils
+  - openssh
 
 files:
   - source: ${config_root}/files/config/solaar.yaml
@@ -41,6 +66,7 @@ files:
       password = "${secrets.neolink.driveway_password}"
       address = "192.168.1.22:9000"
       stream = "mainStream"
+      push_notifications = false
     target: /storage/apps/neolink/neolink.toml
     sudo: true
 
@@ -56,6 +82,77 @@ files:
   - content: |
       ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCjKda239tzwtWEM3Z17r2U6+TCak6zXX8CmU7fLJy/17NGfTF9RvfvoJQcme2CXRG41niTj27tLn/cWRI+dbslTpKX4GTxKc1DhrNLjRXv1Q2QkfCLJx6ny0TlzFf/Ti8xruErHx6ldHVNMQd9qqK4SG6KdUFmp9lntefJ+2EqNNi0Vjyj4QfM6mxu/uQSDsYReHyI6b62b+teckVKv+SCke0Ncm9HdQXbLmry+4Yz6RPcLFCjd3673p5pL0H2FNhx/xDRFmK61+c3hwmD9p4+iItKl+x4NhY0/qDYGIivRCpODicyV910kADVa+WlAs1EINUKr5ivjJx2OMC9lbiz rayben@raycachy
     target: /storage/apps/sftp/keys/ha/raycachy.pub
+    mode: "0644"
+    sudo: true
+
+  # Start docker only after the pool is mounted. Without it nothing orders the
+  # two, and a container that starts first bind-mounts the empty /storage
+  # mountpoint: docker creates the missing host paths and the app comes up on
+  # blank data. Wants=, not Requires=, so a failed import still leaves docker
+  # (and portainer) reachable for repair.
+  - content: |
+      # Managed by stay-go — see config/hosts/orohost.yaml
+      [Unit]
+      Wants=zfs-mount.service
+      After=zfs-mount.service
+    target: /etc/systemd/system/docker.service.d/10-after-zfs.conf
+    mode: "0644"
+    sudo: true
+
+  # ── Never sleep ──
+  # 2026-10-09: orohost booted at 14:09 and suspended at 14:24. GDM's own
+  # gnome-settings-daemon (gsd-power, running for the login screen) suspends
+  # after 15 minutes with no keyboard or mouse input at the machine; SSH
+  # sessions, containers and running jobs do not count as activity. A server
+  # must not care about any of that, so sleep is shut off at every layer —
+  # any one of them alone is enough, together a single regression can't undo it:
+  #   1. sleep.conf: systemd refuses every suspend/hibernate request outright
+  #   2. the sleep targets are masked (command below)
+  #   3. logind ignores suspend/hibernate keys, the lid, and idle
+  #   4. GDM's greeter is told not to try in the first place
+  # The power button still powers off cleanly; that is left alone on purpose.
+  - content: |
+      # Managed by stay-go — see config/hosts/orohost.yaml (Never sleep).
+      [Sleep]
+      AllowSuspend=no
+      AllowHibernation=no
+      AllowSuspendThenHibernate=no
+      AllowHybridSleep=no
+    target: /etc/systemd/sleep.conf.d/10-server-no-sleep.conf
+    mode: "0644"
+    sudo: true
+
+  - content: |
+      # Managed by stay-go — see config/hosts/orohost.yaml (Never sleep).
+      [Login]
+      HandleSuspendKey=ignore
+      HandleHibernateKey=ignore
+      HandleLidSwitch=ignore
+      HandleLidSwitchExternalPower=ignore
+      HandleLidSwitchDocked=ignore
+      IdleAction=ignore
+    target: /etc/systemd/logind.conf.d/10-server-no-sleep.conf
+    mode: "0644"
+    sudo: true
+
+  # GDM's dconf profile normally ships only in /usr/share/dconf/profile/gdm
+  # (user-db + the greeter defaults). This copy in /etc takes precedence and adds
+  # a system-db so the greeter can carry the override below. It takes effect the
+  # next time the greeter starts; layers 1–2 already block sleep until then.
+  - content: |
+      user-db:user
+      system-db:gdm
+      file-db:/usr/share/gdm/greeter-dconf-defaults
+    target: /etc/dconf/profile/gdm
+    mode: "0644"
+    sudo: true
+
+  - content: |
+      # Managed by stay-go — see config/hosts/orohost.yaml (Never sleep).
+      [org/gnome/settings-daemon/plugins/power]
+      sleep-inactive-ac-type='nothing'
+      sleep-inactive-battery-type='nothing'
+    target: /etc/dconf/db/gdm.d/10-no-sleep
     mode: "0644"
     sudo: true
 
@@ -127,15 +224,72 @@ commands:
   # and a SKIPped dep propagates as unmet and would drag both containers down
   # with it. Both udevadm calls are idempotent; the command re-runs only when
   # its own text changes.
+  #
+  # It re-runs only when its own text changes, never when the rule changes, so
+  # the check compares the rule with the copy taken at the last reload and
+  # confirms both aliases exist.
   - name: media gpu udev reload
     command: |
       udevadm control --reload-rules
       udevadm trigger --subsystem-match=drm --action=change
       udevadm settle
+      install -Dm644 /etc/udev/rules.d/99-media-gpu.rules /var/lib/stay-go/applied/99-media-gpu.rules
+    check: |
+      cmp -s /etc/udev/rules.d/99-media-gpu.rules /var/lib/stay-go/applied/99-media-gpu.rules \
+        || { echo "99-media-gpu.rules changed since the last udev reload"; exit 1; }
+      test -e /dev/dri/plex-render && test -e /dev/dri/jellyfin-render \
+        || { echo "a /dev/dri media alias is missing"; exit 1; }
     sudo: true
     rollback: |
       udevadm control --reload-rules
       udevadm trigger --subsystem-match=drm --action=change
+      rm -f /var/lib/stay-go/applied/99-media-gpu.rules
+
+  # systemd reads the docker drop-in above only on daemon-reload (or reboot).
+  # Ordering is all it changes, so docker itself is not restarted.
+  - name: docker after zfs reload
+    command: systemctl daemon-reload
+    check: |
+      systemctl show docker.service -p After --value | grep -qw zfs-mount.service \
+        || { echo "docker.service is not yet ordered after zfs-mount.service"; exit 1; }
+    sudo: true
+
+  # Never sleep, layer 2: mask every sleep target. Hand-masked on 2026-10-09
+  # after the suspend, except suspend-then-hibernate, which was missed.
+  - name: mask sleep targets
+    command: |
+      systemctl mask sleep.target suspend.target hibernate.target \
+        hybrid-sleep.target suspend-then-hibernate.target
+    check: |
+      for t in sleep suspend hibernate hybrid-sleep suspend-then-hibernate; do
+        systemctl is-enabled $t.target 2>/dev/null | grep -qx masked \
+          || { echo "$t.target is not masked"; exit 1; }
+      done
+    rollback: |
+      systemctl unmask sleep.target suspend.target hibernate.target \
+        hybrid-sleep.target suspend-then-hibernate.target
+    sudo: true
+
+  # Never sleep, layer 3: logind reads its drop-ins only on start or reload.
+  # A reload keeps every session alive. Stamp check, as for the udev rule.
+  - name: logind reload no-sleep
+    command: |
+      systemctl reload systemd-logind
+      install -Dm644 /etc/systemd/logind.conf.d/10-server-no-sleep.conf /var/lib/stay-go/applied/logind-no-sleep.conf
+    check: |
+      cmp -s /etc/systemd/logind.conf.d/10-server-no-sleep.conf /var/lib/stay-go/applied/logind-no-sleep.conf \
+        || { echo "logind no-sleep drop-in changed since the last reload"; exit 1; }
+    sudo: true
+
+  # Never sleep, layer 4: compile /etc/dconf/db/gdm.d into the gdm database.
+  - name: dconf update gdm no-sleep
+    command: |
+      dconf update
+      install -Dm644 /etc/dconf/db/gdm.d/10-no-sleep /var/lib/stay-go/applied/dconf-gdm-no-sleep
+    check: |
+      test -f /etc/dconf/db/gdm && cmp -s /etc/dconf/db/gdm.d/10-no-sleep /var/lib/stay-go/applied/dconf-gdm-no-sleep \
+        || { echo "gdm dconf override not compiled yet"; exit 1; }
+    sudo: true
 
   # ─── media acquisition stack ───────────────────────────────────────────────
   #
@@ -219,6 +373,8 @@ containers:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /storage/apps/portainer:/data
+    depends:
+      - packages: [docker]
 
   frigate:
     container_name: frigate
@@ -251,6 +407,8 @@ containers:
       FRIGATE_RTSP_PASSWORD: "${secrets.frigate.rtsp_password}"
       MQTT_PASSWORD: "${secrets.frigate.mqtt_password}"
       PLUS_API_KEY: "${secrets.frigate.plus_api_key}"
+    depends:
+      - packages: [docker]
 
   adguardhome:
     container_name: adguardhome
@@ -264,6 +422,8 @@ containers:
         - 8081:80/tcp
         - 3000:3000/tcp
     image: adguard/adguardhome
+    depends:
+      - packages: [docker]
 
   neolink:
     container_name: neolink
@@ -274,6 +434,7 @@ containers:
     ports:
       - "8556:8554"
     depends:
+      - packages: [docker]
       - files: [/storage/apps/neolink/neolink.toml]
 
   plex:
@@ -702,3 +863,15 @@ compose:
   - path: ${config_root}/files/docker/photoprism
     depends:
       - packages: [docker]
+
+  # Footage browser for Frigate's recordings (timeline + H.264 transcoding
+  # player) at http://orohost:5080 — locally built image, rebuilt on each up.
+  - path: ${config_root}/files/docker/frigate-review
+    depends:
+      - packages: [docker]
+
+# Kopia → Google Drive: what is backed up, the server, the tailnet UI.
+backups: !include "./orohost/backups.yaml"
+
+# Restarts neolink when the driveway camera stops recording.
+neolink_watchdog: !include "./orohost/neolink-watchdog.yaml"

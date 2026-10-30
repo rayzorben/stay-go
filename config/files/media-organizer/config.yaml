@@ -1,0 +1,44 @@
+storage:
+  watch_directory: "/storage/dropbox/Dropbox/Camera Uploads"
+  target_directory: "/storage/dropbox/Dropbox/Photos"
+  error_directory: "/storage/dropbox/Dropbox/Photos/Errors"
+
+metadata_tracking:
+  use_custom_tag: true
+  custom_tag_namespace: "XMP-custom"
+  custom_tag_name: "AutomationProcessed"
+  original_name_tag: "XMP:OriginalFileName"
+
+organization:
+  # Tokens: {year} {month} {day} {hour} {minute} {second}
+  #         {description} {original_name} {ext} {camera_make} {camera_model}
+  # [Square brackets] mark an optional section: its content — separators
+  # included — is emitted only when at least one token inside it has a value.
+  default_renaming_pattern: "{year}/{month}/{year}-{month}-{day}[_{description}]_{original_name}.{ext}"
+  # Substituted when no description can be parsed from the filename.
+  fallback_description: ""
+  filename_parsers:
+    - '^(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})_(?P<description>.+)$'
+    - '^(?P<year>\d{4})(?P<month>\d{2})(?P<day>\d{2})_(?P<description>.+)$'
+
+# iPhone uploads are mostly .heic/.mov; without them only jpg/png ever moved.
+extensions:
+  - .jpg
+  - .jpeg
+  - .png
+  - .heic
+  - .heif
+  - .cr2
+  - .nef
+  - .webp
+  - .mp4
+  - .mov
+  - .m4v
+
+runtime:
+  # The auto-generated ExifTool namespace config is written next to this.
+  log_file: "~/.local/state/media-organizer/media_organizer.log"
+  stability_checks: 3          # consecutive unchanged polls before "done"
+  stability_interval: 1.0      # seconds between polls
+  stability_timeout: 300.0     # give up waiting after this many seconds
+  process_existing_on_start: true

@@ -32,15 +32,31 @@ packages:
   - slurp
   - wayfreeze
   - satty
+  - psmisc # killall, used by screenshot.sh
+  - lib32-fontconfig # fc-cache-32, used by the windows fonts command
   - cachyos-gaming-meta
   - cachyos-gaming-applications
   - 7zip
   - spotify-launcher
+  - jq # verterm dropdown scripts
+  - attr # setfattr, used by the mudengine dropbox ignores command
+  - python-watchdog # media-organizer
+  - python-yaml # media-organizer
+  - python-pyexiftool # media-organizer (AUR)
+  - perl-image-exiftool # media-organizer
 
 services:
   - service: gcr-ssh-agent.socket
     user: true
   - service: tailscaled.service
+  - service: media-organizer.service
+    user: true
+    depends:
+      - packages: [python-watchdog, python-yaml, python-pyexiftool, perl-image-exiftool]
+      - files:
+          - ~/.config/systemd/user/media-organizer.service
+          - ~/.local/lib/media-organizer/media_organizer.py
+          - ~/.config/media-organizer/config.yaml
 
 files:
   # SSH keys and config (written first; dotfiles clone depends on them)
@@ -58,11 +74,11 @@ files:
   # ── Folder links into ~ ──────────────────────────────────────────────────
   # ~/code and ~/work are the stable paths everything else refers to, so a
   # Dropbox reorganisation only changes these two sources.
-  - source: ~/Dropbox/PC/development
+  - source: ~/Dropbox/Ray/Code
     target: ~/code
     symlink: true
 
-  - source: ~/Dropbox/PC
+  - source: ~/Dropbox/Ray/Work
     target: ~/work
     symlink: true
 
@@ -76,6 +92,15 @@ files:
     target: ~/.config/niri/verterm-dropdown-toggle.sh
     symlink: true
     mode: "+x"
+    depends:
+      - packages: [jq]
+
+  - source: ${config_root}/files/niri/verterm-dropdown-autohide.sh
+    target: ~/.config/niri/verterm-dropdown-autohide.sh
+    symlink: true
+    mode: "+x"
+    depends:
+      - packages: [jq]
 
   - source: ${config_root}/files/niri/rules.kdl
     target: ~/.config/niri/rules.kdl
@@ -175,6 +200,38 @@ files:
     mode: "0755"
     sudo: true
 
+  # ── Media organizer ──────────────────────────────────────────────────────
+  # Watches Dropbox's Camera Uploads and moves each photo/video into
+  # Photos/YYYY/MM/, tagging it (XMP) so it is never processed twice. Failures
+  # go to Photos/Errors. Runs as a user service (linger keeps it up headless).
+  # Copied, not symlinked: Dropbox must not rewrite it while it runs. After
+  # changing the script, `systemctl --user restart media-organizer`.
+  - source: ${config_root}/files/media-organizer/media_organizer.py
+    target: ~/.local/lib/media-organizer/media_organizer.py
+    mode: "0755"
+
+  - source: ${config_root}/files/media-organizer/config.yaml
+    target: ~/.config/media-organizer/config.yaml
+
+  - content: |
+      [Unit]
+      Description=Organize Dropbox Camera Uploads into Photos
+
+      [Service]
+      Type=simple
+      # Arch installs exiftool under vendor_perl, which only login shells add
+      Environment=PATH=/usr/bin:/usr/bin/vendor_perl
+      ExecStart=/usr/bin/python3 %h/.local/lib/media-organizer/media_organizer.py -c %h/.config/media-organizer/config.yaml
+      # Exits non-zero if /storage isn't mounted yet; keep retrying
+      Restart=on-failure
+      RestartSec=30
+      KillSignal=SIGTERM
+      TimeoutStopSec=30
+
+      [Install]
+      WantedBy=default.target
+    target: ~/.config/systemd/user/media-organizer.service
+
 ghostty: !include "./commands/ghostty.yaml"
 
 commands:
@@ -205,7 +262,7 @@ commands:
       fc-cache-32 --force
     sudo: true
     depends:
-      - packages: [7zip]
+      - packages: [7zip, lib32-fontconfig] # lib32-fontconfig: fc-cache-32
       - files: [~/Downloads/isos/Win11_25H2_English_x64_v2.iso]
       - folders: ["!/usr/local/share/fonts/WindowsFonts"]
       
@@ -231,6 +288,7 @@ commands:
       done
       git checkout -- build
     depends:
+      - packages: [attr, git]
       - folders: [~/code/mudengine/.git]
 
 scripts:
@@ -279,6 +337,8 @@ containers:
 
 json:
   - file: ~/.config/DankMaterialShell/settings.json
+    depends:
+      - commands: [install dms]
     json:
       use24HourClock: false
       showSeconds: true

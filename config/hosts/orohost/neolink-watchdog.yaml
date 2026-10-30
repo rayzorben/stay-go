@@ -1,0 +1,49 @@
+# Neolink watchdog: restarts the neolink container when it stops serving the
+# driveway camera (see the script for why). A host timer rather than a
+# container healthcheck: Docker never restarts an unhealthy container on its
+# own, and the signal comes from Frigate, not from neolink.
+
+files:
+  - source: ${config_root}/files/neolink/neolink-watchdog.sh
+    target: /usr/local/bin/neolink-watchdog
+    mode: "0755"
+    sudo: true
+
+  - content: |
+      # Managed by stay-go — see config/hosts/orohost/neolink-watchdog.yaml
+      [Unit]
+      Description=Restart neolink when it stops serving the driveway camera
+      After=docker.service
+      Requires=docker.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/neolink-watchdog
+    target: /etc/systemd/system/neolink-watchdog.service
+    mode: "0644"
+    sudo: true
+
+  - content: |
+      # Managed by stay-go — see config/hosts/orohost/neolink-watchdog.yaml
+      [Unit]
+      Description=Check neolink every minute
+
+      [Timer]
+      OnBootSec=5min
+      OnUnitActiveSec=1min
+      AccuracySec=10s
+
+      [Install]
+      WantedBy=timers.target
+    target: /etc/systemd/system/neolink-watchdog.timer
+    mode: "0644"
+    sudo: true
+
+services:
+  - service: neolink-watchdog.timer
+    depends:
+      - packages: [docker]
+      - files:
+          - /usr/local/bin/neolink-watchdog
+          - /etc/systemd/system/neolink-watchdog.service
+          - /etc/systemd/system/neolink-watchdog.timer

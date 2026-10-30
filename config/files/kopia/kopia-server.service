@@ -1,0 +1,34 @@
+# Managed by stay-go — see config/hosts/orohost.yaml (Backups: Kopia → Google Drive).
+#
+# The Kopia server is the backup engine and the UI in one process: it runs every
+# source's scheduled snapshot, retention and repository maintenance, and serves
+# the web UI used to browse and restore. It listens on loopback only, without
+# TLS (--insecure); `tailscale serve` terminates HTTPS in front of it, so the UI
+# is reachable from the tailnet and nowhere else.
+#
+# Runs as root: /storage/apps holds files owned by a dozen container uids, and the
+# before-snapshot action has to be able to `zfs snapshot`.
+
+[Unit]
+Description=Kopia backup server (orohost → Google Drive)
+Documentation=https://kopia.io/docs/
+Wants=network-online.target zfs-mount.service
+After=network-online.target zfs-mount.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/kopia/kopia.env
+ExecStart=/usr/bin/kopia server start --address=http://127.0.0.1:51515 --insecure
+Restart=always
+RestartSec=30
+# Restart daily. The rclone child the server talks to Google Drive through
+# wore out after a week's uptime (dropped every request, 2026-10-17 to 10-27)
+# and Kopia never restarts it; a restart starts a fresh one. An upload cut off
+# here resumes from its last checkpoint. kopia-watchdog catches it in between.
+RuntimeMaxSec=1d
+# Hashing and zstd yield the CPU to plex/jellyfin/frigate. (No IOSchedulingClass:
+# ZFS has its own I/O scheduler and ignores the kernel's ioprio.)
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

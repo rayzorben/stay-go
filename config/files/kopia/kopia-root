@@ -1,0 +1,16 @@
+#!/bin/sh
+# kopia-root — the kopia CLI, as root, against orohost's Google Drive repository
+# (managed by stay-go — config/hosts/orohost.yaml).
+#
+# The repository connection, password and caches belong to root (the server
+# runs as root), so a bare `kopia` as rayben sees no repository. Examples:
+#
+#   kopia-root snapshot list /storage/apps
+#   kopia-root ls -l k1a2b3c4/immich/postgres
+#   kopia-root restore k1a2b3c4/sonarr/config /tmp/sonarr-config
+#   kopia-root mount all /mnt/kopia      # every snapshot as a browsable folder tree
+[ "$(id -u)" -eq 0 ] || exec sudo "$0" "$@"
+set -a
+. /etc/kopia/kopia.env
+set +a
+exec /usr/bin/kopia "$@"

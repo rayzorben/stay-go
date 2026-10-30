@@ -1,0 +1,24 @@
+# frigate-review: timeline + transcoding player for Frigate's recordings.
+# Reads segments straight off disk (read-only); events come from Frigate's
+# internal API on :5000. Browse at http://orohost:5080
+services:
+  frigate-review:
+    container_name: frigate-review
+    build: .
+    image: frigate-review:local
+    pull_policy: build # rebuild on every `compose up` so source edits land
+    restart: unless-stopped
+    ports:
+      - 5080:5080
+    devices:
+      - /dev/dri/renderD128:/dev/dri/renderD128 # RX 9070, VA-API decode/encode
+    environment:
+      TZ: America/Phoenix
+      FRIGATE_URL: http://host.docker.internal:5000
+      HWACCEL: vaapi
+      CACHE_MAX_GB: "40"
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - /storage/frigate/recordings/recordings:/recordings:ro
+      - /storage/apps/frigate-review/cache:/cache

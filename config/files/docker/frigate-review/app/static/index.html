@@ -1,0 +1,779 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Footage Review</title>
+<!-- NOTE: rendered through stay-go's compose renderer — never write a dollar
+     sign followed by a brace or paren, and no tilde characters. -->
+<style>
+:root {
+  --bg: #0d0f13; --panel: #151820; --panel2: #1c2029; --line: #2a2f3a;
+  --text: #e6e8ee; --dim: #8a91a0; --accent: #4f8cff; --accent2: #7aa7ff;
+  --sel: rgba(79,140,255,.18); --selEdge: #4f8cff; --rec: #2f6f4f; --play: #ff5d5d;
+  --person: #ffb347; --car: #5ec8ff; --dog: #b48cff; --cat: #ff7ac6; --other: #9aa3b5;
+  --row: 76px; --label: 150px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text);
+  font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+button, select, input { font: inherit; color: var(--text); background: var(--panel2);
+  border: 1px solid var(--line); border-radius: 7px; padding: 5px 9px; }
+button { cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+button.ghost { background: transparent; }
+input[type=date], input[type=time] { color-scheme: dark; }
+header { display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 20; }
+header h1 { font-size: 15px; margin: 0 12px 0 0; letter-spacing: .3px; }
+header .grp { display: flex; gap: 6px; align-items: center; }
+header .sp { flex: 1; }
+.muted { color: var(--dim); }
+.pill { font-size: 11px; padding: 2px 7px; border-radius: 99px; background: var(--panel2);
+  border: 1px solid var(--line); color: var(--dim); }
+
+#timeline { margin: 12px 16px 0; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 12px; overflow: hidden; user-select: none; }
+.tl-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  border-bottom: 1px solid var(--line); }
+.tl-head .range { font-variant-numeric: tabular-nums; }
+.tl-body { position: relative; }
+.ruler, .row { display: flex; }
+.ruler .lbl, .row .lbl { width: var(--label); flex: none; padding: 6px 10px;
+  border-right: 1px solid var(--line); }
+.row .lbl { display: flex; flex-direction: column; justify-content: center; gap: 2px;
+  background: var(--panel); }
+.row .lbl b { font-weight: 600; font-size: 12px; }
+.row .lbl span { font-size: 11px; color: var(--dim); }
+.track { position: relative; flex: 1; overflow: hidden; }
+.ruler { height: 28px; border-bottom: 1px solid var(--line); background: var(--panel2); }
+.ruler .track { cursor: grab; }
+.tick { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--line);
+  font-size: 11px; color: var(--dim); padding: 6px 0 0 4px; white-space: nowrap; }
+.tick.major { border-left-color: #3b4252; color: var(--text); }
+.row { height: var(--row); border-bottom: 1px solid var(--line); }
+.row .track { background: #0a0c10; cursor: crosshair; }
+.thumb { position: absolute; top: 0; height: calc(var(--row) - 10px); object-fit: cover;
+  border-right: 1px solid #000; opacity: .95; background: #111; }
+.cov { position: absolute; bottom: 0; height: 4px; background: var(--rec); }
+.ev { position: absolute; bottom: 4px; height: 6px; border-radius: 2px; opacity: .95;
+  cursor: pointer; }
+.ev:hover { outline: 1px solid #fff; }
+.overlay { position: absolute; top: 0; bottom: 0; pointer-events: none; }
+.selband { position: absolute; top: 0; bottom: 0; background: var(--sel);
+  border-left: 2px solid var(--selEdge); border-right: 2px solid var(--selEdge); pointer-events: none; }
+.playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--play);
+  pointer-events: none; box-shadow: 0 0 6px var(--play); }
+.hoverline { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,.45);
+  pointer-events: none; }
+#hovercard { position: fixed; z-index: 50; pointer-events: none; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 10px; padding: 6px; display: none;
+  box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+#hovercard img { display: block; width: 360px; border-radius: 6px; background: #000; min-height: 100px; }
+#hovercard div { padding: 4px 2px 0; font-variant-numeric: tabular-nums; }
+
+#events { display: flex; gap: 8px; overflow-x: auto; padding: 10px 12px; border-top: 1px solid var(--line); }
+#events:empty { display: none; }
+.evcard { flex: none; width: 150px; background: var(--panel2); border: 1px solid var(--line);
+  border-radius: 9px; overflow: hidden; cursor: pointer; }
+.evcard:hover { border-color: var(--accent); }
+.evcard img { width: 100%; height: 84px; object-fit: cover; display: block; background: #000; }
+.evcard div { padding: 5px 7px; font-size: 11px; }
+.evcard .t { color: var(--dim); font-variant-numeric: tabular-nums; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+
+#player { margin: 12px 16px 24px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 12px; }
+.pl-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 12px;
+  border-bottom: 1px solid var(--line); }
+.pl-bar .time { font-variant-numeric: tabular-nums; min-width: 190px; }
+#seek { flex: 1; min-width: 200px; accent-color: var(--accent); }
+#grid { display: grid; gap: 10px; padding: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(var(--tile, 480px), 1fr)); }
+#grid:empty::before { content: "Drag across the timeline (or click an event) to select a range, then press Load."; color: var(--dim); padding: 20px; }
+.tile { position: relative; background: #000; border-radius: 10px; overflow: hidden;
+  border: 1px solid var(--line); }
+.tile.focus { grid-column: 1 / -1; }
+.tile video { display: block; width: 100%; max-height: 80vh; background: #000; object-fit: contain; }
+.tile .cap { position: absolute; left: 0; right: 0; top: 0; display: flex; gap: 6px; align-items: center;
+  padding: 6px 8px; background: linear-gradient(rgba(0,0,0,.75), transparent); font-size: 12px; }
+.tile .cap b { flex: 1; }
+.tile .cap button, .tile .cap a { padding: 2px 7px; font-size: 11px; background: rgba(20,22,28,.8);
+  color: var(--text); text-decoration: none; border: 1px solid var(--line); border-radius: 6px; }
+.tile .msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: var(--dim); pointer-events: none; text-align: center; padding: 20px; }
+.tile .prog { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--accent); }
+.tile.nofootage video { opacity: .25; }
+kbd { background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; font-size: 11px; }
+.help { color: var(--dim); font-size: 11px; padding: 0 12px 10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Footage Review</h1>
+  <div class="grp">
+    <input type="date" id="date">
+    <input type="time" id="time" step="1">
+    <button id="go">Go</button>
+    <button id="now" class="ghost">Now</button>
+  </div>
+  <div class="grp">
+    <span class="muted">Window</span>
+    <select id="span">
+      <option value="120">2 min</option><option value="300">5 min</option>
+      <option value="900" selected>15 min</option><option value="3600">1 hour</option>
+      <option value="10800">3 hours</option><option value="43200">12 hours</option>
+      <option value="86400">24 hours</option>
+    </select>
+  </div>
+  <div class="sp"></div>
+  <span class="pill" id="tzpill"></span>
+</header>
+
+<section id="timeline">
+  <div class="tl-head">
+    <button id="panL" title="Pan left">&larr;</button>
+    <button id="zoomIn" title="Zoom in">+</button>
+    <button id="zoomOut" title="Zoom out">&minus;</button>
+    <button id="panR" title="Pan right">&rarr;</button>
+    <span class="range muted" id="viewRange"></span>
+    <div style="flex:1"></div>
+    <span class="muted">Selection</span>
+    <input type="time" id="selA" step="1"> <span class="muted">to</span> <input type="time" id="selB" step="1">
+    <span class="muted" id="selDur"></span>
+    <button class="primary" id="load">Load &#9654;</button>
+  </div>
+  <div class="tl-body" id="tlBody">
+    <div class="ruler"><div class="lbl muted">Time</div><div class="track" id="ruler"></div></div>
+    <div id="rows"></div>
+    <div class="overlay" id="overlay"></div>
+  </div>
+  <div id="events"></div>
+  <div class="help">Drag on a camera row to select a range &middot; click to move the playhead &middot; wheel to zoom &middot; drag the ruler to pan &middot; hover for a larger preview &middot; <kbd>Space</kbd> play/pause &middot; <kbd>&larr;</kbd>/<kbd>&rarr;</kbd> step 1s (<kbd>Shift</kbd> 10s) &middot; <kbd>,</kbd>/<kbd>.</kbd> frame-ish step</div>
+</section>
+
+<section id="player">
+  <div class="pl-bar">
+    <button id="play" class="primary" style="min-width:70px">Play</button>
+    <span class="time" id="clock">&ndash;</span>
+    <input type="range" id="seek" min="0" max="1000" value="0">
+    <span class="muted">Speed</span>
+    <select id="rate">
+      <option>0.25</option><option>0.5</option><option selected>1</option>
+      <option>1.5</option><option>2</option><option>4</option><option>8</option>
+    </select>
+    <span class="muted">Quality</span>
+    <select id="quality">
+      <option value="direct">Original (no transcode)</option>
+      <option value="0">Full res H.264</option>
+      <option value="2160">2160p</option>
+      <option value="1440">1440p</option>
+      <option value="1080" selected>1080p</option>
+      <option value="720">720p</option>
+      <option value="480">480p</option>
+      <option value="360">360p</option>
+    </select>
+    <span class="muted">Tile</span>
+    <input type="range" id="tile" min="240" max="1600" step="20" value="560" style="width:120px">
+    <button id="muteAll" class="ghost">Unmute</button>
+  </div>
+  <div id="grid"></div>
+</section>
+
+<div id="hovercard"><img id="hcImg" alt=""><div id="hcTxt"></div></div>
+
+<script>
+"use strict";
+const S = {
+  tz: "UTC", cams: [], view: { a: 0, b: 0 }, sel: null, playhead: null,
+  cov: {}, events: [], thumbW: 132,
+  clips: [], base: 0, dur: 0, t: 0, playing: false, rate: 1, muted: true,
+};
+const el = id => document.getElementById(id);
+const LABEL_COLORS = { person: "--person", car: "--car", dog: "--dog", cat: "--cat" };
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const labelColor = l => css(LABEL_COLORS[l] || "--other");
+
+// ---------- time helpers (in the server's timezone) ----------
+let fmtCache = {};
+function fmt(ts, opts) {
+  const k = JSON.stringify(opts);
+  if (!fmtCache[k]) fmtCache[k] = new Intl.DateTimeFormat("en-US", Object.assign({ timeZone: S.tz, hour12: true }, opts));
+  return fmtCache[k].format(new Date(ts * 1000));
+}
+const fTime = ts => fmt(ts, { hour: "numeric", minute: "2-digit", second: "2-digit" });
+const fHM = ts => fmt(ts, { hour: "numeric", minute: "2-digit" });
+const fDay = ts => fmt(ts, { weekday: "short", month: "short", day: "numeric" });
+function parts(ts) {
+  const p = {};
+  new Intl.DateTimeFormat("en-US", { timeZone: S.tz, hourCycle: "h23", year: "numeric", month: "2-digit",
+    day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    .formatToParts(new Date(ts * 1000)).forEach(x => p[x.type] = x.value);
+  return p;
+}
+function tzOffset(ts) {
+  const p = parts(ts);
+  return (Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) / 1000) - Math.floor(ts);
+}
+function fromLocal(dateStr, timeStr) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const [hh, mm, ss] = (timeStr || "00:00:00").split(":").map(Number);
+  const guess = Date.UTC(y, m - 1, d, hh, mm, ss || 0) / 1000;
+  return guess - tzOffset(guess - tzOffset(guess));
+}
+const isoDate = ts => { const p = parts(ts); return p.year + "-" + p.month + "-" + p.day; };
+const isoTime = ts => { const p = parts(ts); return p.hour + ":" + p.minute + ":" + p.second; };
+function fDur(s) {
+  s = Math.round(s);
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+  return (h ? h + "h " : "") + (h || m ? m + "m " : "") + x + "s";
+}
+const pad = n => String(n).padStart(2, "0");
+function clockStr(off) {
+  off = Math.max(0, off);
+  return pad(Math.floor(off / 60)) + ":" + pad(Math.floor(off % 60)) + "." + Math.floor((off % 1) * 10);
+}
+
+// ---------- API ----------
+async function api(path) {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+  return r.json();
+}
+const qs = o => Object.entries(o).map(([k, v]) => k + "=" + encodeURIComponent(v)).join("&");
+
+// ---------- timeline ----------
+const NICE = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400];
+function trackW() { return el("ruler").clientWidth || 800; }
+function x2t(x) { return S.view.a + x / trackW() * (S.view.b - S.view.a); }
+function t2x(t) { return (t - S.view.a) / (S.view.b - S.view.a) * trackW(); }
+
+function buildRows() {
+  const rows = el("rows");
+  rows.innerHTML = "";
+  for (const cam of S.cams) {
+    const r = document.createElement("div");
+    r.className = "row";
+    r.innerHTML = '<div class="lbl"><b></b><span></span></div><div class="track"></div>';
+    r.querySelector("b").textContent = cam.replace(/_/g, " ");
+    r.dataset.cam = cam;
+    rows.appendChild(r);
+    const tr = r.querySelector(".track");
+    tr.dataset.cam = cam;
+    attachTrackEvents(tr);
+  }
+}
+
+let fetchTimer = null, lastFetch = "";
+function scheduleFetch() {
+  clearTimeout(fetchTimer);
+  fetchTimer = setTimeout(fetchData, 150);
+}
+async function fetchData() {
+  const span = S.view.b - S.view.a;
+  const a = Math.floor(S.view.a - span * 0.5), b = Math.ceil(S.view.b + span * 0.5);
+  const k = a + "-" + b;
+  if (k === lastFetch) return;
+  lastFetch = k;
+  const [cov, ev] = await Promise.all([
+    api("/api/coverage?" + qs({ start: a, end: b, cams: S.cams.join(",") })),
+    api("/api/events?" + qs({ start: a, end: b })),
+  ]);
+  if (k !== lastFetch) return;
+  S.cov = cov;
+  S.events = ev.events || [];
+  render();
+  renderEventCards();
+}
+
+function render() {
+  const W = trackW(), span = S.view.b - S.view.a;
+  el("viewRange").textContent = fDay(S.view.a) + "  " + fTime(S.view.a) + " – " + fTime(S.view.b);
+  // ruler
+  const ruler = el("ruler");
+  ruler.innerHTML = "";
+  const minor = NICE.find(s => W / (span / s) >= 70) || 86400;
+  const major = NICE.find(s => s >= minor * 4) || minor;
+  const off = tzOffset(S.view.a);
+  for (let t = Math.ceil((S.view.a + off) / minor) * minor - off; t < S.view.b; t += minor) {
+    const d = document.createElement("div");
+    const isMajor = (t + off) % major === 0;
+    d.className = "tick" + (isMajor ? " major" : "");
+    d.style.left = t2x(t) + "px";
+    d.textContent = minor < 60 ? fTime(t) : ((t + off) % 86400 === 0 ? fDay(t) : fHM(t));
+    ruler.appendChild(d);
+  }
+  // rows
+  const step = NICE.find(s => W / (span / s) >= S.thumbW) || 86400;
+  const thumbPx = step / span * W;
+  for (const row of el("rows").children) {
+    const cam = row.dataset.cam, tr = row.querySelector(".track");
+    const frag = document.createDocumentFragment();
+    const cov = S.cov[cam] || [];
+    let covSecs = 0;
+    for (const [ca, cb] of cov) {
+      const a = Math.max(ca, S.view.a), b = Math.min(cb, S.view.b);
+      if (b <= a) continue;
+      covSecs += b - a;
+      const c = document.createElement("div");
+      c.className = "cov";
+      c.style.left = t2x(a) + "px";
+      c.style.width = Math.max(1, t2x(b) - t2x(a)) + "px";
+      frag.appendChild(c);
+    }
+    const has = t => cov.some(([a, b]) => t >= a - 1 && t < b);
+    for (let t = Math.floor(S.view.a / step) * step; t < S.view.b; t += step) {
+      const mid = t + Math.min(step / 2, 1);
+      if (!has(t) && !has(mid)) continue;
+      const img = document.createElement("img");
+      img.className = "thumb";
+      img.loading = "lazy";
+      img.decoding = "async";
+      img.src = "/api/thumb?" + qs({ cam, t: has(t) ? t : Math.floor(mid), w: 320 });
+      img.style.left = t2x(t) + "px";
+      img.style.width = (thumbPx + 0.5) + "px";
+      img.onerror = () => img.remove();
+      frag.appendChild(img);
+    }
+    for (const e of S.events) {
+      if (e.camera !== cam || e.end < S.view.a || e.start > S.view.b) continue;
+      const d = document.createElement("div");
+      d.className = "ev";
+      d.style.left = t2x(e.start) + "px";
+      d.style.width = Math.max(4, t2x(e.end) - t2x(e.start)) + "px";
+      d.style.background = labelColor(e.label);
+      d.title = e.label + " " + fTime(e.start) + " – " + fTime(e.end);
+      d.addEventListener("mousedown", ev => ev.stopPropagation());
+      d.addEventListener("click", ev => { ev.stopPropagation(); selectEvent(e); });
+      frag.appendChild(d);
+    }
+    tr.replaceChildren(frag);
+    row.querySelector(".lbl span").textContent = covSecs
+      ? Math.round(covSecs / span * 100) + "% recorded"
+      : "no footage in view";
+  }
+  renderOverlay();
+}
+
+function renderOverlay() {
+  const ov = el("overlay"), lw = el("ruler").offsetLeft;
+  ov.style.left = lw + "px";
+  ov.style.width = trackW() + "px";
+  ov.innerHTML = "";
+  if (S.sel) {
+    const d = document.createElement("div");
+    d.className = "selband";
+    d.style.left = t2x(S.sel.a) + "px";
+    d.style.width = Math.max(2, t2x(S.sel.b) - t2x(S.sel.a)) + "px";
+    ov.appendChild(d);
+  }
+  const ph = S.clips.length ? S.base + S.t : S.playhead;
+  if (ph != null && ph >= S.view.a && ph <= S.view.b) {
+    const p = document.createElement("div");
+    p.className = "playhead";
+    p.style.left = t2x(ph) - 1 + "px";
+    ov.appendChild(p);
+  }
+  if (hover.t != null) {
+    const h = document.createElement("div");
+    h.className = "hoverline";
+    h.style.left = t2x(hover.t) + "px";
+    ov.appendChild(h);
+  }
+}
+
+function renderEventCards() {
+  const box = el("events");
+  box.innerHTML = "";
+  const evs = S.events.filter(e => e.end >= S.view.a && e.start <= S.view.b).slice(0, 200);
+  for (const e of evs) {
+    const c = document.createElement("div");
+    c.className = "evcard";
+    c.innerHTML = '<img loading="lazy" alt=""><div><span class="dot"></span><b></b> <span class="muted"></span><div class="t"></div></div>';
+    c.querySelector("img").src = "/api/event_thumb/" + encodeURIComponent(e.id);
+    c.querySelector(".dot").style.background = labelColor(e.label);
+    c.querySelector("b").textContent = e.label + (e.sub_label ? " (" + e.sub_label + ")" : "");
+    c.querySelector(".muted").textContent = e.camera.replace(/_/g, " ");
+    c.querySelector(".t").textContent = fTime(e.start) + " · " + fDur(e.end - e.start);
+    c.onclick = () => selectEvent(e, true);
+    box.appendChild(c);
+  }
+}
+
+function selectEvent(e, load) {
+  // Pad the event and merge with overlapping events from other cameras.
+  let a = e.start - 5, b = e.end + 5;
+  for (const o of S.events) if (o.start < b && o.end > a) { a = Math.min(a, o.start - 5); b = Math.max(b, o.end + 5); }
+  setSel(Math.floor(a), Math.ceil(b));
+  if (load) loadSelection();
+}
+
+function setSel(a, b) {
+  if (b < a) [a, b] = [b, a];
+  S.sel = { a: Math.floor(a), b: Math.ceil(Math.max(b, a + 1)) };
+  el("selA").value = isoTime(S.sel.a);
+  el("selB").value = isoTime(S.sel.b);
+  el("selDur").textContent = fDur(S.sel.b - S.sel.a);
+  saveHash();
+  renderOverlay();
+}
+
+function setView(a, b) {
+  const span = Math.max(30, Math.min(86400 * 3, b - a));
+  const mid = (a + b) / 2;
+  S.view = { a: mid - span / 2, b: mid + span / 2 };
+  render();
+  scheduleFetch();
+}
+function zoom(f, at) {
+  at = at == null ? (S.view.a + S.view.b) / 2 : at;
+  const a = at - (at - S.view.a) * f, b = at + (S.view.b - at) * f;
+  if (b - a < 30 || b - a > 86400 * 3) return;
+  S.view = { a, b };
+  render();
+  scheduleFetch();
+}
+function pan(frac) {
+  const d = (S.view.b - S.view.a) * frac;
+  S.view = { a: S.view.a + d, b: S.view.b + d };
+  render();
+  scheduleFetch();
+}
+
+// ---------- pointer interactions ----------
+const hover = { t: null, cam: null, timer: null };
+function attachTrackEvents(tr) {
+  tr.addEventListener("mousedown", ev => {
+    if (ev.button !== 0) return;
+    const r = tr.getBoundingClientRect();
+    const t0 = x2t(ev.clientX - r.left), x0 = ev.clientX;
+    let dragging = false;
+    const move = m => {
+      if (!dragging && Math.abs(m.clientX - x0) > 4) dragging = true;
+      if (dragging) setSel(t0, x2t(m.clientX - r.left));
+    };
+    const up = m => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      if (!dragging) clickAt(x2t(m.clientX - r.left));
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  });
+  tr.addEventListener("mousemove", ev => {
+    const r = tr.getBoundingClientRect();
+    hover.t = x2t(ev.clientX - r.left);
+    hover.cam = tr.dataset.cam;
+    renderOverlay();
+    showHover(ev.clientX, ev.clientY);
+  });
+  tr.addEventListener("mouseleave", () => {
+    hover.t = null;
+    el("hovercard").style.display = "none";
+    renderOverlay();
+  });
+  tr.addEventListener("wheel", wheel, { passive: false });
+}
+function wheel(ev) {
+  ev.preventDefault();
+  const r = ev.currentTarget.getBoundingClientRect();
+  if (Math.abs(ev.deltaX) > Math.abs(ev.deltaY) || ev.shiftKey) {
+    pan((ev.deltaX || ev.deltaY) / trackW());
+  } else {
+    zoom(ev.deltaY > 0 ? 1.25 : 0.8, x2t(ev.clientX - r.left));
+  }
+}
+function showHover(x, y) {
+  const card = el("hovercard");
+  const snap = (S.view.b - S.view.a) > 3600 ? 10 : 2;
+  const t = Math.round(hover.t / snap) * snap;
+  el("hcTxt").textContent = hover.cam.replace(/_/g, " ") + " · " + fTime(t);
+  card.style.display = "block";
+  const w = 372;
+  card.style.left = Math.min(window.innerWidth - w - 8, x + 16) + "px";
+  card.style.top = Math.max(8, y - 230) + "px";
+  clearTimeout(hover.timer);
+  hover.timer = setTimeout(() => {
+    const src = "/api/thumb?" + qs({ cam: hover.cam, t, w: 720 });
+    if (el("hcImg").getAttribute("src") !== src) el("hcImg").src = src;
+  }, 90);
+}
+function clickAt(t) {
+  if (S.clips.length && t >= S.base && t <= S.base + S.dur) {
+    seekTo(t - S.base);
+  } else {
+    S.playhead = t;
+    if (!S.sel || t < S.sel.a || t > S.sel.b) setSel(t - 30, t + 30);
+  }
+  renderOverlay();
+}
+function attachRulerPan() {
+  const ruler = el("ruler");
+  ruler.addEventListener("mousedown", ev => {
+    const x0 = ev.clientX, v0 = Object.assign({}, S.view);
+    ruler.style.cursor = "grabbing";
+    const move = m => {
+      const d = (m.clientX - x0) / trackW() * (v0.b - v0.a);
+      S.view = { a: v0.a - d, b: v0.b - d };
+      render();
+    };
+    const up = () => {
+      ruler.style.cursor = "";
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      scheduleFetch();
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  });
+  ruler.addEventListener("wheel", wheel, { passive: false });
+}
+
+// ---------- player ----------
+function quality() { return el("quality").value; }
+
+async function loadSelection() {
+  if (!S.sel) return;
+  stopAll();
+  S.base = S.sel.a;
+  S.dur = S.sel.b - S.sel.a;
+  S.t = S.playhead != null && S.playhead > S.sel.a && S.playhead < S.sel.b ? S.playhead - S.sel.a : 0;
+  const q = quality();
+  const grid = el("grid");
+  grid.innerHTML = "";
+  S.clips = [];
+  const params = { start: S.sel.a, end: S.sel.b };
+  if (q === "direct") params.mode = "direct"; else params.h = q;
+  const infos = await Promise.all(S.cams.map(cam =>
+    api("/api/clip?" + qs(Object.assign({ cam }, params))).catch(e => ({ cam, available: false, error: e.message }))));
+  for (const info of infos) {
+    if (!info.available) continue;
+    const clip = makeTile(info);
+    S.clips.push(clip);
+    if (!clip.ready) pollJob(clip);
+  }
+  if (!S.clips.length) grid.innerHTML = '<div class="muted" style="padding:20px">No recordings in the selected range.</div>';
+  el("seek").max = Math.round(S.dur * 10);
+  updateClock();
+  el("player").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function makeTile(info) {
+  const tile = document.createElement("div");
+  tile.className = "tile";
+  tile.innerHTML =
+    '<video muted playsinline preload="auto"></video>' +
+    '<div class="cap"><b></b><span class="src muted"></span>' +
+    '<button data-a="focus" title="Make this tile full width">Focus</button>' +
+    '<button data-a="fs" title="Fullscreen">&#x26F6;</button>' +
+    '<a data-a="dl" title="Download MP4">&#x2B07;</a></div>' +
+    '<div class="msg"></div><div class="prog"></div>';
+  const v = tile.querySelector("video");
+  const clip = { info, tile, v, ready: info.ready, offset: info.offset, swapped: false, stall: performance.now() };
+  tile.querySelector("b").textContent = info.cam.replace(/_/g, " ");
+  const s = info.source || {};
+  tile.querySelector(".src").textContent = (s.codec || "?").toUpperCase() + " " + (s.width || "?") + "×" + (s.height || "?");
+  const dl = tile.querySelector("[data-a=dl]");
+  dl.href = info.download;
+  dl.onclick = ev => { if (!clip.ready) { ev.preventDefault(); msg(clip, "Still preparing — download available when done"); } };
+  tile.querySelector("[data-a=focus]").onclick = () => tile.classList.toggle("focus");
+  tile.querySelector("[data-a=fs]").onclick = () => (tile.requestFullscreen ? tile.requestFullscreen() : v.webkitEnterFullscreen());
+  v.addEventListener("dblclick", () => tile.classList.toggle("focus"));
+  v.addEventListener("click", togglePlay);
+  v.muted = S.muted;
+  v.src = info.ready ? info.file : info.stream;
+  clip.swapped = info.ready;
+  v.addEventListener("waiting", () => { clip.stall = performance.now(); });
+  v.addEventListener("playing", () => { clip.stall = 0; msg(clip, ""); });
+  v.addEventListener("canplay", () => { clip.stall = 0; msg(clip, ""); });
+  v.addEventListener("error", () => { if (!clip.ready) msg(clip, "Preparing…"); else msg(clip, "Playback error"); });
+  el("grid").appendChild(tile);
+  return clip;
+}
+
+function msg(clip, text) { clip.tile.querySelector(".msg").textContent = text; }
+
+async function pollJob(clip) {
+  const bar = clip.tile.querySelector(".prog");
+  while (S.clips.includes(clip)) {
+    let j;
+    try { j = await api("/api/job?key=" + clip.info.key); } catch (e) { break; }
+    bar.style.width = Math.round((j.progress || 0) * 100) + "%";
+    if (j.error) { msg(clip, "Transcode failed: " + j.error); break; }
+    if (j.ready) {
+      bar.style.width = "0";
+      clip.ready = true;
+      // Swap the progressive stream for the finished, fully seekable file.
+      const wasPlaying = S.playing;
+      clip.v.src = clip.info.file;
+      clip.swapped = true;
+      clip.v.addEventListener("loadedmetadata", () => {
+        syncOne(clip, true);
+        if (wasPlaying && S.playing) clip.v.play().catch(() => {});
+      }, { once: true });
+      break;
+    }
+    if (!clip.v.readyState) msg(clip, "Transcoding " + Math.round((j.progress || 0) * 100) + "% (" + (j.encoder || "") + ")");
+    await new Promise(r => setTimeout(r, 700));
+  }
+}
+
+function stopAll() {
+  for (const c of S.clips) { c.v.pause(); c.v.removeAttribute("src"); c.v.load(); }
+  S.clips = [];
+  S.playing = false;
+  el("play").textContent = "Play";
+}
+
+function togglePlay() {
+  if (!S.clips.length) { loadSelection(); return; }
+  S.playing = !S.playing;
+  if (S.playing && S.t >= S.dur - 0.05) S.t = 0;
+  el("play").textContent = S.playing ? "Pause" : "Play";
+  for (const c of S.clips) {
+    if (S.playing) syncOne(c, true); else c.v.pause();
+  }
+  last = performance.now();
+}
+
+function seekTo(t) {
+  S.t = Math.max(0, Math.min(S.dur, t));
+  for (const c of S.clips) syncOne(c, true);
+  updateClock();
+}
+
+function syncOne(c, force) {
+  const v = c.v, local = S.t - c.offset;
+  const dur = isFinite(v.duration) ? v.duration : (c.info.end - c.info.start);
+  const outside = local < 0 || local > dur + 0.2;
+  c.tile.classList.toggle("nofootage", outside);
+  if (outside) { v.pause(); return; }
+  v.playbackRate = S.rate;
+  const drift = Math.abs(v.currentTime - local);
+  if (force ? drift > 0.05 : drift > 0.4 * Math.max(1, S.rate)) {
+    try { v.currentTime = local; } catch (e) { /* not seekable yet */ }
+  }
+  if (S.playing && v.paused) v.play().catch(() => {});
+  if (!S.playing && !v.paused) v.pause();
+}
+
+let last = performance.now();
+// setInterval rather than rAF so the clock keeps running in background tabs.
+function tick() {
+  const now = performance.now();
+  const dt = (now - last) / 1000;
+  last = now;
+  if (S.playing && S.clips.length) {
+    // Hold the master clock while any in-range video is still buffering
+    // (but never wait more than 4s on a single slow camera).
+    const blocked = S.clips.some(c => {
+      const local = S.t - c.offset;
+      if (local < 0 || local > (c.info.end - c.info.start)) return false;
+      return c.v.readyState < 3 && (!c.stall || now - c.stall < 4000);
+    });
+    if (!blocked) S.t += dt * S.rate;
+    if (S.t >= S.dur) { S.t = S.dur; togglePlay(); }
+    for (const c of S.clips) syncOne(c, false);
+    updateClock();
+    renderOverlay();
+  }
+}
+
+function updateClock() {
+  if (!S.clips.length) { el("clock").textContent = "–"; return; }
+  el("clock").textContent = fTime(S.base + S.t) + "  ·  " + clockStr(S.t) + " / " + clockStr(S.dur);
+  el("seek").value = Math.round(S.t * 10);
+}
+
+// ---------- URL state ----------
+function saveHash() {
+  if (!S.sel) return;
+  history.replaceState(null, "", "#" + qs({ a: S.sel.a, b: S.sel.b, q: quality() }));
+}
+function readHash() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  if (p.get("q")) el("quality").value = p.get("q");
+  if (p.get("a") && p.get("b")) return { a: +p.get("a"), b: +p.get("b") };
+  return null;
+}
+
+// ---------- wiring ----------
+function goTo(t) {
+  const span = +el("span").value;
+  setView(t - span / 2, t + span / 2);
+}
+el("go").onclick = () => {
+  const t = fromLocal(el("date").value, el("time").value || "12:00:00");
+  goTo(t);
+  S.playhead = t;
+  renderOverlay();
+};
+el("now").onclick = () => { const t = Date.now() / 1000; goTo(t - +el("span").value / 2 + 30); };
+el("span").onchange = () => { const mid = (S.view.a + S.view.b) / 2, s = +el("span").value; setView(mid - s / 2, mid + s / 2); };
+el("zoomIn").onclick = () => zoom(0.5);
+el("zoomOut").onclick = () => zoom(2);
+el("panL").onclick = () => pan(-0.5);
+el("panR").onclick = () => pan(0.5);
+el("load").onclick = loadSelection;
+el("play").onclick = togglePlay;
+el("seek").oninput = () => seekTo(+el("seek").value / 10);
+el("rate").onchange = () => { S.rate = +el("rate").value; for (const c of S.clips) c.v.playbackRate = S.rate; };
+el("quality").onchange = () => { saveHash(); if (S.clips.length) { const t = S.t; loadSelection().then(() => seekTo(t)); } };
+el("tile").oninput = () => document.documentElement.style.setProperty("--tile", el("tile").value + "px");
+el("muteAll").onclick = () => {
+  S.muted = !S.muted;
+  el("muteAll").textContent = S.muted ? "Unmute" : "Mute";
+  for (const c of S.clips) c.v.muted = S.muted;
+};
+function selFromInputs() {
+  if (!S.sel) return;
+  const d = isoDate(S.sel.a);
+  let a = fromLocal(d, el("selA").value), b = fromLocal(d, el("selB").value);
+  if (b <= a) b += 86400;
+  setSel(a, b);
+}
+el("selA").onchange = selFromInputs;
+el("selB").onchange = selFromInputs;
+window.addEventListener("keydown", ev => {
+  if (ev.target.tagName === "INPUT" && ev.target.type !== "range") return;
+  if (ev.target.tagName === "SELECT") return;
+  if (ev.code === "Space") { ev.preventDefault(); togglePlay(); }
+  else if (ev.key === "ArrowLeft") { ev.preventDefault(); seekTo(S.t - (ev.shiftKey ? 10 : 1)); }
+  else if (ev.key === "ArrowRight") { ev.preventDefault(); seekTo(S.t + (ev.shiftKey ? 10 : 1)); }
+  else if (ev.key === ",") seekTo(S.t - 0.1);
+  else if (ev.key === ".") seekTo(S.t + 0.1);
+  else if (ev.key === "+" || ev.key === "=") zoom(0.5);
+  else if (ev.key === "-") zoom(2);
+});
+let resizeT;
+window.addEventListener("resize", () => { clearTimeout(resizeT); resizeT = setTimeout(render, 100); });
+
+(async function init() {
+  const meta = await api("/api/meta");
+  S.tz = meta.tz;
+  S.cams = meta.cameras;
+  el("tzpill").textContent = meta.tz + " · " + (meta.hwaccel === "vaapi" ? "GPU transcode" : "CPU transcode");
+  document.documentElement.style.setProperty("--tile", el("tile").value + "px");
+  buildRows();
+  attachRulerPan();
+  const sel = readHash();
+  if (sel) {
+    const pad = Math.max(60, (sel.b - sel.a) * 2);
+    S.view = { a: sel.a - pad, b: sel.b + pad };
+    setSel(sel.a, sel.b);
+  } else {
+    const now = meta.now;
+    S.view = { a: now - 900, b: now + 60 };
+  }
+  el("date").value = isoDate(S.sel ? S.sel.a : meta.now);
+  el("time").value = isoTime(S.sel ? S.sel.a : meta.now);
+  render();
+  scheduleFetch();
+  setInterval(tick, 50);
+  if (sel) loadSelection();
+})();
+</script>
+</body>
+</html>
