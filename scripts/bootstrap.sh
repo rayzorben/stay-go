@@ -129,10 +129,12 @@ echo "$HOST_ARG" > "$HOST_FILE"
 
 # Kernel command line, built once for both /etc/default/limine writes below.
 # ':allow-discards' lets TRIM (discard=async, fstrim.timer) pass through dm-crypt
-# to the SSD; without it every discard stops at the LUKS layer.
+# to the SSD; without it every discard stops at the LUKS layer. The two
+# workqueue options make dm-crypt encrypt/decrypt inline instead of bouncing
+# every I/O through kcryptd worker threads -- pure added latency on NVMe.
 build_kernel_cmdline() {
     local luks_uuid="$1"
-    KERNEL_CMDLINE="cryptdevice=UUID=$luks_uuid:$LUKS_NAME:allow-discards root=/dev/$VG_NAME/lv_root rootflags=subvol=@ rw quiet splash rd.udev.log_priority=3 vt.global_cursor_default=0 zswap.enabled=0${EXTRA_CMDLINE:+ $EXTRA_CMDLINE}"
+    KERNEL_CMDLINE="cryptdevice=UUID=$luks_uuid:$LUKS_NAME:allow-discards,no-read-workqueue,no-write-workqueue root=/dev/$VG_NAME/lv_root rootflags=subvol=@ rw quiet splash rd.udev.log_priority=3 vt.global_cursor_default=0 zswap.enabled=0${EXTRA_CMDLINE:+ $EXTRA_CMDLINE}"
 }
 
 # Detect partition naming scheme (e.g., /dev/vda1 vs /dev/nvme0n1p1)
@@ -218,11 +220,11 @@ ensure_mounts_ready() {
     ensure_storage_ready
     if ! mountpoint -q /mnt; then
         echo "[*] Re-mounting filesystems for resume..."
-        mount -o noatime,compress=zstd,discard=async,subvol=@ "/dev/$VG_NAME/lv_root" /mnt
+        mount -o noatime,compress=zstd:1,discard=async,subvol=@ "/dev/$VG_NAME/lv_root" /mnt
         mkdir -p /mnt/{.snapshots,var/log,var/cache/pacman/pkg,home,boot}
-        mount -o noatime,compress=zstd,discard=async,subvol=@snapshots "/dev/$VG_NAME/lv_root" /mnt/.snapshots
-        mount -o noatime,compress=zstd,discard=async,subvol=@var_log "/dev/$VG_NAME/lv_root" /mnt/var/log
-        mount -o noatime,compress=zstd,discard=async,subvol=@pkg "/dev/$VG_NAME/lv_root" /mnt/var/cache/pacman/pkg
+        mount -o noatime,compress=zstd:1,discard=async,subvol=@snapshots "/dev/$VG_NAME/lv_root" /mnt/.snapshots
+        mount -o noatime,compress=zstd:1,discard=async,subvol=@var_log "/dev/$VG_NAME/lv_root" /mnt/var/log
+        mount -o noatime,compress=zstd:1,discard=async,subvol=@pkg "/dev/$VG_NAME/lv_root" /mnt/var/cache/pacman/pkg
         mount -o noatime "/dev/$VG_NAME/lv_home" /mnt/home
         ensure_esp_ready
         mount "$PART_EFI" /mnt/boot
@@ -321,7 +323,9 @@ if [[ "$CURRENT_STEP" -lt 1 ]]; then
     mkfs.fat -F 32 "$PART_EFI"
 
     echo "[*] Setting up LUKS container..."
-    printf %s "$LUKS_PASS" | cryptsetup luksFormat --type luks2 --pbkdf argon2id "$PART_LUKS" -
+    # 4K encryption sectors: one AES-XTS operation per 4K block instead of
+    # eight. Fixed at format time; the NVMe reports 512, so it is not automatic.
+    printf %s "$LUKS_PASS" | cryptsetup luksFormat --type luks2 --pbkdf argon2id --sector-size 4096 "$PART_LUKS" -
     printf %s "$LUKS_PASS" | cryptsetup open "$PART_LUKS" "$LUKS_NAME" -
 
     set_checkpoint 1
@@ -594,7 +598,7 @@ if ! snapper -c root list >/dev/null 2>&1; then
 fi
 btrfs subvolume delete /.snapshots 2>/dev/null || true
 mkdir -p /.snapshots
-mount -o noatime,compress=zstd,discard=async,subvol=@snapshots /dev/$VG_NAME/lv_root /.snapshots
+mount -o noatime,compress=zstd:1,discard=async,subvol=@snapshots /dev/$VG_NAME/lv_root /.snapshots
 chmod 750 /.snapshots
 
 # Make @ the btrfs default subvolume. snapper-rollback swaps the default
