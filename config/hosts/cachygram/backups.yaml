@@ -118,6 +118,7 @@ scripts:
     sudo: true
     depends:
       - packages: [kopia]
+      - commands: [tailscale] # orohost is reached over the tailnet
       - files:
           - /etc/kopia/kopia.env
           - /etc/kopia/known_hosts

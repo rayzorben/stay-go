@@ -17,7 +17,10 @@ func (r *Resource) Execute(ctx context.Context, node *engine.PlanNode, st *state
 
 	switch node.Action {
 	case engine.ActionAdd:
-		result, err := r.exec.Run(ctx, executor.Options{Sudo: true}, "groupadd", name)
+		// -f: succeed if the group already exists — a package installed
+		// earlier in the same run (docker → docker group) may have created it
+		// after knowledge was gathered.
+		result, err := r.exec.Run(ctx, executor.Options{Sudo: true}, "groupadd", "-f", name)
 		if err != nil {
 			return fmt.Errorf("creating group %q: %w\nstderr: %s", name, err, result.Stderr)
 		}

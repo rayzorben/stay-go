@@ -228,6 +228,14 @@ files:
   # at boot and resume is enough (files/lg-kbd-backlight.sh has the details).
   # huawei_wmi matches one of LG's WMI GUIDs (59142400-...) and grabs the hotkey
   # device, so it is kept out.
+  # The udev rule below loses to btusb: its probe re-enables autosuspend
+  # (CONFIG_BT_HCIBTUSB_AUTOSUSPEND=y) after the device's bind event.
+  - content: |
+      # Managed by stay-go. Keep the Intel Bluetooth controller awake.
+      options btusb enable_autosuspend=n
+    target: /etc/modprobe.d/btusb-no-autosuspend.conf
+    sudo: true
+
   - content: |
       # Managed by stay-go. huawei_wmi binds LG's WMI GUID and fights lg_laptop.
       blacklist huawei_wmi

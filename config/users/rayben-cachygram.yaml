@@ -53,6 +53,10 @@ packages:
   - satty
   - psmisc # killall, used by screenshot.sh
   - lib32-fontconfig # fc-cache-32, used by the windows fonts command
+  # Pin the 32-bit GL/Vulkan providers before the gaming meta: left to pick,
+  # --noconfirm takes lib32-mesa-git, which conflicts with lib32-opencl-mesa.
+  - lib32-mesa
+  - lib32-vulkan-intel
   - cachyos-gaming-meta
   - cachyos-gaming-applications
   - 7zip
@@ -99,6 +103,15 @@ services:
           - ~/.config/systemd/user/life-backup.timer
 
 files:
+  # Own drop-in rather than editing the installer's sudoers.d file, which a
+  # reinstall may name differently or not create at all.
+  - content: |
+      # Managed by stay-go.
+      %wheel ALL=(ALL:ALL) NOPASSWD: ALL
+    target: /etc/sudoers.d/20-wheel-nopasswd
+    mode: "0440"
+    sudo: true
+
   # SSH keys and config (written first; dotfiles clone depends on them)
   - source: ${secrets.ssh.id_ed25519}
     target: "~/.ssh/id_ed25519"
@@ -238,6 +251,8 @@ files:
       include "lg-gram-binds.kdl"
     target: ~/.config/niri/config.kdl
     add: true
+    depends:
+      - commands: [install dms] # its installer replaces both files
 
   - content: |
       
@@ -245,6 +260,8 @@ files:
       copy-on-select = true
     target: ~/.config/ghostty/config
     add: true
+    depends:
+      - commands: [install dms] # its installer replaces both files
 
   # Application config files
   - source: ${config_root}/files/config/electron-flags.conf
@@ -444,11 +461,6 @@ commands:
       git config --global --unset user.name
       git config --global --unset user.email
 
-  - name: wheel no password
-    command: |
-      sed -i 's/%wheel ALL=(ALL) ALL/%wheel ALL=(ALL) NOPASSWD: ALL/' /etc/sudoers.d/10-installer
-    sudo: true
-
   - name: windows fonts
     command: |
       pushd ~/Downloads/isos
@@ -516,6 +528,9 @@ distrobox:
     home: ${home.sedanos}
     home_sudo: true
     extends: ${config_root}/users/distrobox-base.yaml
+    depends: # docker must be running and rayben in its group (extends doesn't merge depends)
+      - services: [docker]
+      - users: [rayben]
     exports:
       - code
       - cursor
@@ -572,12 +587,18 @@ distrobox:
     home: ${home.motion}
     home_sudo: true
     extends: ${config_root}/users/distrobox-base.yaml
+    depends: # docker must be running and rayben in its group (extends doesn't merge depends)
+      - services: [docker]
+      - users: [rayben]
 
   - name: stoneridge
     image: docker.io/cachyos/cachyos-v3:latest
     home: ${home.stoneridge}
     home_sudo: true
     extends: ${config_root}/users/distrobox-base.yaml
+    depends: # docker must be running and rayben in its group (extends doesn't merge depends)
+      - services: [docker]
+      - users: [rayben]
 
 
 json:
