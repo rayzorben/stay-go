@@ -774,12 +774,18 @@ install_paru_from_aur() {
 pacman-key --init
 pacman-key --populate
 
+# Full upgrade before anything else. The seeded pacman.conf may name repo
+# sections (v3/v4/znver4) whose databases pacstrap never synced into this root,
+# and only -Su applies their Replaces= (zlib -> zlib-ng-compat, which
+# heroic-games-launcher needs; a plain -S of it conflicts with zlib and
+# --noconfirm answers "no"). -Syu rather than -Sy also avoids a partial upgrade.
+pacman -Syu --noconfirm
+
 # paru is normally already in the image: pacstrap installed it from [cachyos]
 # in STEP 4 (the same way the CachyOS installer ships it). --needed makes this
 # a no-op then; it is a real install only when resuming from a checkpoint laid
-# down by an older bootstrap. -Sy first: the seeded pacman.conf may name repo
-# sections (v3/v4/znver4) whose databases pacstrap never synced into this root.
-if pacman -Sy --noconfirm --needed paru; then
+# down by an older bootstrap.
+if pacman -S --noconfirm --needed paru; then
     echo "[*] paru present (cachyos repo package)."
 else
     echo "[!] Repo paru unavailable; building paru from the AUR..."
