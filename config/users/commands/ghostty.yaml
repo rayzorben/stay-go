@@ -1,11 +1,15 @@
 commands:
+  # No files: guard (plan-time, so it would skip the first run on a fresh
+  # machine before the ghostty config and font exist); the command creates the
+  # config itself, and the check re-runs it if the line drifts.
   - name: Ghostty Font
     command: |
+      mkdir -p ~/.config/ghostty
       if grep -q "^font-family" ~/.config/ghostty/config 2>/dev/null; then
         sed -i 's|^font-family.*|font-family = "LucidaProgrammer Nerd Font Mono"|' ~/.config/ghostty/config
       else
         echo 'font-family = "LucidaProgrammer Nerd Font Mono"' >> ~/.config/ghostty/config
       fi
+    check: grep -qx 'font-family = "LucidaProgrammer Nerd Font Mono"' ~/.config/ghostty/config
     depends:
         - packages: [ghostty]
-        - files: ["~/.config/ghostty/config", "${ttf_fonts}/LucidaProgrammerNerdFontMono-Regular.ttf"]

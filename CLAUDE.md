@@ -224,6 +224,12 @@ Also resolved universally (never by individual resources):
 - `$(command)` — stdout of a shell command, run at load time
 - `${secrets.x}` — see below
 
+`$(...)` and `~` are expanded in **every** string field, including
+`commands[].command`/`check`/`rollback`: a `$(...)` meant for the shell runs
+once at load time (with shell variables like `$t` empty) and is replaced by its
+output. In command strings use a pipe (`cmd | grep -qx value`), backticks, or a
+script file instead. Unknown `${name}` tokens are left for the shell.
+
 ---
 
 ## Substitution Pipeline & Secrets

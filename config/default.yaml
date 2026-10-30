@@ -69,6 +69,7 @@ packages:
   - sddm
   - niri
   - neovim
+  - fish # rayben's login shell (users: below); packages install ahead of users
   - vi
   - tree
   - git
@@ -197,10 +198,12 @@ commands:
     command: curl -fsSL https://install.danklinux.com | sh
     depends:
       - packages: ['niri']
+  # No files: guard — that is a plan-time condition, so on a fresh machine it
+  # would skip before the font file above had been written. Files run ahead of
+  # commands; the check re-runs the refresh if fontconfig ever loses the font.
   - name: refresh fonts
     command: fc-cache -f
-    depends:
-      - files: ['${lucida_target}']
+    check: fc-list | grep -q "LucidaProgrammer"
 
 # ─── scripts ──────────────────────────────────────────────────────────────────
 # Declares shell scripts that stay-go runs and tracks by file content hash.
