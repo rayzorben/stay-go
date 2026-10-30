@@ -162,6 +162,15 @@ func main() {
 		os.Exit(0)
 	}
 
+	// `stay-go secret …` edits config files and exits; see secret.go.
+	if flag.Arg(0) == "secret" {
+		if err := runSecret(configDir, flag.Args()[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "stay-go: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// Every run that can plan or change anything gets a log file, so failures
 	// can be analysed after the fact. --show and --guest-knowledge are
 	// read-only reports (the latter runs once per distrobox per run and would
@@ -304,6 +313,9 @@ func usage() {
 
 Usage:
   stay-go [flags]
+  stay-go [-c dir] secret update <key> [value] [--all]
+                        replace a secret's value, encrypted in place
+                        (stay-go secret --help for details)
 
 Flags:
   -c, --config string   path to config directory (default "config")

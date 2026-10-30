@@ -439,6 +439,11 @@ stay-go [flags]
                           (bool-style flag, same as --show).
       --show [scope]      print tracked state and exit; scope: all (default),
                           packages, groups, users, services, scripts, variables
+
+stay-go [-c dir] secret update <key> [value] [--all]
+                          re-encrypt an existing secret with a new value in place
+                          (cmd/stay-go/secret.go → secrets.Manager.SetInFile);
+                          value prompted hidden when omitted, or read from stdin
 ```
 
 ---

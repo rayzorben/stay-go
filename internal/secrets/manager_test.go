@@ -181,3 +181,98 @@ func TestEncryptInFileMissingFile(t *testing.T) {
 		t.Error("expected error for missing file")
 	}
 }
+
+const setYAML = `# keep me
+secrets:
+  _verify: !encrypted VERIFY
+  plain_key: old-plaintext
+  enc_key: !encrypted OLDCIPHERTEXT
+  ssh:
+    id_rsa: |
+      -----BEGIN-----
+      old
+      -----END-----
+  untouched: !encrypted KEEP
+
+packages:
+  - git
+`
+
+// readSecretLine returns the ciphertext on the "<leaf>: !encrypted " line.
+func readSecretLine(t *testing.T, path, leaf string) string {
+	t.Helper()
+	raw, _ := os.ReadFile(path)
+	for _, line := range strings.Split(string(raw), "\n") {
+		if ct, ok := strings.CutPrefix(strings.TrimSpace(line), leaf+": !encrypted "); ok {
+			return ct
+		}
+	}
+	t.Fatalf("%s not encrypted in:\n%s", leaf, raw)
+	return ""
+}
+
+func TestSetInFileReplacesEncryptedAndPlain(t *testing.T) {
+	path := writeTemp(t, setYAML)
+	mgr := NewUnlocked("pw")
+
+	cases := map[string]struct{ leaf, value string }{
+		"enc_key":    {"enc_key", "new-enc"},
+		"plain_key":  {"plain_key", "new-plain"},
+		"ssh.id_rsa": {"id_rsa", "-----BEGIN-----\nnew\n-----END-----\n"},
+	}
+	for key, c := range cases {
+		ct, err := mgr.SetInFile(path, key, c.value)
+		if err != nil {
+			t.Fatalf("SetInFile(%s): %v", key, err)
+		}
+		if got := readSecretLine(t, path, c.leaf); got != ct {
+			t.Errorf("%s: file has %q, SetInFile returned %q", key, got, ct)
+		}
+		if pt, err := decrypt(ct, "pw"); err != nil || pt != c.value {
+			t.Errorf("%s: decrypt = %q, %v; want %q", key, pt, err, c.value)
+		}
+	}
+
+	raw, _ := os.ReadFile(path)
+	want := "# keep me\nsecrets:\n  _verify: !encrypted VERIFY\n"
+	if !strings.HasPrefix(string(raw), want) {
+		t.Errorf("prefix changed:\n%s", raw)
+	}
+	for _, s := range []string{"  untouched: !encrypted KEEP\n\npackages:\n  - git\n", "  ssh:\n    id_rsa: !encrypted "} {
+		if !strings.Contains(string(raw), s) {
+			t.Errorf("missing %q in:\n%s", s, raw)
+		}
+	}
+	if strings.Contains(string(raw), "old") || strings.Contains(string(raw), "!encrypted !encrypted") {
+		t.Errorf("stale or doubled value left behind:\n%s", raw)
+	}
+	if strings.Count(string(raw), "_verify") != 1 {
+		t.Errorf("_verify duplicated:\n%s", raw)
+	}
+}
+
+func TestSetInFileUnknownKey(t *testing.T) {
+	path := writeTemp(t, setYAML)
+	before, _ := os.ReadFile(path)
+	if _, err := NewUnlocked("pw").SetInFile(path, "nope", "x"); err == nil {
+		t.Fatal("expected an error for an undefined key")
+	}
+	after, _ := os.ReadFile(path)
+	if string(before) != string(after) {
+		t.Error("file modified for an undefined key")
+	}
+}
+
+func TestFileDefinesSecret(t *testing.T) {
+	path := writeTemp(t, setYAML)
+	for key, want := range map[string]bool{"enc_key": true, "ssh.id_rsa": true, "ssh": false, "id_rsa": false, "nope": false} {
+		got, err := FileDefinesSecret(path, key)
+		if err != nil || got != want {
+			t.Errorf("FileDefinesSecret(%q) = %v, %v; want %v", key, got, err, want)
+		}
+	}
+	none := writeTemp(t, "packages:\n  - git\n")
+	if got, err := FileDefinesSecret(none, "enc_key"); err != nil || got {
+		t.Errorf("file without secrets: got %v, %v", got, err)
+	}
+}

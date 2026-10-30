@@ -245,6 +245,13 @@ files:
     mode: "0600"
 ```
 
+**Changing a secret:** `stay-go secret update <key>` prompts (hidden) for the new value and re-encrypts it in place, so you never paste plaintext into the YAML. By default it updates the file this host resolves the key from; `--all` updates every config file that defines it. The value can also be given as an argument or piped on stdin (multi-line content such as SSH keys is kept exactly). The next apply sees the new ciphertext and re-runs whatever uses the secret.
+
+```bash
+stay-go secret update tailscale_key --all
+stay-go secret update ssh.id_rsa < ~/.ssh/id_rsa
+```
+
 **Encryption:** Argon2id key derivation + AES-256-GCM authenticated encryption. Each value gets a unique random salt and nonce, so encrypting the same plaintext twice produces different ciphertexts. The `_verify` sentinel lets stay-go detect a wrong password before touching anything.
 
 ---

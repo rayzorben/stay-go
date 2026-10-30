@@ -149,6 +149,31 @@ func (m *Manager) Decrypt(ciphertext string) (string, error) {
 // Returns a map of key → new ciphertext so callers can derive state hashes
 // without re-parsing the file.
 func (m *Manager) EncryptInFile(path string, keys []string) (map[string]string, error) {
+	return m.rewriteSecrets(path, keys, nil, m.newSetup)
+}
+
+// SetInFile replaces the value of the existing secret key in path's secrets:
+// section with plaintext, encrypted — whether the old value was ciphertext or
+// not-yet-encrypted plaintext. All other file content is preserved
+// byte-for-byte. Returns the new ciphertext. It is an error for key not to be
+// defined in the file: adding a secret is still done by writing its plaintext
+// into the YAML, which the next run encrypts.
+func (m *Manager) SetInFile(path, key, plaintext string) (string, error) {
+	ciphertexts, err := m.rewriteSecrets(path, []string{key}, map[string]string{key: plaintext}, false)
+	if err != nil {
+		return "", err
+	}
+	ct, ok := ciphertexts[key]
+	if !ok {
+		return "", fmt.Errorf("secret %q is not defined in %s", key, path)
+	}
+	return ct, nil
+}
+
+// rewriteSecrets encrypts the named keys in path's secrets: section in place.
+// A key's plaintext comes from values when present, else from the file itself.
+// addVerify appends a _verify sentinel when the file lacks one.
+func (m *Manager) rewriteSecrets(path string, keys []string, values map[string]string, addVerify bool) (map[string]string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading %q: %w", path, err)
@@ -181,7 +206,7 @@ func (m *Manager) EncryptInFile(path string, keys []string) (map[string]string, 
 	var replacements []encReplacement
 	ciphertexts := make(map[string]string, len(keys))
 
-	if err := m.collectEncryptReplacements(secretsNode, "", toEncrypt, lines, ciphertexts, &replacements); err != nil {
+	if err := m.collectEncryptReplacements(secretsNode, "", toEncrypt, values, lines, ciphertexts, &replacements); err != nil {
 		return nil, err
 	}
 
@@ -201,7 +226,7 @@ func (m *Manager) EncryptInFile(path string, keys []string) (map[string]string, 
 	// in any config file when the manager was unlocked) and this file doesn't
 	// already have one. This prevents duplicate _verify entries across included
 	// config files — the sentinel lives in whichever file first triggered setup.
-	if m.newSetup && findMappingValue(secretsNode, VerifyKey) == nil {
+	if addVerify && findMappingValue(secretsNode, VerifyKey) == nil {
 		token, err := encrypt(verifyMagic, m.password)
 		if err != nil {
 			return nil, fmt.Errorf("creating verify token: %w", err)
@@ -229,8 +254,9 @@ type encReplacement struct {
 
 // collectEncryptReplacements recursively walks a secrets mapping node,
 // finding leaf scalars whose dot-joined path is in toEncrypt, and appending
-// line replacements. prefix is empty at the top level.
-func (m *Manager) collectEncryptReplacements(node *yaml.Node, prefix string, toEncrypt map[string]bool, lines []string, ciphertexts map[string]string, replacements *[]encReplacement) error {
+// line replacements. prefix is empty at the top level. values overrides the
+// plaintext for a key; otherwise the file's own value is encrypted.
+func (m *Manager) collectEncryptReplacements(node *yaml.Node, prefix string, toEncrypt map[string]bool, values map[string]string, lines []string, ciphertexts map[string]string, replacements *[]encReplacement) error {
 	for i := 0; i+1 < len(node.Content); i += 2 {
 		keyNode := node.Content[i]
 		valNode := node.Content[i+1]
@@ -242,7 +268,7 @@ func (m *Manager) collectEncryptReplacements(node *yaml.Node, prefix string, toE
 
 		// Nested group — recurse.
 		if valNode.Kind == yaml.MappingNode && valNode.Tag != "!encrypted" {
-			if err := m.collectEncryptReplacements(valNode, dotKey, toEncrypt, lines, ciphertexts, replacements); err != nil {
+			if err := m.collectEncryptReplacements(valNode, dotKey, toEncrypt, values, lines, ciphertexts, replacements); err != nil {
 				return err
 			}
 			continue
@@ -252,12 +278,17 @@ func (m *Manager) collectEncryptReplacements(node *yaml.Node, prefix string, toE
 			continue
 		}
 
+		plaintext, override := values[dotKey]
+		if !override {
+			plaintext = valNode.Value
+		}
+
 		isBlock := valNode.Style == yaml.LiteralStyle || valNode.Style == yaml.FoldedStyle
 		if !isBlock && strings.Contains(valNode.Value, "\n") {
 			return fmt.Errorf("secret %q: multi-line quoted strings are not supported; use a block scalar (|)", dotKey)
 		}
 
-		ct, err := encrypt(valNode.Value, m.password)
+		ct, err := encrypt(plaintext, m.password)
 		if err != nil {
 			return fmt.Errorf("encrypting secret %q: %w", dotKey, err)
 		}
@@ -340,4 +371,48 @@ func atomicWrite(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// FileDefinesSecret reports whether path's secrets: section defines the
+// dot-joined key (flat or nested). A file without a secrets: section, or that
+// is not a YAML mapping, defines nothing.
+func FileDefinesSecret(path, key string) (bool, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false, fmt.Errorf("reading %q: %w", path, err)
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		return false, fmt.Errorf("parsing %q: %w", path, err)
+	}
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return false, nil
+	}
+	secretsNode := findMappingValue(doc.Content[0], "secrets")
+	if secretsNode == nil || secretsNode.Kind != yaml.MappingNode {
+		return false, nil
+	}
+	return definesKey(secretsNode, "", key), nil
+}
+
+// definesKey walks a secrets mapping the same way collectEncryptReplacements
+// does, reporting whether a leaf's dot-joined path equals key.
+func definesKey(node *yaml.Node, prefix, key string) bool {
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		dotKey := node.Content[i].Value
+		if prefix != "" {
+			dotKey = prefix + "." + dotKey
+		}
+		valNode := node.Content[i+1]
+		if valNode.Kind == yaml.MappingNode && valNode.Tag != "!encrypted" {
+			if definesKey(valNode, dotKey, key) {
+				return true
+			}
+			continue
+		}
+		if dotKey == key {
+			return true
+		}
+	}
+	return false
 }
