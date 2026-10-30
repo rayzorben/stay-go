@@ -4,12 +4,9 @@ set -euo pipefail
 # ==========================================
 # CONFIGURATION VARIABLES
 # ==========================================
-DISK="/dev/vda"
-EFI_SIZE="1G"              # Size for EFI System Partition
-ROOT_LV_SIZE="16G"         # Size for Btrfs root LV (rest to XFS /home)
+# Usage: bootstrap.sh <host>     (host: cachy-vm | cachygram)
 VG_NAME="vg_cachyos"
 LUKS_NAME="cryptlvm"
-HOSTNAME="cachy-vm"
 USERNAME="rayben"
 TIMEZONE="America/New_York"
 LOCALE="en_US.UTF-8"
@@ -17,6 +14,62 @@ REPO_URL="https://github.com/rayzorben/stay-go"
 
 STATE_FILE="/tmp/cachyos_installer_state"
 VARS_FILE="/tmp/cachyos_installer_vars"
+HOST_FILE="/tmp/cachyos_installer_host"
+
+# Per-host profile. Everything that differs between the QEMU test VM and real
+# hardware lives here; the steps below only read these variables.
+#
+#   ROOT_LV_SIZE   btrfs root: both kernels + headers, firmware, the pacman
+#                  cache (@pkg) and every snapper snapshot share it.
+#   SWAP_LV_SIZE   disk swap behind zram ("" = none). Priority 10, so zram
+#                  (100) is always used first and this only takes the overflow.
+#   HOME_LV_EXTENTS  XFS cannot shrink, so /home deliberately does not take the
+#                  whole VG: the remainder stays unallocated for growing root
+#                  (lvextend + btrfs filesystem resize) or /home later.
+#   ZRAM_SIZE      zram-generator expression.
+#   EXTRA_CMDLINE  appended to the kernel command line.
+#   INITRAMFS_MODULES  pinned in mkinitcpio MODULES=() ("" = autodetect only).
+#   EXTRA_PKGS / EXTRA_SERVICES  host-only packages and units.
+load_host_profile() {
+    case "$1" in
+        cachy-vm)
+            DISK="/dev/vda"
+            HOSTNAME="cachy-vm"
+            EFI_SIZE="1G"
+            ROOT_LV_SIZE="16G"
+            SWAP_LV_SIZE="2G"
+            HOME_LV_EXTENTS="95%FREE"
+            ZRAM_SIZE="min(ram / 2, 4096)"
+            EXTRA_CMDLINE=""
+            # 'autodetect' probes the *running* installer kernel, so a guest
+            # whose root lives on virtio can otherwise end up without them.
+            INITRAMFS_MODULES="virtio virtio_blk virtio_pci virtio_net virtio_scsi"
+            EXTRA_PKGS="qemu-guest-agent"
+            EXTRA_SERVICES="qemu-guest-agent.service"
+            ;;
+        cachygram)
+            # LG Gram 16T90SP: 1TB SK hynix NVMe, Meteor Lake (i915), 32G RAM.
+            DISK="/dev/nvme0n1"
+            HOSTNAME="cachygram"
+            # 4G like the original install: two kernels + fallback images, plus
+            # the kernels limine-snapper-sync keeps for bootable snapshots.
+            EFI_SIZE="4G"
+            ROOT_LV_SIZE="128G"
+            SWAP_LV_SIZE="32G"
+            HOME_LV_EXTENTS="90%FREE"
+            ZRAM_SIZE="ram"
+            # Carried over from the original install's /etc/default/limine.
+            EXTRA_CMDLINE="nowatchdog i915.enable_psr=0 i915.fastboot=0"
+            INITRAMFS_MODULES=""
+            EXTRA_PKGS=""
+            EXTRA_SERVICES=""
+            ;;
+        *)
+            echo "[!] Unknown host '$1'. Usage: $0 <cachy-vm|cachygram>"
+            exit 1
+            ;;
+    esac
+}
 
 # ==========================================
 # HELPER FUNCTIONS
@@ -50,10 +103,37 @@ if [[ "$CURRENT_STEP" -gt 0 ]]; then
     read -rp "Do you want to RESUME from checkpoint $CURRENT_STEP? [Y/n]: " RESUME_CHOICE
     if [[ "$RESUME_CHOICE" =~ ^[Nn]$ ]]; then
         echo "[*] Clearing checkpoints and starting fresh..."
-        rm -f "$STATE_FILE" "$VARS_FILE"
+        rm -f "$STATE_FILE" "$VARS_FILE" "$HOST_FILE"
         CURRENT_STEP=0
     fi
 fi
+
+# The host is fixed for the life of an install: a resume must not switch disks
+# or profiles halfway through.
+HOST_ARG="${1:-}"
+if [[ "$CURRENT_STEP" -gt 0 && -f "$HOST_FILE" ]]; then
+    SAVED_HOST="$(cat "$HOST_FILE")"
+    if [[ -n "$HOST_ARG" && "$HOST_ARG" != "$SAVED_HOST" ]]; then
+        echo "[!] Interrupted run was for '$SAVED_HOST', not '$HOST_ARG'."
+        echo "    Re-run with '$SAVED_HOST', or answer 'n' to start fresh."
+        exit 1
+    fi
+    HOST_ARG="$SAVED_HOST"
+fi
+if [[ -z "$HOST_ARG" ]]; then
+    echo "Usage: $0 <cachy-vm|cachygram>"
+    exit 1
+fi
+load_host_profile "$HOST_ARG"
+echo "$HOST_ARG" > "$HOST_FILE"
+
+# Kernel command line, built once for both /etc/default/limine writes below.
+# ':allow-discards' lets TRIM (discard=async, fstrim.timer) pass through dm-crypt
+# to the SSD; without it every discard stops at the LUKS layer.
+build_kernel_cmdline() {
+    local luks_uuid="$1"
+    KERNEL_CMDLINE="cryptdevice=UUID=$luks_uuid:$LUKS_NAME:allow-discards root=/dev/$VG_NAME/lv_root rootflags=subvol=@ rw quiet splash rd.udev.log_priority=3 vt.global_cursor_default=0 zswap.enabled=0${EXTRA_CMDLINE:+ $EXTRA_CMDLINE}"
+}
 
 # Detect partition naming scheme (e.g., /dev/vda1 vs /dev/nvme0n1p1)
 if [[ "$DISK" =~ [0-9]$ ]]; then
@@ -75,10 +155,13 @@ fi
 
 if [[ "$CURRENT_STEP" -eq 0 ]]; then
     echo "========================================================"
+    echo " Host Profile      : $HOST_ARG"
     echo " Target Disk       : $DISK"
+    lsblk -dno SIZE,MODEL "$DISK" 2>/dev/null | sed 's/^/                     /'
     echo " EFI Partition     : $EFI_SIZE"
     echo " Root LV Size      : $ROOT_LV_SIZE (Btrfs)"
-    echo " Home LV Size      : Remaining Free Space (XFS)"
+    echo " Swap LV Size      : ${SWAP_LV_SIZE:-none} (behind zram: $ZRAM_SIZE)"
+    echo " Home LV Size      : $HOME_LV_EXTENTS (XFS; rest left unallocated)"
     echo " Bootloader        : Limine (Graphical)"
     echo " Crypt UI / Splash : Plymouth Graphical Prompt"
     echo " Go Repo Clone     : $REPO_URL -> /home/$USERNAME/stay"
@@ -96,11 +179,9 @@ if [[ "$CURRENT_STEP" -eq 0 ]]; then
     read -rsp "Enter System User/Root Password: " USER_PASS
     echo
 
-    cat <<EOF > "$VARS_FILE"
-LUKS_PASS='$LUKS_PASS'
-USER_PASS='$USER_PASS'
-EOF
-    chmod 600 "$VARS_FILE"
+    # %q, not '...': a passphrase containing ' (or $, ", `) must round-trip
+    # through 'source' verbatim instead of breaking or executing on resume.
+    ( umask 077; printf 'LUKS_PASS=%q\nUSER_PASS=%q\n' "$LUKS_PASS" "$USER_PASS" > "$VARS_FILE" )
 else
     if [[ -f "$VARS_FILE" ]]; then
         # shellcheck disable=SC1090
@@ -117,7 +198,7 @@ fi
 ensure_storage_ready() {
     if ! cryptsetup status "$LUKS_NAME" >/dev/null 2>&1; then
         echo "[*] Opening LUKS container for resume..."
-        echo -n "$LUKS_PASS" | cryptsetup open "$PART_LUKS" "$LUKS_NAME" -
+        printf %s "$LUKS_PASS" | cryptsetup open "$PART_LUKS" "$LUKS_NAME" -
     fi
     vgchange -ay "$VG_NAME" >/dev/null 2>&1 || true
 }
@@ -240,8 +321,8 @@ if [[ "$CURRENT_STEP" -lt 1 ]]; then
     mkfs.fat -F 32 "$PART_EFI"
 
     echo "[*] Setting up LUKS container..."
-    echo -n "$LUKS_PASS" | cryptsetup luksFormat --type luks2 --pbkdf argon2id "$PART_LUKS" -
-    echo -n "$LUKS_PASS" | cryptsetup open "$PART_LUKS" "$LUKS_NAME" -
+    printf %s "$LUKS_PASS" | cryptsetup luksFormat --type luks2 --pbkdf argon2id "$PART_LUKS" -
+    printf %s "$LUKS_PASS" | cryptsetup open "$PART_LUKS" "$LUKS_NAME" -
 
     set_checkpoint 1
 fi
@@ -256,7 +337,11 @@ if [[ "$CURRENT_STEP" -lt 2 ]]; then
     pvcreate -f "/dev/mapper/$LUKS_NAME"
     vgcreate -f "$VG_NAME" "/dev/mapper/$LUKS_NAME"
     lvcreate -y -L "$ROOT_LV_SIZE" "$VG_NAME" -n lv_root
-    lvcreate -y -l 100%FREE "$VG_NAME" -n lv_home
+    if [[ -n "$SWAP_LV_SIZE" ]]; then
+        lvcreate -y -L "$SWAP_LV_SIZE" "$VG_NAME" -n lv_swap
+        mkswap -L cachyos-swap "/dev/$VG_NAME/lv_swap"
+    fi
+    lvcreate -y -l "$HOME_LV_EXTENTS" "$VG_NAME" -n lv_home
 
     mkfs.btrfs -f -L cachyos-root "/dev/$VG_NAME/lv_root"
     mount "/dev/$VG_NAME/lv_root" /mnt
@@ -354,9 +439,11 @@ KEYMAP=us
 FONT=ter-116n
 VCONSOLE
 
+    build_kernel_cmdline "$LUKS_UUID"
+
     cat > /mnt/etc/default/limine <<LIMINE_DEFAULT
 ESP_PATH="/boot"
-KERNEL_CMDLINE[default]+="cryptdevice=UUID=$LUKS_UUID:$LUKS_NAME root=/dev/$VG_NAME/lv_root rootflags=subvol=@ rw quiet splash rd.udev.log_priority=3 vt.global_cursor_default=0 zswap.enabled=0"
+KERNEL_CMDLINE[default]+="$KERNEL_CMDLINE"
 BOOT_ORDER="*, *lts, *fallback, Snapshots"
 MKINITCPIO_FALLBACK=linux-cachyos-lts
 ENABLE_LIMINE_FALLBACK=yes
@@ -389,7 +476,7 @@ LIMINE_DEFAULT
             fish terminus-font \
             man-db man-pages pacman-contrib openssh rsync wget unzip htop \
             usbutils pciutils \
-            qemu-guest-agent
+            $EXTRA_PKGS
         then
             PACSTRAP_OK=1
             break
@@ -416,6 +503,15 @@ LIMINE_DEFAULT
 
     echo "[*] Generating fstab..."
     genfstab -U /mnt > /mnt/etc/fstab
+    # genfstab pins btrfs mounts by subvolid= as well as subvol=. A snapper
+    # rollback promotes a snapshot with a different id, so a pinned / no longer
+    # matches; mount by subvol= alone (as the Arch snapper guide prescribes).
+    sed -i -E 's/subvolid=[0-9]+,//g; s/,subvolid=[0-9]+//g' /mnt/etc/fstab
+    # Swap is not active in the live environment, so genfstab never sees it.
+    # pri=10 keeps it strictly behind zram (100): overflow only.
+    if [[ -n "$SWAP_LV_SIZE" ]]; then
+        printf '/dev/%s/lv_swap\tnone\tswap\tdefaults,pri=10\t0 0\n' "$VG_NAME" >> /mnt/etc/fstab
+    fi
 
     set_checkpoint 4
 fi
@@ -428,6 +524,7 @@ if [[ "$CURRENT_STEP" -lt 5 ]]; then
     ensure_mounts_ready
     
     LUKS_UUID=$(blkid -s UUID -o value "$PART_LUKS")
+    build_kernel_cmdline "$LUKS_UUID"
 
     # The chroot payload is written to a FILE and executed from it -- never fed
     # to bash on stdin. When it was a stdin heredoc, any command inside that
@@ -476,9 +573,8 @@ HOSTS
 # after 'plymouth' gives the same graphical passphrase prompt.
 sed -i 's/^HOOKS=.*/HOOKS=(base udev plymouth autodetect modconf kms keyboard keymap consolefont block encrypt lvm2 filesystems fsck)/' /etc/mkinitcpio.conf
 
-# Pin the virtio drivers: 'autodetect' probes the *running* installer kernel, so
-# a guest whose root lives on virtio can otherwise end up without them.
-sed -i 's/^MODULES=.*/MODULES=(virtio virtio_blk virtio_pci virtio_net virtio_scsi)/' /etc/mkinitcpio.conf
+# Host-pinned modules (the VM's virtio drivers; see load_host_profile).
+sed -i 's/^MODULES=.*/MODULES=($INITRAMFS_MODULES)/' /etc/mkinitcpio.conf
 
 # Plymouth Graphical Theme setup. Deliberately without -R: the initramfs is
 # rebuilt once below, after the HOOKS/MODULES edits above are all in place.
@@ -541,7 +637,7 @@ fi
 # no manual cp/efibootmgr is needed.
 cat <<LIMINE_DEFAULT > /etc/default/limine
 ESP_PATH="/boot"
-KERNEL_CMDLINE[default]+="cryptdevice=UUID=$LUKS_UUID:$LUKS_NAME root=/dev/$VG_NAME/lv_root rootflags=subvol=@ rw quiet splash rd.udev.log_priority=3 vt.global_cursor_default=0 zswap.enabled=0"
+KERNEL_CMDLINE[default]+="$KERNEL_CMDLINE"
 BOOT_ORDER="*, *lts, *fallback, Snapshots"
 MKINITCPIO_FALLBACK=linux-cachyos-lts
 ENABLE_LIMINE_FALLBACK=yes
@@ -580,12 +676,13 @@ limine-install
 # ZRAM Setup
 cat <<ZRAM_CONF > /etc/systemd/zram-generator.conf
 [zram0]
-zram-size = min(ram / 2, 4096)
+zram-size = $ZRAM_SIZE
 compression-algorithm = zstd
+swap-priority = 100
 ZRAM_CONF
 
-# User & Sudo Setup for rayben
-echo "root:$USER_PASS" | chpasswd
+# User & Sudo Setup for rayben. Passwords are NOT set here: this file is written
+# to the target disk, so they are piped to chpasswd from outside after it runs.
 if ! id "$USERNAME" >/dev/null 2>&1; then
     useradd -m -G wheel,storage,power,network -s /usr/bin/fish "$USERNAME"
 fi
@@ -593,7 +690,6 @@ fi
 # run repairs an account that already exists without these groups -- a user
 # missing 'wheel' is exactly "$USERNAME is not in the sudoers file".
 usermod -aG wheel,storage,power,network "$USERNAME"
-echo "$USERNAME:$USER_PASS" | chpasswd
 
 # Default shell: fish for both root and $USERNAME. Set via chsh (not just
 # useradd -s) so a resumed run fixes an account that already exists with bash.
@@ -611,6 +707,22 @@ done
 echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/10-wheel
 chmod 0440 /etc/sudoers.d/10-wheel
 visudo -c -f /etc/sudoers.d/10-wheel
+
+# Enable Services -- before the networked steps below (paru, git clone), so a
+# mirror or GitHub hiccup cannot leave a system that boots without networking.
+systemctl enable NetworkManager.service
+systemctl enable ananicy-cpp.service
+systemctl enable irqbalance.service
+systemctl enable systemd-resolved.service
+systemctl enable fstrim.timer
+systemctl enable snapper-timeline.timer
+systemctl enable snapper-cleanup.timer
+systemctl enable limine-snapper-sync.service
+systemctl enable paccache.timer
+systemctl enable systemd-timesyncd.service
+for unit in $EXTRA_SERVICES; do
+    systemctl enable "\$unit"
+done
 
 # AUR helper: stay-go's package-manager table prefers paru, and the host configs
 # reference AUR packages, so the first stay-go run needs it present.
@@ -691,23 +803,21 @@ fi
 git clone "$REPO_URL" "/home/$USERNAME/stay"
 chown -R "$USERNAME:$USERNAME" "/home/$USERNAME/stay"
 
-# Enable Services
-systemctl enable NetworkManager.service
-systemctl enable ananicy-cpp.service
-systemctl enable irqbalance.service
-systemctl enable systemd-resolved.service
-systemctl enable qemu-guest-agent.service
-systemctl enable fstrim.timer
-systemctl enable snapper-timeline.timer
-systemctl enable snapper-cleanup.timer
-systemctl enable limine-snapper-sync.service
-systemctl enable paccache.timer
-systemctl enable systemd-timesyncd.service
-
 CHROOT_SCRIPT
 
-    arch-chroot /mnt /bin/bash /root/stay-bootstrap-chroot.sh < /dev/null
+    if ! arch-chroot /mnt /bin/bash /root/stay-bootstrap-chroot.sh < /dev/null; then
+        rm -f /mnt/root/stay-bootstrap-chroot.sh
+        echo "[!] Chroot configuration failed. Fix the cause and re-run to resume."
+        exit 1
+    fi
     rm -f /mnt/root/stay-bootstrap-chroot.sh
+
+    # Passwords go to chpasswd on stdin only -- never into a file on the target
+    # disk, and never through shell quoting. printf %s passes any character.
+    {
+        printf 'root:%s\n' "$USER_PASS"
+        printf '%s:%s\n' "$USERNAME" "$USER_PASS"
+    } | arch-chroot /mnt chpasswd
 
     # Verify the chroot payload ran to completion by checking effects of its
     # TAIL. A truncated payload is precisely the failure that once shipped an
