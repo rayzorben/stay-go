@@ -29,9 +29,9 @@
 # timer is skipped; nothing half-configured reaches orohost.
 
 # Uncomment as a whole: an empty `kopia:` group would itself be read as a secret.
-# secrets:
-#   kopia:
-#     repository_password: <paste here>
+secrets:
+  kopia:
+    repository_password: !encrypted MW7f7lKAzLg3husM+ge89abLFF1aBaTF6z0wdJZSxgW/cqBmNaDQaxUt7VRXLG3rXCtXVLXUqmtvs5QJL3DscN0bZWJPgmUAO6BEbPWEppdDjPC1gtlGzw==
 
 packages:
   - kopia
