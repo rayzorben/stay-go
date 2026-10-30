@@ -305,7 +305,13 @@ if [[ "$CURRENT_STEP" -lt 1 ]]; then
 
     sgdisk --zap-all "$DISK"
     sgdisk -n 1:0:+"$EFI_SIZE" -t 1:ef00 -c 1:"EFI-SP" "$DISK"
-    sgdisk -n 2:0:0            -t 2:8309 -c 2:"cryptsystem" "$DISK"
+    # End the LUKS partition on a 1MiB boundary rather than the last usable
+    # sector: luksFormat --sector-size 4096 refuses a device whose size is not
+    # a multiple of 4K, and the backup GPT leaves the disk's tail unaligned
+    # (VM images happen to be MiB-sized, real NVMe drives are not).
+    LAST_SECTOR=$(sgdisk -E "$DISK" | tail -n1)
+    LUKS_END=$(( (LAST_SECTOR + 1) / 2048 * 2048 - 1 ))
+    sgdisk -n 2:0:"$LUKS_END"  -t 2:8309 -c 2:"cryptsystem" "$DISK"
     partprobe "$DISK"
     # Wait for udev to create the partition nodes; mkfs.fat immediately after
     # partprobe can otherwise race and act on a device that is not there yet.
