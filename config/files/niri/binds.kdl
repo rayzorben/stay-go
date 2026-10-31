@@ -2,6 +2,11 @@ binds {
     Print { spawn "~/.config/niri/screenshot.sh"; }
     Mod+grave { spawn "~/.config/niri/verterm-dropdown-toggle.sh"; }
 
+    // keyd sends Mod+D for a lone tap of Super (leftmeta = overload(meta, M-d)
+    // in /etc/keyd/default.conf). dms/binds.kdl binds Mod+D to its dash, so
+    // take it back here: tapping Super toggles the overview.
+    Mod+D repeat=false { toggle-overview; }
+
     // Project workspaces by NAME, not index. dms/binds.kdl binds these same
     // keys to `focus-workspace <N>`, which is positional — and niri does not
     // guarantee named workspaces land in declaration order (on a live config
