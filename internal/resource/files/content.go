@@ -18,17 +18,6 @@ const (
 	stateKeySudo     = "sudo"
 )
 
-func fileContainsSnippet(path, snippet string) bool {
-	if snippet == "" {
-		return false
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	return strings.Contains(string(data), snippet)
-}
-
 func readFileForEdit(ctx context.Context, exec *executor.Executor, path string, sudo bool) ([]byte, error) {
 	if !sudo {
 		b, err := os.ReadFile(path)

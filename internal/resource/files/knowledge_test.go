@@ -60,3 +60,33 @@ func TestGatherKnowledge_symlinkStaleTargetIsAbsent(t *testing.T) {
 		t.Fatalf("expected stale symlink to be reported absent (re-link), got %d entries", len(entries))
 	}
 }
+
+// A target in a directory the user cannot search (e.g. /etc/sudoers.d, 0750
+// root) makes Lstat fail with EACCES. Without a usable sudo probe it stays
+// absent rather than erroring; non-sudo entries never attempt one.
+func TestGatherKnowledge_permissionDeniedWithoutProbeIsAbsent(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permissions")
+	}
+	dir := t.TempDir()
+	locked := filepath.Join(dir, "locked")
+	if err := os.Mkdir(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(locked, "f")
+	if err := os.WriteFile(target, []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	r := New(&config.Config{}, nil)
+	if r.targetExists(context.Background(), target, true) {
+		t.Fatal("expected unreadable target with no executor to be reported absent")
+	}
+	if r.targetExists(context.Background(), target, false) {
+		t.Fatal("expected unreadable non-sudo target to be reported absent")
+	}
+}

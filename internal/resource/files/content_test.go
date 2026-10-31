@@ -6,23 +6,26 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/rayzorben/stay-go/internal/config"
 	"github.com/rayzorben/stay-go/internal/executor"
 )
 
 func TestFileContainsSnippet(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "f")
+	r := New(&config.Config{}, nil)
+	ctx := context.Background()
 
-	if fileContainsSnippet(p, "hello") {
+	if r.containsSnippet(ctx, p, "hello", false) {
 		t.Fatal("missing file should not contain")
 	}
 	if err := os.WriteFile(p, []byte("alpha\nhello world\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if !fileContainsSnippet(p, "hello") {
+	if !r.containsSnippet(ctx, p, "hello", false) {
 		t.Fatal("expected substring match")
 	}
-	if fileContainsSnippet(p, "zzz") {
+	if r.containsSnippet(ctx, p, "zzz", false) {
 		t.Fatal("should not match absent substring")
 	}
 }
