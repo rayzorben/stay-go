@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# ExecStart wrapper for dms.service (see the drop-in in
+# users/rayben-cachygram.yaml): launches DMS from a patched copy of its UI that
+# hides niri's "Scratch" workspace from the bar's workspace switcher.
+#
+# Why a patched copy: DMS has no setting for this. Its niri workspace filter
+# (niriWorkspacesForScreen in Common/WorkspaceModel.js) only knows "is it
+# active" and "does it hold a window"; Scratch permanently holds the parked
+# dropdown terminal, so it always renders. Scratchpad support exists only for
+# Hyprland, and plugins can't filter the built-in switcher's model.
+#
+# Why this way: since dms-shell 2.0 the UI is embedded in /usr/bin/dms and
+# extracted read-only into $XDG_RUNTIME_DIR/dms-shell/<hash>/ on every
+# `dms run`, so there is no file on disk to patch any more. What DMS does
+# support is `dms run -c <dir>`: run a UI from a directory instead of the
+# embedded one. This script gets the embedded UI out of the binary, patches one
+# line, caches the result per dms build, and execs `dms ... -c <copy>`.
+#
+# A copy keyed by the binary is never stale: a dms-shell upgrade changes the
+# binary, so the next start rebuilds from the new embedded UI. If anything goes
+# wrong (extraction or the anchor line missing after an upstream rework) it
+# logs why and starts DMS unpatched — Scratch shows, but the bar always comes up.
+#
+# Usage: dms-hide-scratch <dms args...>   e.g. dms-hide-scratch run --session
+set -uo pipefail
+
+DMS=/usr/bin/dms
+WORKSPACE="Scratch"
+MARKER="stay-go:hide-scratch"
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/stay-go/dms-ui"
+TARGET="Common/WorkspaceModel.js"
+# The niri workspace list for one screen, gathered and sorted but not yet
+# filtered for "occupied only" — filtering here hides Scratch either way.
+ANCHOR='const sorted = (onScreen.length > 0 ? onScreen : niriFallback()).slice().sort((a, b) => a.idx - b.idx);'
+
+log() { echo "dms-hide-scratch: $*" >&2; }
+
+work=""
+# The extracted tree is read-only; make it writable before deleting. Called
+# explicitly before each exec, since exec never runs an EXIT trap.
+cleanup() {
+    [ -n "$work" ] || return 0
+    chmod -R u+w "$work" 2>/dev/null
+    rm -rf "$work"
+}
+
+unpatched() {
+    log "$1 — starting DMS unpatched"
+    shift
+    cleanup
+    exec "$DMS" "$@"
+}
+
+# Extract the embedded UI into $1. `dms run` extracts into
+# $XDG_RUNTIME_DIR/dms-shell/<hash>/ before it does anything else, then starts
+# its backend on a socket in that same dir. A runtime dir whose path is longer
+# than a unix socket address (108 bytes) makes that bind fail at once, so the
+# run stops right after extracting: no backend, no UI, nothing touched in
+# ~/.config. Wayland, D-Bus and the systemd notify socket are hidden as a
+# second guard so it can never reach the live session.
+extract() {
+    local rt
+    rt="$1/rt-$(printf 'x%.0s' {1..120})"
+    mkdir -m 700 "$rt" || return 1
+    env -u WAYLAND_DISPLAY -u DISPLAY -u NIRI_SOCKET -u DBUS_SESSION_BUS_ADDRESS \
+        -u NOTIFY_SOCKET -u HYPRLAND_INSTANCE_SIGNATURE -u SWAYSOCK \
+        XDG_RUNTIME_DIR="$rt" timeout 30 "$DMS" run >/dev/null 2>&1
+    local src
+    src=$(find "$rt/dms-shell" -mindepth 1 -maxdepth 1 -type d -print -quit 2>/dev/null)
+    [ -n "$src" ] && [ -f "$src/shell.qml" ] || return 1
+    cp -a "$src" "$1/ui" && chmod -R u+w "$1/ui"
+}
+
+# awk rather than sed: the anchor is full of (), => and . that would all need
+# escaping in a regex, and a literal string comparison can't drift. `sorted`
+# is const, so the filter is chained onto the anchor rather than added after it.
+patch() {
+    local file="$1/ui/$TARGET"
+    [ "$(grep -cF "$ANCHOR" "$file" 2>/dev/null)" = "1" ] || return 1
+    awk -v anchor="$ANCHOR" -v ws="$WORKSPACE" -v marker="$MARKER" '
+        (pos = index($0, anchor)) {
+            end = pos + length(anchor) - 1   # the anchor ends in ";"
+            $0 = substr($0, 1, end - 1) ".filter(ws => ws.name !== \"" ws "\");" substr($0, end + 1) " // " marker
+        }
+        { print }
+    ' "$file" > "$file.new" && mv "$file.new" "$file" && grep -qF "$MARKER" "$file"
+}
+
+# Size + mtime identify the installed build; pacman sets mtime from the package.
+key=$(stat -c '%s-%Y' "$DMS") || unpatched "cannot stat $DMS" "$@"
+ui="$CACHE/$key"
+
+if ! grep -qsF "$MARKER" "$ui/$TARGET"; then
+    mkdir -p "$CACHE" || unpatched "cannot create $CACHE" "$@"
+    work=$(mktemp -d "$CACHE/.build.XXXXXX") || unpatched "cannot create a build dir" "$@"
+    extract "$work" || unpatched "could not extract the embedded UI from $DMS" "$@"
+    patch "$work" || unpatched "anchor not found exactly once in $TARGET — upstream changed, patch needs review" "$@"
+    # Swap in the new build and drop copies for older dms builds.
+    for old in "$CACHE"/*; do
+        [ "$old" = "$ui" ] || rm -rf "$old"
+    done
+    rm -rf "$ui"
+    mv "$work/ui" "$ui" || unpatched "could not install $ui" "$@"
+    log "built patched UI for dms build $key"
+fi
+
+cleanup
+exec "$DMS" "$@" -c "$ui"

@@ -270,6 +270,26 @@ files:
     depends:
       - commands: [install dms] # its installer replaces both files
 
+  # ── Hide niri's "Scratch" workspace from the DMS bar ──
+  # Scratch is the parking slot for the hidden dropdown terminal (see
+  # files/niri/rules.kdl). DMS has no setting to hide a workspace and, since
+  # dms-shell 2.0, no UI file on disk to patch: the wrapper extracts the UI
+  # embedded in /usr/bin/dms, patches one line, caches it per dms build and runs
+  # `dms run -c <copy>` (details in the script). The drop-in makes dms.service
+  # start DMS through it. Copied, not symlinked: the bar starts at login and
+  # must not depend on the repo being readable then.
+  - source: ${config_root}/files/dms/dms-hide-scratch
+    target: ~/.local/bin/dms-hide-scratch
+    mode: "0755"
+
+  - content: |
+      [Service]
+      ExecStart=
+      ExecStart=%h/.local/bin/dms-hide-scratch run --session
+    target: ~/.config/systemd/user/dms.service.d/hide-scratch.conf
+    depends:
+      - files: [~/.local/bin/dms-hide-scratch]
+
   # Application config files
   - source: ${config_root}/files/config/electron-flags.conf
     target: ~/.config/electron-flags.conf
@@ -524,6 +544,19 @@ commands:
     check: bash ${config_root}/scripts/firefox-user-js.sh --check
     depends:
       - packages: [firefox]
+
+  # Restart DMS onto the Scratch-hiding UI (files above). The check passes
+  # when the running quickshell was started from the patched copy — or when
+  # DMS isn't running at all (no graphical session, e.g. over SSH). If the
+  # wrapper fell back to the stock UI after a dms-shell upgrade reworked the
+  # patched line, this re-plans on purpose: see `journalctl --user -u dms`.
+  # No files: guard on the wrapper and drop-in — that is a plan-time condition
+  # and would skip the first run; files are written before commands run anyway.
+  - name: dms-restart-hide-scratch
+    command: systemctl --user daemon-reload && systemctl --user restart dms
+    check: '! systemctl --user is-active --quiet dms || pgrep -ax qs | grep -qF /stay-go/dms-ui/ || { echo "DMS is not running the Scratch-hiding UI"; exit 1; }'
+    depends:
+      - commands: [install dms]
 
 scripts:
   - script: ${config_root}/scripts/configure-zoxide.sh
