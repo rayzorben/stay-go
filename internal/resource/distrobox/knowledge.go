@@ -42,7 +42,8 @@ func (r *Resource) GatherKnowledge(ctx context.Context) ([]engine.KnowledgeEntry
 //	ID           | NAME      | STATUS    | IMAGE
 //	1            | sedanos   | Up 2 hours| docker.io/cachyos/cachyos-v3:latest
 func listDistroboxes(ctx context.Context, exec *executor.Executor) (map[string]bool, error) {
-	result, err := exec.Run(ctx, executor.Options{}, "distrobox", "list", "--no-color")
+	name, args := dbxCommand("list", "--no-color")
+	result, err := exec.Run(ctx, executor.Options{}, name, args...)
 	if err != nil || result.ExitCode != 0 {
 		return nil, fmt.Errorf("distrobox list: exit %d", result.ExitCode)
 	}

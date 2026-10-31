@@ -38,7 +38,8 @@ func (r *Resource) executeBox(ctx context.Context, node *engine.PlanNode, entry 
 		// For UPDATE: the box config changed (e.g. image). Remove the old container
 		// first so distrobox create starts fresh.
 		if node.Action == engine.ActionUpdate {
-			r.exec.Run(ctx, executor.Options{}, "distrobox", "rm", "--yes", entry.Name) //nolint:errcheck
+			name, args := dbxCommand("rm", "--yes", entry.Name)
+			r.exec.Run(ctx, executor.Options{}, name, args...) //nolint:errcheck
 		}
 
 		// home_sudo: if the custom home directory is outside the user's home
@@ -50,8 +51,8 @@ func (r *Resource) executeBox(ctx context.Context, node *engine.PlanNode, entry 
 			}
 		}
 
-		args := buildCreateArgs(entry)
-		result, err := r.exec.Run(ctx, executor.Options{}, "distrobox", args...)
+		name, args := dbxCommand(buildCreateArgs(entry)...)
+		result, err := r.exec.Run(ctx, executor.Options{}, name, args...)
 		if err != nil {
 			return fmt.Errorf("creating distrobox %q: %w\nstderr: %s", entry.Name, err, result.Stderr)
 		}
@@ -62,7 +63,8 @@ func (r *Resource) executeBox(ctx context.Context, node *engine.PlanNode, entry 
 		st.Set(node.ID, node.ConfigHash, node.SourceFile, node.StateData)
 
 	case engine.ActionRemove:
-		result, err := r.exec.Run(ctx, executor.Options{}, "distrobox", "rm", "--yes", entry.Name)
+		name, args := dbxCommand("rm", "--yes", entry.Name)
+		result, err := r.exec.Run(ctx, executor.Options{}, name, args...)
 		if err != nil {
 			return fmt.Errorf("removing distrobox %q: %w\nstderr: %s", entry.Name, err, result.Stderr)
 		}
@@ -154,7 +156,8 @@ func (r *Resource) executeApply(ctx context.Context, node *engine.PlanNode, entr
 	// Without a PTY, the subprocess has no controlling terminal and sudo fails
 	// with "a terminal is required". Falls back to Stream when stdin is not a
 	// TTY (e.g. CI), which is the correct behaviour in non-interactive contexts.
-	result, err := r.exec.Run(ctx, executor.Options{Stream: true, AllowInteractive: true}, "distrobox", inBoxArgs...)
+	dbxName, dbxArgs := dbxCommand(inBoxArgs...)
+	result, err := r.exec.Run(ctx, executor.Options{Stream: true, AllowInteractive: true}, dbxName, dbxArgs...)
 	fmt.Fprintln(os.Stdout, strings.Repeat("─", sepWidth))
 	if err != nil {
 		return fmt.Errorf("applying in-box config for %q: %w\nstderr: %s", entry.Name, err, result.Stderr)
@@ -162,10 +165,8 @@ func (r *Resource) executeApply(ctx context.Context, node *engine.PlanNode, entr
 
 	// 5. Export declared apps from inside the box to the host desktop.
 	for _, app := range entry.Exports {
-		r.exec.Run(ctx, executor.Options{}, //nolint:errcheck
-			"distrobox", "enter", "-n", entry.Name, "--",
-			"distrobox-export", "--app", app,
-		)
+		name, args := dbxCommand("enter", "-n", entry.Name, "--", "distrobox-export", "--app", app)
+		r.exec.Run(ctx, executor.Options{}, name, args...) //nolint:errcheck
 	}
 
 	data := map[string]interface{}{

@@ -327,13 +327,16 @@ commands:
   # package-owned .qml; the pacman hook above re-applies it after a dms-shell
   # upgrade reverts it. Safe to run repeatedly — it no-ops when already applied.
   # Takes effect on `systemctl --user restart dms` (DMS_DISABLE_HOT_RELOAD=1).
-  # No depends: `packages: [dms-shell]` never resolves (dms-shell isn't managed
-  # here), and `files:` is a plan-time skip condition, so it would skip on the
-  # first run — before the very file it names has been written. Files execute
-  # ahead of commands anyway, and the script no-ops if the .qml isn't there.
+  # Depends on the DMS installer, which is what puts dms-shell (and the .qml)
+  # on the system; `packages: [dms-shell]` never resolves since dms-shell isn't
+  # managed here. The check re-runs it whenever the marker is missing, e.g. a
+  # first run where the script no-oped before DMS existed.
   - name: dms-hide-scratch-workspace
     command: /usr/local/bin/dms-hide-scratch-workspace.sh
+    check: grep -qF stay-go:hide-scratch /usr/share/quickshell/dms/Modules/DankBar/Widgets/WorkspaceSwitcher.qml
     sudo: true
+    depends:
+      - commands: [install dms]
 
   # ── Kernel boot parameter: i915.enable_psr=0 ──
   # Panel Self Refresh on this i915 panel drops atomic display updates. The flag
@@ -447,6 +450,9 @@ commands:
     sudo: true
     depends:
       - packages: [alsa-tools]
+      # A node dep, not files: (a plan-time existence check here that would skip
+      # it on a fresh install): restart only once the unit is written and enabled.
+      - services: [necessary-verbs]
 
   # Retire what the hand-run setup scripts left behind (a state-file based
   # lg-kbd-keepalive service, its shell/python daemons and lg-kbd-toggle);

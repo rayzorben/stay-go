@@ -33,10 +33,10 @@ func (r *Resource) guestPkgKnowledge(ctx context.Context, entry *config.Distrobo
 	if err := r.writeBoxConfig(entry); err != nil {
 		return nil, false
 	}
-	result, err := r.exec.Run(ctx, executor.Options{},
-		"distrobox", "enter", "-n", entry.Name, "--",
+	name, args := dbxCommand("enter", "-n", entry.Name, "--",
 		guestBin, "--guest-knowledge", "-c", r.boxConfigDir(entry.Name),
 	)
+	result, err := r.exec.Run(ctx, executor.Options{}, name, args...)
 	if err != nil || result.ExitCode != 0 {
 		return nil, false
 	}

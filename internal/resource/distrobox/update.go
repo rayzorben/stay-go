@@ -46,7 +46,8 @@ func (r *Resource) BuildUpdatePlan(_ context.Context, st *state.State) ([]*engin
 // executeUpgrade runs `distrobox upgrade <name>`. Output is streamed — the
 // in-box package manager can run for minutes. State is never touched.
 func (r *Resource) executeUpgrade(ctx context.Context, name string) error {
-	result, err := r.exec.Run(ctx, executor.Options{Stream: true}, "distrobox", "upgrade", name)
+	dbxName, args := dbxCommand("upgrade", name)
+	result, err := r.exec.Run(ctx, executor.Options{Stream: true}, dbxName, args...)
 	if err != nil {
 		return fmt.Errorf("upgrading distrobox %q: %w\nstderr: %s", name, err, result.Stderr)
 	}

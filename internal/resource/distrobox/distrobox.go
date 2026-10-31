@@ -44,7 +44,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/user"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/rayzorben/stay-go/internal/config"
@@ -267,6 +270,73 @@ func (r *Resource) writeBoxConfig(entry *config.DistroboxEntry) error {
 		return fmt.Errorf("committing box config: %w", err)
 	}
 	return nil
+}
+
+// ─── distrobox invocation ────────────────────────────────────────────────────
+
+// dbxCommand returns the program and argv for running `distrobox <args...>`.
+//
+// The users resource adds the current user to the docker group with usermod
+// earlier in the same run that creates the boxes, but a process keeps the
+// supplementary groups it started with, so distrobox would get "permission
+// denied" on /var/run/docker.sock until the next login. When /etc/group lists
+// the user in docker but this process does not carry that gid, the call is
+// re-executed through `sg docker -c`, which needs no password for a member.
+// Otherwise (already in the group, no docker group, podman) it runs as is.
+func dbxCommand(args ...string) (string, []string) {
+	argv := append([]string{"distrobox"}, args...)
+	if !needsDockerSg() {
+		return argv[0], argv[1:]
+	}
+	return "sg", []string{"docker", "-c", shellJoin(argv)}
+}
+
+// needsDockerSg reports whether the user is a docker member per /etc/group
+// while the running process lacks the docker gid.
+func needsDockerSg() bool {
+	g, err := user.LookupGroup("docker")
+	if err != nil {
+		return false
+	}
+	u, err := user.Current()
+	if err != nil {
+		return false
+	}
+	memberOf, err := u.GroupIds()
+	if err != nil {
+		return false
+	}
+	procGids, err := os.Getgroups()
+	if err != nil {
+		return false
+	}
+	return lacksGroup(g.Gid, memberOf, procGids, os.Getegid())
+}
+
+// lacksGroup reports whether gid is one of the user's groups (memberOf, from
+// /etc/group) but absent from the process's effective and supplementary gids.
+func lacksGroup(gid string, memberOf []string, procGids []int, egid int) bool {
+	if !slices.Contains(memberOf, gid) {
+		return false
+	}
+	n, err := strconv.Atoi(gid)
+	if err != nil {
+		return false
+	}
+	return n != egid && !slices.Contains(procGids, n)
+}
+
+// shellJoin quotes argv into a single /bin/sh command line for `sg -c`.
+func shellJoin(argv []string) string {
+	out := make([]string, len(argv))
+	for i, a := range argv {
+		if a != "" && !strings.ContainsAny(a, " \t\n'\"\\$`;&|<>()*?[]{}!#~") {
+			out[i] = a
+		} else {
+			out[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+		}
+	}
+	return strings.Join(out, " ")
 }
 
 // ─── distrobox create args ────────────────────────────────────────────────────
