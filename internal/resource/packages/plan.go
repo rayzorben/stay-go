@@ -15,6 +15,8 @@ import (
 // detecting packages to remove — both shared helpers (DRY).
 // Implements engine.Planner.
 func (r *Resource) BuildPlan(_ context.Context, knowledge map[string]bool, st *state.State) ([]*engine.PlanNode, error) {
+	r.installed = knowledge
+
 	// configSet only includes packages we install (not forced-removal entries).
 	configSet := make(map[string]bool, len(r.cfg.Packages))
 	for _, p := range r.cfg.Packages {

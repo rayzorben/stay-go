@@ -421,6 +421,17 @@ Auto-detected in priority order:
 | apk | Alpine | yes | `apk info` | `apk upgrade` |
 | xbps-install | Void | yes | `xbps-query -l` (custom parser) | `xbps-install -yu` |
 
+**Removals never take configured packages.** `pacman -Rs`, `apt-get remove
+--autoremove` and `apk del` also drop dependencies nothing needs any more —
+including a configured package that was first pulled in as a dependency (so
+it is still marked as one). Before every REMOVE, `protectConfigured` marks all
+still-configured installed packages explicit via the manager's
+`MarkExplicitCmd` (`<helper> -D --asexplicit` after `pacman -Qq` resolves
+provides names, `apt-mark manual`, `apk add`). dnf instead removes with
+`--setopt=clean_requirements_on_remove=False`; yum, zypper and xbps-remove
+never remove unrequested dependencies by default. If marking fails, the
+removal is aborted.
+
 ---
 
 ## CLI Flags
