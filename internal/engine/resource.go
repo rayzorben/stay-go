@@ -193,6 +193,25 @@ type Updater interface {
 	BuildUpdatePlan(ctx context.Context, st *state.State) ([]*PlanNode, error)
 }
 
+// BatchExecutor is an optional interface for resources whose nodes are cheaper
+// to execute together than one at a time (e.g. one package-manager transaction
+// for many packages instead of one per package). The engine groups ready nodes
+// of the same resource type whose BatchKey matches and is non-empty, and hands
+// them to ExecuteBatch in one call. A node is only batched once every node it
+// must run after has already executed successfully, so dependency order holds.
+// Resources that do not implement BatchExecutor are executed node by node.
+type BatchExecutor interface {
+	// BatchKey returns the grouping key for node; "" means never batch it.
+	// Nodes with different actions that cannot share a command must return
+	// different keys.
+	BatchKey(node *PlanNode) string
+
+	// ExecuteBatch executes nodes (two or more, all with the same BatchKey) and
+	// returns one error per node, index-aligned with nodes. It updates state for
+	// each successful node exactly as Execute would.
+	ExecuteBatch(ctx context.Context, nodes []*PlanNode, st *state.State) []error
+}
+
 // ─── Shared helpers (DRY) ────────────────────────────────────────────────────
 
 // DetermineAction returns the appropriate ActionType for a node given whether

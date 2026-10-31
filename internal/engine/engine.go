@@ -401,9 +401,17 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 	}
 
 	// Process nodes in topo order. The graph ensures REMOVE dependents before
-	// deps, and ADD/UPDATE deps before dependents.
+	// deps, and ADD/UPDATE deps before dependents. processed records every node
+	// already handled — including nodes pulled forward into an earlier batch —
+	// and preds lists what each node must run after (used to decide batching).
+	processed := make(map[string]bool, len(nodes))
+	preds := predecessors(nodes)
 	var hasFailed bool
-	for _, node := range nodes {
+	for i, node := range nodes {
+		if processed[node.ID] {
+			continue // already executed as part of a batch
+		}
+		processed[node.ID] = true
 		switch node.Action {
 		case ActionTrack, ActionAdopt, ActionLevel:
 			// No system commands needed; update state to sync sourceFile and data.
@@ -440,6 +448,12 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 				e.opts.Log.Printf("%s %s: absent from system, state entry removed", node.Action, node.ID)
 				if !node.Hidden {
 					DisplayExecutionResult(os.Stdout, node, nil, 0)
+				}
+				continue
+			}
+			if batch := e.collectBatch(nodes, i, resourceByType, preds, processed, succeeded); len(batch) > 1 {
+				if e.executeBatch(ctx, batch, resourceByType[node.ResourceType].(BatchExecutor), st, succeeded) {
+					hasFailed = true
 				}
 				continue
 			}
@@ -489,6 +503,108 @@ func (e *Engine) execute(ctx context.Context, nodes []*PlanNode, st *state.State
 		return ErrExecutionFailed
 	}
 	return nil
+}
+
+// collectBatch returns the batch led by nodes[i] when its resource implements
+// BatchExecutor: nodes[i] plus every later, not-yet-processed node of the same
+// resource type with the same non-empty BatchKey that is ready to run now —
+// all its predecessors already processed and its deps succeeded. Pulling such
+// a node forward is safe: topo order only requires its predecessors to run
+// first, and nothing between it and the leader can depend on it. Marks every
+// returned node processed. Returns nil when the leader is not batchable.
+func (e *Engine) collectBatch(nodes []*PlanNode, i int, resourceByType map[string]Resource,
+	preds map[string][]string, processed, succeeded map[string]bool) []*PlanNode {
+	leader := nodes[i]
+	be, ok := resourceByType[leader.ResourceType].(BatchExecutor)
+	if !ok || leader.Hidden {
+		return nil
+	}
+	key := be.BatchKey(leader)
+	if key == "" {
+		return nil
+	}
+	batch := []*PlanNode{leader}
+	for _, n := range nodes[i+1:] {
+		if processed[n.ID] || n.Hidden || n.ResourceType != leader.ResourceType {
+			continue
+		}
+		switch n.Action {
+		case ActionAdd, ActionUpdate, ActionRemove, ActionUpgrade:
+		default:
+			continue
+		}
+		if n.Action == ActionRemove && n.AbsentFromSystem {
+			continue // state-only cleanup — handled by the main loop
+		}
+		if be.BatchKey(n) != key || !e.depsSucceeded(n, succeeded) {
+			continue
+		}
+		ready := true
+		for _, p := range preds[n.ID] {
+			if !processed[p] || !succeeded[p] {
+				ready = false
+				break
+			}
+		}
+		if ready {
+			batch = append(batch, n)
+		}
+	}
+	for _, n := range batch[1:] {
+		processed[n.ID] = true
+	}
+	return batch
+}
+
+// executeBatch runs batch through be.ExecuteBatch with a single progress line,
+// then reports, logs and records the outcome of every node. Returns true if
+// any node failed.
+func (e *Engine) executeBatch(ctx context.Context, batch []*PlanNode, be BatchExecutor,
+	st *state.State, succeeded map[string]bool) bool {
+	leader := batch[0]
+	ids := make([]string, len(batch))
+	for j, n := range batch {
+		ids[j] = n.ID
+	}
+	e.opts.Log.Printf("%s batch of %d: start [%s]", leader.Action, len(batch), strings.Join(ids, " "))
+
+	// One progress row stands in for the whole batch while it runs.
+	progress := &PlanNode{
+		ResourceType: leader.ResourceType,
+		DisplayName:  fmt.Sprintf("%d %s", len(batch), leader.ResourceType),
+		Action:       leader.Action,
+	}
+	DisplayExecutionProgress(os.Stdout, progress, "")
+	needsSudo := false
+	for _, n := range batch {
+		needsSudo = needsSudo || n.NeedsSudo
+	}
+	if needsSudo {
+		fmt.Fprintln(os.Stdout)
+	} else {
+		e.exec.ProgressFn = func(line string) {
+			DisplayExecutionProgress(os.Stdout, progress, line)
+		}
+	}
+
+	start := time.Now()
+	errs := be.ExecuteBatch(ctx, batch, st)
+	e.exec.ProgressFn = nil
+	dur := time.Since(start)
+
+	failed := false
+	for j, n := range batch {
+		var err error
+		if j < len(errs) {
+			err = errs[j]
+		}
+		n.ExecutionErr = err
+		succeeded[n.ID] = err == nil
+		failed = failed || err != nil
+		logResult(e.opts.Log, n, dur)
+		DisplayExecutionResult(os.Stdout, n, err, dur)
+	}
+	return failed
 }
 
 // syncState updates persisted state to match the plan without executing any

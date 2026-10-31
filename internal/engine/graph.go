@@ -20,7 +20,6 @@ func topoSort(nodes []*PlanNode) ([]*PlanNode, error) {
 	}
 
 	// Build adjacency: predecessor → successors (who runs after me).
-	// For REMOVE nodes we reverse the edges so that dependents are removed first.
 	successors := make(map[string][]string, len(nodes))
 	inDegree := make(map[string]int, len(nodes))
 	for _, n := range nodes {
@@ -28,31 +27,10 @@ func topoSort(nodes []*PlanNode) ([]*PlanNode, error) {
 			inDegree[n.ID] = 0
 		}
 	}
-
-	for _, n := range nodes {
-		if n.Action == ActionRemove {
-			// Reverse: dependents of n must run before n during removal.
-			// n depends on deps → deps run AFTER n in removal order.
-			for _, depID := range n.DependsOn {
-				if _, ok := byID[depID]; !ok {
-					continue // dep not in this plan (already removed or never tracked)
-				}
-				// Edge: n → depID  (n must run before its dep during removal)
-				successors[n.ID] = append(successors[n.ID], depID)
-				inDegree[depID]++
-			}
-		} else {
-			// Forward: deps run before n.
-			for _, depID := range n.DependsOn {
-				if _, ok := byID[depID]; !ok {
-					continue // dep outside this plan
-				}
-				// Edge: depID → n
-				successors[depID] = append(successors[depID], n.ID)
-				inDegree[n.ID]++
-			}
-		}
-	}
+	forEachEdge(nodes, byID, func(before, after string) {
+		successors[before] = append(successors[before], after)
+		inDegree[after]++
+	})
 
 	// Kahn's: start with all zero-in-degree nodes.
 	var queue []string
@@ -79,6 +57,41 @@ func topoSort(nodes []*PlanNode) ([]*PlanNode, error) {
 		return nil, fmt.Errorf("dependency cycle detected in plan graph")
 	}
 	return sorted, nil
+}
+
+// forEachEdge calls fn(before, after) for every "must execute before" edge
+// between nodes in the plan:
+//   - ADD/UPDATE/…: each dep runs before the node.
+//   - REMOVE: edges are reversed so dependents are removed before their deps.
+//
+// Deps outside the plan (already removed, never tracked) contribute no edge.
+func forEachEdge(nodes []*PlanNode, byID map[string]*PlanNode, fn func(before, after string)) {
+	for _, n := range nodes {
+		for _, depID := range n.DependsOn {
+			if _, ok := byID[depID]; !ok {
+				continue
+			}
+			if n.Action == ActionRemove {
+				fn(n.ID, depID)
+			} else {
+				fn(depID, n.ID)
+			}
+		}
+	}
+}
+
+// predecessors maps each node ID to the IDs of plan nodes that must execute
+// before it (the same edges topoSort orders by).
+func predecessors(nodes []*PlanNode) map[string][]string {
+	byID := make(map[string]*PlanNode, len(nodes))
+	for _, n := range nodes {
+		byID[n.ID] = n
+	}
+	preds := make(map[string][]string, len(nodes))
+	forEachEdge(nodes, byID, func(before, after string) {
+		preds[after] = append(preds[after], before)
+	})
+	return preds
 }
 
 // addSecretBarrierDeps makes every executable non-secrets plan node depend on

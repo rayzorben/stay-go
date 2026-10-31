@@ -41,6 +41,7 @@ internal/
       knowledge.go           — GatherKnowledge (runs package manager list command)
       plan.go                — BuildPlan (uses DetermineAction + StateRemovals)
       execute.go             — Execute (install / remove via package manager)
+      batch.go               — BatchKey / ExecuteBatch (one transaction, per-package fallback)
       managers.go            — PackageManager table, Detect, parser helpers
     groups/                  — System group resource
       groups.go              — Resource struct, New, Type, /etc/group helpers
@@ -108,6 +109,8 @@ cmd/stay-go ← all of the above
 8. Execute          — process nodes in topo order:
                       TRACK/ADOPT/LEVEL → state.Set (no command)
                       ADD/UPDATE/REMOVE → resource.Execute → state.Set or Delete
+                      BatchExecutor resources: ready nodes sharing a BatchKey
+                      → one ExecuteBatch call (see Batch Execution)
                       if a dep's Execute fails → dependent becomes SKIP at runtime
 
 9. SaveState        — atomic write (tmp + rename)
@@ -162,6 +165,27 @@ Per-resource behaviour:
 
 `lock: true` is excluded from every config hash, so toggling it never triggers
 an UPDATE in normal runs.
+
+---
+
+## Batch Execution
+
+A resource may implement the optional `engine.BatchExecutor` interface
+(`BatchKey(node) string` + `ExecuteBatch(ctx, nodes, st) []error`). When the
+execute loop reaches a node whose resource implements it and whose `BatchKey`
+is non-empty, it pulls in every later unprocessed node of the same type and key
+that is ready now — all its predecessors (same edges as `topoSort`) already
+executed successfully — and runs them in one `ExecuteBatch` call with a single
+progress row. Each node still gets its own result line, log entry, state update
+and runtime skip propagation. Hidden nodes and confirmed-absent REMOVEs are
+never batched.
+
+packages implements it: ADD/UPDATE share key `install`, REMOVE `remove`; sync
+and `__upgrade__` nodes are never batched. One `paru -Sy … a b c` replaces N
+invocations (one DB sync, one resolution, one run of post-transaction hooks).
+A higher-priority manager package (`paru`, `paru-bin`, `yay-*` under pacman)
+is installed alone first. If the batch fails, packages the transaction resolved
+anyway are credited and the rest retried one at a time, isolating the failure.
 
 ---
 
@@ -400,6 +424,9 @@ Saved atomically (`.tmp` + rename) to prevent corruption.
    an ActionUpgrade branch in `Execute`) if the resource's items can be
    refreshed to a latest version; add a `lock:` field to the entry and set
    `PlanNode.Locked` from it. Keep `lock` out of the config hash.
+
+6. (Optional) implement `engine.BatchExecutor` if many nodes can share one
+   command (see **Batch Execution**).
 
 The engine handles all orchestration — no engine changes required.
 
