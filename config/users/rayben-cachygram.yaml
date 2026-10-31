@@ -64,6 +64,7 @@ packages:
   - 7zip
   - spotify-launcher
   - claude-desktop
+  - claude-code # the `claude` CLI; Desktop's bundled copy isn't on PATH
   - flatpak
   - jq # verterm dropdown scripts
   - attr # getfattr/setfattr, used by dropbox-exclude.sh
@@ -601,6 +602,7 @@ distrobox:
       - npm
       - opentofu
       - claude-desktop
+      - claude-code
       - databricks-cli-bin
       - graphify-bin
       - ninjarmm-ncplayer
@@ -616,6 +618,15 @@ distrobox:
         sudo: true
         depends:
           - packages: [databricks-cli-bin]
+      # A one-off native install left ~/.local/bin/claude pointing at a
+      # versions/ dir that no longer exists; it shadows claude-code's
+      # /usr/bin/claude. Only removes the link while it is dangling.
+      - name: retire native claude link
+        command: |
+          l=${home.sedanos}/.local/bin/claude
+          if [ -L "$l" ] && [ ! -e "$l" ]; then rm -f "$l"; fi
+        depends:
+          - packages: [claude-code]
       - name: Install uv
         command: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
