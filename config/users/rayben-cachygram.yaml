@@ -519,9 +519,6 @@ flatpak:
     - name: flathub
       url: https://dl.flathub.org/repo/flathub.flatpakrepo
 
-  apps:
-    - app: com.usebottles.bottles
-
 distrobox:
   - name: sedanos
     image: docker.io/cachyos/cachyos-v3:latest

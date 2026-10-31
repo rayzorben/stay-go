@@ -2,7 +2,6 @@ packages:
   - solaar
   - alsa-tools # for hda-verb
   - gparted
-  - winboat
   - wtype
   - power-profiles-daemon # supplies the balanced EPP baseline lg-gram-thermals pins
   - package: keyd
