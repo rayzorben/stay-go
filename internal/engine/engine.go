@@ -342,9 +342,18 @@ func resourceNamePair(resource, name string) string {
 // preSudo runs "sudo -v" once to cache credentials if any active node in the
 // plan requires sudo. Prints a newline first so the password prompt appears on
 // a clean line. Returns true if sudo is needed (so the caller can start a keepalive).
+//
+// If "sudo -n true" already succeeds (NOPASSWD, or credentials still cached)
+// it skips "sudo -v": with sudo's default verifypw=all, -v prompts unless every
+// sudoers rule for the user is NOPASSWD, even when the rule sudo would actually
+// apply needs no password (e.g. a later NOPASSWD drop-in next to a stock
+// "%wheel ALL=(ALL:ALL) ALL").
 func (e *Engine) preSudo(ctx context.Context, nodes []*PlanNode) bool {
 	for _, n := range nodes {
 		if n.NeedsSudo && (n.Action == ActionAdd || n.Action == ActionUpdate || n.Action == ActionRemove || n.Action == ActionUpgrade) {
+			if _, err := e.exec.Run(ctx, executor.Options{}, "sudo", "-n", "true"); err == nil {
+				return true
+			}
 			fmt.Fprintln(os.Stdout)
 			e.exec.Run(ctx, executor.Options{}, "sudo", "-v") //nolint:errcheck
 			return true

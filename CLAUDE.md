@@ -347,7 +347,10 @@ On failure, main prints the log path after the final report.
 If any active plan node has `NeedsSudo: true` (packages with sudo manager, groups,
 users, system services, or scripts with `sudo: true`), the engine runs `sudo -v`
 once before the execute loop. This caches credentials so all subsequent sudo
-invocations proceed without prompting.
+invocations proceed without prompting. It first tries `sudo -n true` and skips
+`sudo -v` when that succeeds: under sudo's default `verifypw=all`, `-v` prompts
+unless every sudoers rule for the user is NOPASSWD, even with a NOPASSWD
+drop-in in place.
 
 ---
 
