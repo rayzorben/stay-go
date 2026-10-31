@@ -50,10 +50,14 @@ files:
     mode: "0600"
     sudo: true
 
-  # orohost's host key (ssh-keyscan -t ed25519 orohost). Kopia's SFTP client
-  # refuses to connect without a known_hosts entry.
+  # orohost's host keys (ssh-keyscan -t ed25519,ecdsa,rsa orohost). Kopia's SFTP
+  # client refuses to connect without a known_hosts entry, and as a Go client it
+  # negotiates ECDSA ahead of ed25519: with only the ed25519 line it fails with
+  # "knownhosts: key mismatch", so every type orohost offers is listed.
   - content: |
       orohost ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL8HBK2LExKZZhpphS7RafazQhm+IwTt0Boy5csfVTfU
+      orohost ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBGsQJAJIpFYvdmSB83I4D+SZMdjkbBCjXvo0T5nFwEBUQCPxPT21+LulSSk/h8E1mGSzuadqSUaO0bpQwo8h2a8=
+      orohost ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDHFOqYIuusPo1IoB5EolNOG1rSfZMDWMXlvPq1vIU47WrjWQ69uTNTxTfLn5/Gy3K4PZKEMH5h1hDwbLp1JlN5Wr/1jpUxA9Bug2B7XU7bTRmIIGA5ooG1B0+DwGXBN/WWqLdCQ14wSkKjWh09HWyxJJm1ZcGMzvemh/9IqlZ7Fk7uIYU8Lj03mDkPhuznD+a760PV1gx5VuqRZpDGGXfOnKN5nIeaTuOSmTst1MuYRKajFilntBm6UZS1sF3BCxQqrEUhffHrcuZMoh5PIO5QmrJbBfp5Um5niq05jXFYfeQJeExi1Ryi3KQaL4JeR2wmyxEv1fURsnXlGUv8cMY4jBqkJVu0ATbMLECxNrIec8+p/tQhp6W/ol9UoMjodJiQ+RDiGF0tF6THJA8GI/vNjcrwWPphoU1BjDB0SLe3+YhuNbIvTrBQ3eYpOeSg3O+ed85Bc32uYMIIiaElQh3Dlia8uiwJmMXR3D82ojg0Nwr+19JefPmX0RIovzajvtU=
     target: /etc/kopia/known_hosts
     mode: "0644"
     sudo: true
