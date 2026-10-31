@@ -155,6 +155,28 @@ elif [[ "$CPU_VENDOR" == "GenuineIntel" ]]; then
     UCODE_PKG="intel-ucode"
 fi
 
+# Prompt twice (hidden) until both entries match and are non-empty, so a typo
+# can't lock the disk or account behind an unknown passphrase.
+# Usage: read_secret_confirmed VAR "Label"
+read_secret_confirmed() {
+    local __var=$1 __label=$2 __a __b
+    while true; do
+        read -rsp "Enter $__label: " __a
+        echo
+        if [[ -z "$__a" ]]; then
+            echo "[!] $__label cannot be empty. Try again."
+            continue
+        fi
+        read -rsp "Confirm $__label: " __b
+        echo
+        if [[ "$__a" == "$__b" ]]; then
+            printf -v "$__var" '%s' "$__a"
+            return 0
+        fi
+        echo "[!] Entries did not match. Try again."
+    done
+}
+
 if [[ "$CURRENT_STEP" -eq 0 ]]; then
     echo "========================================================"
     echo " Host Profile      : $HOST_ARG"
@@ -176,10 +198,8 @@ if [[ "$CURRENT_STEP" -eq 0 ]]; then
         exit 1
     fi
 
-    read -rsp "Enter LUKS Disk Encryption Passphrase: " LUKS_PASS
-    echo
-    read -rsp "Enter System User/Root Password: " USER_PASS
-    echo
+    read_secret_confirmed LUKS_PASS "LUKS Disk Encryption Passphrase"
+    read_secret_confirmed USER_PASS "System User/Root Password"
 
     # %q, not '...': a passphrase containing ' (or $, ", `) must round-trip
     # through 'source' verbatim instead of breaking or executing on resume.
@@ -190,10 +210,8 @@ else
         source "$VARS_FILE"
     else
         echo "[!] Variables file missing. Please re-enter credentials."
-        read -rsp "Enter LUKS Disk Encryption Passphrase: " LUKS_PASS
-        echo
-        read -rsp "Enter System User/Root Password: " USER_PASS
-        echo
+        read_secret_confirmed LUKS_PASS "LUKS Disk Encryption Passphrase"
+        read_secret_confirmed USER_PASS "System User/Root Password"
     fi
 fi
 
