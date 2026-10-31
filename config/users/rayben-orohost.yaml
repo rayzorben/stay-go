@@ -88,20 +88,6 @@ files:
     symlink: true
     mode: "+x"
 
-  - source: ${config_root}/files/niri/verterm-dropdown-toggle.sh
-    target: ~/.config/niri/verterm-dropdown-toggle.sh
-    symlink: true
-    mode: "+x"
-    depends:
-      - packages: [jq]
-
-  - source: ${config_root}/files/niri/verterm-dropdown-autohide.sh
-    target: ~/.config/niri/verterm-dropdown-autohide.sh
-    symlink: true
-    mode: "+x"
-    depends:
-      - packages: [jq]
-
   - source: ${config_root}/files/niri/rules.kdl
     target: ~/.config/niri/rules.kdl
     symlink: true
@@ -233,6 +219,7 @@ files:
     target: ~/.config/systemd/user/media-organizer.service
 
 ghostty: !include "./commands/ghostty.yaml"
+verterm: !include "./commands/verterm.yaml"
 
 commands:
   - name: git config

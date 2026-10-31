@@ -245,6 +245,7 @@ files:
       - packages: [gron]
 
 ghostty: !include "./commands/ghostty.yaml"
+verterm: !include "./commands/verterm.yaml"
 
 commands:
   # --ask=4 answers yes to pacman's "Remove zlib?" conflict question, which

@@ -1,0 +1,58 @@
+# verterm — the SUPER+` dropdown terminal (files/niri/binds.kdl → toggle
+# script; spawn.kdl starts verterm and the autohide watcher at login; the
+# window rule in rules.kdl floats it and parks it on "Scratch").
+#
+# Installed from the latest GitHub release's pacman package rather than a
+# repo, so the check below compares the installed version against the newest
+# release tag on every run and plans an UPDATE (reinstall) when one lands. A
+# running verterm keeps the old binary until it is restarted.
+#
+# No $(...) anywhere below: config loading would run it once at load time.
+# Command substitution uses backticks instead.
+
+packages:
+  - jq # release lookup + dropdown scripts
+
+files:
+  - source: ${config_root}/files/niri/verterm-dropdown-toggle.sh
+    target: ~/.config/niri/verterm-dropdown-toggle.sh
+    symlink: true
+    mode: "+x"
+    depends:
+      - packages: [jq]
+
+  - source: ${config_root}/files/niri/verterm-dropdown-autohide.sh
+    target: ~/.config/niri/verterm-dropdown-autohide.sh
+    symlink: true
+    mode: "+x"
+    depends:
+      - packages: [jq]
+
+commands:
+  - name: install verterm
+    sudo: true
+    command: |
+      d=`mktemp -d`
+      trap 'rm -rf "$d"' EXIT
+      cd "$d"
+      curl -fsSL https://api.github.com/repos/rayzorben/verterm/releases/latest -o release.json
+      pkg=`jq -r '.assets[].browser_download_url | select(endswith("-x86_64.pkg.tar.zst"))' release.json`
+      sums=`jq -r '.assets[].browser_download_url | select(endswith("/SHA256SUMS"))' release.json`
+      [ -n "$pkg" ] && [ -n "$sums" ] || { echo "latest verterm release has no pacman package" >&2; exit 1; }
+      curl -fsSLO "$pkg"
+      curl -fsSLO "$sums"
+      sha256sum -c --ignore-missing SHA256SUMS
+      pacman -U --noconfirm --needed ./*.pkg.tar.zst
+    # Offline or rate-limited: keep whatever is installed rather than plan a
+    # reinstall that would only fail.
+    check: |
+      inst=`pacman -Q verterm 2>/dev/null | awk '{print $2}'`
+      [ -n "$inst" ] || { echo "verterm is not installed"; exit 1; }
+      tag=`curl -fsS -m 10 https://api.github.com/repos/rayzorben/verterm/releases/latest | jq -r .tag_name`
+      [ -n "$tag" ] && [ "$tag" != null ] || exit 0
+      case "$inst" in "${tag#v}"-*) exit 0 ;; esac
+      echo "verterm $inst installed, $tag released"
+      exit 1
+    depends:
+      - packages: [jq]
+    rollback: pacman -Rns --noconfirm verterm
