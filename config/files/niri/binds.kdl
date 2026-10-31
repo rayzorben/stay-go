@@ -25,4 +25,10 @@ binds {
     Mod+Shift+6 { move-column-to-workspace "Visionet"; }
     Mod+Shift+7 { move-column-to-workspace "Comms"; }
     Mod+Shift+8 { move-column-to-workspace "System"; }
+
+    // Dynamic cast target: share "niri Dynamic Cast Target" from the portal
+    // picker, then switch what it shows without restarting the share.
+    Mod+Alt+W hotkey-overlay-title="Cast: Focused Window"  { set-dynamic-cast-window; }
+    Mod+Alt+M hotkey-overlay-title="Cast: Focused Monitor" { set-dynamic-cast-monitor; }
+    Mod+Alt+X hotkey-overlay-title="Cast: Clear Target"    { clear-dynamic-cast-target; }
 }
