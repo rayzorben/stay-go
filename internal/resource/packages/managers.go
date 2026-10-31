@@ -34,6 +34,19 @@ type PackageManager struct {
 	// Empty means the manager has no per-run exclusion; locked packages may
 	// still be upgraded and the plan says so.
 	IgnoreFmt string
+	// MarkExplicitCmd, when non-nil, records the given packages as explicitly
+	// installed (pacman -D --asexplicit, apt-mark manual, apk add → world).
+	// It runs before every removal for all still-configured installed packages,
+	// because RemoveCmd also drops dependencies that are no longer needed
+	// (pacman -Rs, apt --autoremove, apk del) — and a configured package that
+	// was first pulled in as a dependency is still marked as one. Managers
+	// whose RemoveCmd never takes unrequested packages leave this nil.
+	MarkExplicitCmd []string
+	// ResolveCmd, when non-nil, maps configured names to installed database
+	// names before MarkExplicitCmd (pacman -Qq resolves provides, e.g.
+	// zen-browser → zen-browser-bin). Its stdout is used even on a non-zero
+	// exit, which only means some names were not found.
+	ResolveCmd []string
 	// ParseOutput optionally post-processes the raw list output.
 	// nil means treat each non-empty line as a package name.
 	ParseOutput func(raw string) []string
@@ -61,8 +74,11 @@ var managers = []PackageManager{
 		ListCmd:    []string{"pacman", "-Qq"},
 		InstallCmd: []string{"paru", "-Sy", "--noconfirm", "--needed"},
 		RemoveCmd:  []string{"paru", "-Rs", "--noconfirm"},
-		UpgradeCmd: []string{"paru", "-Syu", "--noconfirm"},
-		IgnoreFmt:  "--ignore=%s",
+		// -Rs drops orphaned deps; keep configured ones by marking them explicit.
+		MarkExplicitCmd: []string{"paru", "-D", "--asexplicit"},
+		ResolveCmd:      []string{"pacman", "-Qq"},
+		UpgradeCmd:      []string{"paru", "-Syu", "--noconfirm"},
+		IgnoreFmt:       "--ignore=%s",
 	},
 	{
 		Name:       "yay",
@@ -71,8 +87,11 @@ var managers = []PackageManager{
 		ListCmd:    []string{"pacman", "-Qq"},
 		InstallCmd: []string{"yay", "-Sy", "--noconfirm", "--needed"},
 		RemoveCmd:  []string{"yay", "-Rs", "--noconfirm"},
-		UpgradeCmd: []string{"yay", "-Syu", "--noconfirm"},
-		IgnoreFmt:  "--ignore=%s",
+		// -Rs drops orphaned deps; keep configured ones by marking them explicit.
+		MarkExplicitCmd: []string{"yay", "-D", "--asexplicit"},
+		ResolveCmd:      []string{"pacman", "-Qq"},
+		UpgradeCmd:      []string{"yay", "-Syu", "--noconfirm"},
+		IgnoreFmt:       "--ignore=%s",
 	},
 	{
 		Name:       "pacman",
@@ -81,8 +100,11 @@ var managers = []PackageManager{
 		ListCmd:    []string{"pacman", "-Qq"},
 		InstallCmd: []string{"pacman", "-Sy", "--noconfirm", "--needed"},
 		RemoveCmd:  []string{"pacman", "-Rs", "--noconfirm"},
-		UpgradeCmd: []string{"pacman", "-Syu", "--noconfirm"},
-		IgnoreFmt:  "--ignore=%s",
+		// -Rs drops orphaned deps; keep configured ones by marking them explicit.
+		MarkExplicitCmd: []string{"pacman", "-D", "--asexplicit"},
+		ResolveCmd:      []string{"pacman", "-Qq"},
+		UpgradeCmd:      []string{"pacman", "-Syu", "--noconfirm"},
+		IgnoreFmt:       "--ignore=%s",
 	},
 	// ── Debian / Ubuntu ──────────────────────────────────────────────────────
 	{
@@ -93,8 +115,10 @@ var managers = []PackageManager{
 		UpdateCmd:  []string{"apt-get", "update", "-y"},
 		InstallCmd: []string{"apt-get", "install", "-y"},
 		RemoveCmd:  []string{"apt-get", "remove", "-y", "--autoremove"},
-		UpgradeCmd: []string{"apt-get", "upgrade", "-y"},
-		Env:        []string{"DEBIAN_FRONTEND=noninteractive"},
+		// --autoremove drops every auto-installed package nothing depends on.
+		MarkExplicitCmd: []string{"apt-mark", "manual"},
+		UpgradeCmd:      []string{"apt-get", "upgrade", "-y"},
+		Env:             []string{"DEBIAN_FRONTEND=noninteractive"},
 	},
 	// ── Fedora / RHEL ─────────────────────────────────────────────────────────
 	{
@@ -103,7 +127,9 @@ var managers = []PackageManager{
 		NeedsSudo:  true,
 		ListCmd:    []string{"rpm", "-qa", "--queryformat", "%{NAME}\\n"},
 		InstallCmd: []string{"dnf", "install", "-y"},
-		RemoveCmd:  []string{"dnf", "remove", "-y"},
+		// dnf removes unneeded deps by default (clean_requirements_on_remove);
+		// its mark verb differs between dnf4 and dnf5, so turn cleanup off.
+		RemoveCmd:  []string{"dnf", "remove", "-y", "--setopt=clean_requirements_on_remove=False"},
 		UpgradeCmd: []string{"dnf", "upgrade", "-y"},
 		IgnoreFmt:  "--exclude=%s",
 	},
@@ -138,7 +164,10 @@ var managers = []PackageManager{
 		UpdateCmd:  []string{"apk", "update"},
 		InstallCmd: []string{"apk", "add"},
 		RemoveCmd:  []string{"apk", "del"},
-		UpgradeCmd: []string{"apk", "upgrade"},
+		// apk del drops deps no longer required by world; add puts a tracked
+		// (dependency-installed) package into world without reinstalling it.
+		MarkExplicitCmd: []string{"apk", "add"},
+		UpgradeCmd:      []string{"apk", "upgrade"},
 	},
 	// ── Void Linux ────────────────────────────────────────────────────────────
 	{

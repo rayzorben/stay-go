@@ -23,6 +23,9 @@ type Resource struct {
 	cfg     *config.Config
 	exec    *executor.Executor
 	manager *PackageManager // set on first call to ensureManager
+	// installed is the knowledge map seen by BuildPlan, kept so a removal can
+	// protect still-configured packages that are installed (see protectConfigured).
+	installed map[string]bool
 }
 
 // syncNodePrefix is the ID prefix for package index-sync plan nodes
