@@ -57,20 +57,6 @@ files:
     sudo: true
     mode: "+x"
 
-  # Patches the DMS bar to hide the "Scratch" workspace. Copied rather than
-  # symlinked: the pacman hook runs it as root mid-transaction, so it must not
-  # depend on the repo (a Dropbox path) being readable at that moment.
-  - source: ${config_root}/files/dms/hide-scratch-workspace.sh
-    target: /usr/local/bin/dms-hide-scratch-workspace.sh
-    sudo: true
-    mode: "+x"
-
-  - source: ${config_root}/files/dms/dms-hide-scratch.hook
-    target: /etc/pacman.d/hooks/dms-hide-scratch.hook
-    sudo: true
-    depends:
-      - files: [/usr/local/bin/dms-hide-scratch-workspace.sh]
-
   # Oneshot: the script applies the verbs and exits in ~2s. It used to be
   # Type=simple with Restart=always, so systemd re-ran it on every clean exit
   # until it hit the start limit and parked the unit as failed.
@@ -319,24 +305,17 @@ services:
       - files: [/etc/systemd/system/lg-kbd-backlight.service]
 
 commands:
-  # ── Hide the "Scratch" workspace from the DMS bar ──
-  # Scratch is the parking slot for the hidden dropdown terminal (see
-  # files/niri/rules.kdl). DMS has no setting to hide a workspace: its niri
-  # filter only knows "active" or "holds a window", and Scratch always holds the
-  # parked terminal, so it always renders. The patch inserts one line into a
-  # package-owned .qml; the pacman hook above re-applies it after a dms-shell
-  # upgrade reverts it. Safe to run repeatedly — it no-ops when already applied.
-  # Takes effect on `systemctl --user restart dms` (DMS_DISABLE_HOT_RELOAD=1).
-  # Depends on the DMS installer, which is what puts dms-shell (and the .qml)
-  # on the system; `packages: [dms-shell]` never resolves since dms-shell isn't
-  # managed here. The check re-runs it whenever the marker is missing, e.g. a
-  # first run where the script no-oped before DMS existed.
-  - name: dms-hide-scratch-workspace
-    command: /usr/local/bin/dms-hide-scratch-workspace.sh
-    check: grep -qF stay-go:hide-scratch /usr/share/quickshell/dms/Modules/DankBar/Widgets/WorkspaceSwitcher.qml
+  # ── Remove the pre-DMS-2.0 Scratch-workspace patch ──
+  # Scratch used to be hidden by patching /usr/share/quickshell/dms/... with a
+  # script re-applied by a pacman hook. dms-shell 2.0 embeds its UI in the
+  # binary, so that file no longer exists and the patch silently no-oped; the
+  # bar is now patched per user instead (dms-hide-scratch in
+  # users/rayben-cachygram.yaml). A removed files entry only drops state, so
+  # this deletes the leftover hook and script. Safe to drop once applied.
+  - name: dms-hide-scratch-legacy-cleanup
+    command: rm -f /etc/pacman.d/hooks/dms-hide-scratch.hook /usr/local/bin/dms-hide-scratch-workspace.sh
+    check: '! test -e /etc/pacman.d/hooks/dms-hide-scratch.hook && ! test -e /usr/local/bin/dms-hide-scratch-workspace.sh'
     sudo: true
-    depends:
-      - commands: [install dms]
 
   # ── Kernel boot parameter: i915.enable_psr=0 ──
   # Panel Self Refresh on this i915 panel drops atomic display updates. The flag
