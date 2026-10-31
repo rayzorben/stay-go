@@ -54,7 +54,11 @@ packages:
   - psmisc # killall, used by screenshot.sh
   - lib32-fontconfig # fc-cache-32, used by the windows fonts command
   - cachyos-gaming-meta
-  - cachyos-gaming-applications
+  # Needs zlib-ng-compat, which conflicts with zlib; --noconfirm answers the
+  # removal prompt "no", so commands/zlib-ng-compat swaps it in first.
+  - package: cachyos-gaming-applications
+    depends:
+      - commands: [zlib-ng-compat]
   - 7zip
   - spotify-launcher
   - claude-desktop
@@ -199,6 +203,8 @@ files:
       auth_type    = databricks-cli
     target: ${home.sedanos}/.databrickscfg
     mode: "0600"
+    depends:
+      - distrobox: [sedanos] # creates and chowns the box home under /home/distrobox
 
   # Fish shell functions
   - content: |
@@ -241,6 +247,13 @@ files:
 ghostty: !include "./commands/ghostty.yaml"
 
 commands:
+  # --ask=4 answers yes to pacman's "Remove zlib?" conflict question, which
+  # --noconfirm alone answers no.
+  - name: zlib-ng-compat
+    command: pacman -Qq zlib-ng-compat >/dev/null 2>&1 || pacman -S --noconfirm --ask=4 zlib-ng-compat
+    check: pacman -Qq zlib-ng-compat >/dev/null 2>&1
+    sudo: true
+
   - name: git config
     command: |
       git config --global user.name "Raymond Bennett"
