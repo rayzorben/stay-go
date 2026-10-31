@@ -256,6 +256,17 @@ files:
     depends:
       - commands: [install dms] # its installer replaces both files
 
+  # ── DMS settings ──
+  # Symlinked into the repo so every change made in the DMS settings UI lands
+  # in files/dms/settings.cachygram.json, ready to commit (DMS saves through
+  # the link and leaves it in place). This replaced a json: entry that only
+  # pinned a few keys, so a UI change anywhere else was lost on reinstall.
+  - source: ${config_root}/files/dms/settings.cachygram.json
+    target: ~/.config/dms/settings.json
+    symlink: true
+    depends:
+      - commands: [install dms]
+
   # ── Hide niri's "Scratch" workspace from the DMS bar ──
   # Scratch is the parking slot for the hidden dropdown terminal (see
   # files/niri/rules.kdl). DMS has no setting to hide a workspace and, since
@@ -635,42 +646,3 @@ distrobox:
     depends: # docker must be running and rayben in its group (extends doesn't merge depends)
       - services: [docker]
       - users: [rayben]
-
-
-json:
-  - file: ~/.config/dms/settings.json
-    depends:
-      - commands: [install dms]
-    json:
-      use24HourClock: false
-      showSeconds: true
-      clockDateFormat: "dddd, MMMM d"
-      lockDateFormat: "dddd, MMMM d"
-      useFahrenheit: true
-      useAutoLocation: true
-      animationSpeed: 2
-      cornerRadius: 6
-      fontFamily: "LucidaProgrammer Nerd Font Mono"
-      monoFontFamily: "LucidaProgrammer Nerd Font Mono"
-      showWorkspaceIndex: true
-      workspaceDragReorder: false
-      workspaceFocusedBorderEnabled: true
-      blurForegroundLayers: true
-      barConfigs[0]:
-        openOnOverview: true
-        borderEnabled: true
-        borderOpacity: 0.5
-        squareCorners: true
-        maximizeWidgetText: true
-        maximizeWidgetIcons: true
-        widgetOutlineEnabled: false
-        widgetOutlineOpacity: 0.5
-        leftWidgets:
-          - "workspaceSwitcher"
-          - "focusedWindow"
-          - {}
-        centerWidgets:
-          - "clock"
-          - "weather"
-          - {}
-      cursorSettings.size: 28

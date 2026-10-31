@@ -4,7 +4,8 @@
 #   1. hides niri's "Scratch" workspace from the bar's workspace switcher, and
 #   2. gives the centre island (the clock + date pill) its own colour —
 #      light periwinkle with dark text and a darker periwinkle border — while
-#      it is collapsed. DMS has no
+#      it is collapsed, with its clock, notification and OSD text dark to
+#      match. DMS has no
 #      colour setting for it; it follows the wallpaper theme, and
 #   3. draws the focused-window pill twice as wide as its text needs.
 #
@@ -62,6 +63,16 @@ COLLAPSED='!root.controller.expanded && !root.embedded'
 CLOCK_TARGET="Modules/DIsland/Activities/HomeCompact.qml"
 CLOCK_DATE_LINE='        dateColor: Theme.surfaceTextMedium'
 CLOCK_SEP_LINE='        separatorColor: Theme.primary'
+# The island's other collapsed faces: a notification's app/summary text, the
+# volume/brightness level, and the system/destination chips. They only ever
+# sit on the collapsed island, so their theme text and accent colours all
+# become ISLAND_FG. (MediaCompact reuses the expanded media face and is left
+# alone.)
+COMPACT_TARGETS=(
+    "Modules/DIsland/Activities/NotificationCompact.qml"
+    "Modules/DIsland/Activities/DestinationCompact.qml"
+    "Modules/DIsland/Activities/SystemLevelCompact.qml"
+)
 
 # The focused-window pill (left of the bar) sizes itself to its text, so a
 # short title like "Claude" gives a stub of a pill. It is drawn twice as wide
@@ -138,6 +149,10 @@ patch_island() {
     done
     [ "$(grep -cxF "$CLOCK_DATE_LINE" "$clock" 2>/dev/null)" = "1" ] || return 1
     [ "$(grep -cxF "$CLOCK_SEP_LINE" "$clock" 2>/dev/null)" = "1" ] || return 1
+    local f
+    for f in "${COMPACT_TARGETS[@]}"; do
+        grep -q 'Theme\.surfaceText' "$1/ui/$f" 2>/dev/null || return 1
+    done
     # Each override goes in front of the original expression as
     # "(<collapsed>) ? <ours> : <original>". The border ones also step aside
     # for a notification's accent border, which the original handles.
@@ -166,6 +181,16 @@ patch_island() {
             print
         }
     ' "$clock" > "$clock.new" && mv "$clock.new" "$clock" || return 1
+    for f in "${COMPACT_TARGETS[@]}"; do
+        f="$1/ui/$f"
+        awk -v fg="$ISLAND_FG" '
+            {
+                gsub(/Theme\.(surfaceText(Secondary)?|primary)/, "\"" fg "\"")
+                print
+            }
+            END { print "// stay-go:island-color" }
+        ' "$f" > "$f.new" && mv "$f.new" "$f" || return 1
+    done
     grep -qF "stay-go:island-color" "$surface" && grep -qF "stay-go:island-color" "$clock"
 }
 

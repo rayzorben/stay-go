@@ -80,6 +80,13 @@ window-rule {
     open-floating true
 }
 
+// DMS settings window (the shell's own app-id; title pins it to Settings so
+// any other DMS toplevel keeps niri's defaults).
+window-rule {
+    match app-id=r#"^dev\.duxlabs\.shell$"# title="^Settings$"
+    open-floating true
+}
+
 window-rule {
     match app-id="firefox$"
     open-maximized true
