@@ -371,7 +371,10 @@ distrobox:
           - folders: ["/home/${env:USER}/work/sedanos/development"]
       - name: fish config
         command: |
-          curl https://raw.githubusercontent.com/oh-my-fish/oh-my-fish/master/bin/install | fish
+          # --noninteractive: otherwise the installer ends with `exec fish < /dev/tty`,
+          # which drops the run into an interactive shell until you exit it
+          curl -fsSL https://raw.githubusercontent.com/oh-my-fish/oh-my-fish/master/bin/install -o /tmp/omf-install
+          fish /tmp/omf-install --noninteractive --yes
 
   - name: motion
     image: docker.io/cachyos/cachyos-v3:latest
