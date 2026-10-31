@@ -387,7 +387,7 @@ distrobox:
 
 
 json:
-  - file: ~/.config/DankMaterialShell/settings.json
+  - file: ~/.config/dms/settings.json
     depends:
       - commands: [install dms]
     json:

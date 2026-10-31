@@ -336,7 +336,7 @@ containers:
       - files: [/storage/apps/code-server-init/90-dev-tools.sh, /storage/apps/code-server-services/ssh-agent]
 
 json:
-  - file: ~/.config/DankMaterialShell/settings.json
+  - file: ~/.config/dms/settings.json
     depends:
       - commands: [install dms]
     json:

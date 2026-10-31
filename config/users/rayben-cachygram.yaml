@@ -84,6 +84,10 @@ services:
   - service: gcr-ssh-agent.socket
     user: true
   - service: tailscaled.service
+  - service: dropbox.service # shipped by the dropbox package; nothing else starts it
+    user: true
+    depends:
+      - packages: [dropbox]
   - service: dropbox-monitor.timer
     user: true
     depends:
@@ -612,7 +616,7 @@ distrobox:
 
 
 json:
-  - file: ~/.config/DankMaterialShell/settings.json
+  - file: ~/.config/dms/settings.json
     depends:
       - commands: [install dms]
     json:
