@@ -28,6 +28,10 @@ files:
     depends:
       - packages: [jq]
 
+  - source: ${config_root}/files/config/verterm.toml
+    target: ~/.config/verterm/config.toml
+    symlink: true
+
 commands:
   - name: install verterm
     sudo: true
