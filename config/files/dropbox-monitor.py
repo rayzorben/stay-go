@@ -149,6 +149,26 @@ def check(state, now, write, timeout=SOCKET_TIMEOUT):
                             f"(status: {status_line})")
 
     canary = dropbox_root() / ".dropbox-monitor" / HOST
+    # Oct 2026: the canary folder landed in selective sync's ignore set, so the
+    # daemon renamed it to ".dropbox-monitor (Selective Sync Conflict N)" each
+    # hour and every canary "never synced". The folder is ours: re-include it.
+    try:
+        ignored = query("get_ignore_set", timeout=timeout).get("ignore_set", [])
+    except (OSError, ConnectionError):
+        ignored = []
+    if str(canary.parent) in ignored:
+        if not write:
+            problems.append(f"test folder {canary.parent} is excluded by selective "
+                            f"sync — the next timer run re-includes it")
+            return problems, status_line
+        try:
+            query("ignore_set_remove", {"paths": canary.parent}, timeout=timeout)
+            print(f"re-included {canary.parent} in selective sync")
+        except (OSError, ConnectionError) as e:
+            problems.append(f"test folder {canary.parent} is excluded by selective "
+                            f"sync and re-including it failed: {e}")
+            return problems, status_line
+        state["canary_written"] = None
     written = state.get("canary_written")
     if write and (written is None or now - written > CANARY_EVERY):
         try:
@@ -245,7 +265,7 @@ def live_report(always):
               f"({fmt_age(now - since)} ago){reset}")
         for p in problems:
             print(f"   - {p}")
-        print("   restart:  pkill -x dropbox; systemd-run --user /usr/bin/dropbox")
+        print("   restart:  pkill -x dropbox; systemctl --user restart dropbox")
         print("   history:  journalctl --user -u dropbox-monitor")
         return 1
     if always:

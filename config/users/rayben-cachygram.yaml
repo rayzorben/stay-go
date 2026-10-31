@@ -87,6 +87,9 @@ services:
     user: true
     depends:
       - packages: [dropbox]
+      - files:
+          - ~/.config/systemd/user/dropbox.service.d/stay-go.conf
+          - ~/.config/systemd/user/app-dropbox@autostart.service
   - service: dropbox-monitor.timer
     user: true
     depends:
@@ -403,6 +406,29 @@ files:
     mode: "+x"
     depends:
       - packages: [gron]
+
+  # ── Dropbox: one launcher, running the self-updated client ──
+  # Oct 30 2026: 500 restarts, one every 6s, status stuck on "Connecting". The
+  # packaged /usr/bin/dropbox (274.x) hands off to the newer client Dropbox
+  # auto-updated into ~/.dropbox-dist (278.x), which SIGKILLs the launcher;
+  # Restart=on-failure starts another launcher, whose fresh child kills the one
+  # left over by KillMode=process, and so on. Run ~/.dropbox-dist directly when
+  # it exists (no handoff); a fresh machine falls back to the package until the
+  # first auto-update lands there.
+  - content: |
+      # Managed by stay-go.
+      [Service]
+      ExecStart=
+      ExecStart=/bin/sh -c 'test -x %h/.dropbox-dist/dropboxd && exec %h/.dropbox-dist/dropboxd; exec /usr/bin/dropbox'
+    target: ~/.config/systemd/user/dropbox.service.d/stay-go.conf
+
+  # Dropbox rewrites ~/.config/autostart/dropbox.desktop on every start, so the
+  # XDG autostart generator launches a second copy beside dropbox.service (it
+  # started the loop above at login). Mask the generated unit — editing the
+  # .desktop file would be undone.
+  - source: /dev/null
+    target: ~/.config/systemd/user/app-dropbox@autostart.service
+    symlink: true
 
   # ── Dropbox sync monitor ──
   # Oct 2026: the daemon sat frozen for 8 days (alive, 2m40s CPU in 9 days) and
