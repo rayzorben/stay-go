@@ -23,7 +23,7 @@ secrets:
     production_pat: !encrypted c4gdGfaIHqUuh857LIEpP/2PjNt4k1xI5CNtjRgbeqdCFSrkz8d48MqNdfWplmsZF5KiaClhxpbuNKcIMnRne1l3wPzVW0NdakYtUoBLSjpS7w==
     test_client_secret: !encrypted 3Qlb79G+Nul/5iuBKNUFUu6XMAFRBUwERcBmFnq/AE7OhjY+R6t7lw+AQEhENW7mRDkyTWAYb0eJSS12a1s34Gl4LSgNdugtKZoc8XZPctQ=
     prod_client_secret: !encrypted Ao2yEY+mcAJsJgZwNPthyr7op3mM0sA5M4vmOJo5FV4a/HZXJ0UuRr12/7q3purYMVZwZFiJMNHZ6r6+xyLBgEcfzs822D2nhQsW13O3oUk=
-  tailscale_key: !encrypted /MmhlkwH/6N6CSpTaBF20RkArtTJPIEBjOljykiYBwyZmH6zVCMabXDSCJL6yZDqaQuvPlfRiis+SZiDSXWIYqPtQQUBIkh95aGeuIElJeglr85sMR0oTPl5i+dwPfGD9fUgJmux6rnVhw==
+  tailscale_key: !encrypted 7s/Rmls4VpnAgAljgCch1lI5WfzYw0kGsH12ih1C9TmBig8Wt4yMslwR1rqrzRrogfIgKHQxQ0e/R1whM6VFFeXIbBy37ljN8ziYeDxVRZZak9vx84noRGRGEi687Elht6TdydfOY5WrQQ==
 
 packages:
   - ttf-mona-sans
