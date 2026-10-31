@@ -33,7 +33,6 @@ packages:
   - wayfreeze
   - satty
   - psmisc # killall, used by screenshot.sh
-  - lib32-fontconfig # fc-cache-32, used by the windows fonts command
   - cachyos-gaming-meta
   - cachyos-gaming-applications
   - 7zip
@@ -237,22 +236,6 @@ commands:
       sed -i 's/%wheel ALL=(ALL) ALL/%wheel ALL=(ALL) NOPASSWD: ALL/' /etc/sudoers.d/10-installer
     sudo: true
 
-  - name: windows fonts
-    command: |
-      pushd ~/Downloads/isos
-      7z e Win11_25H2_English_x64_v2.iso sources/install.wim -aoa
-      7z e install.wim 1/Windows/{Fonts/"*".{ttf,ttc},System32/Licenses/neutral/"*"/"*"/license.rtf} -o/tmp/fonts/ -aoa
-      mkdir -p /usr/local/share/fonts/WindowsFonts
-      cp /tmp/fonts/*.ttf /usr/local/share/fonts/WindowsFonts/
-      chmod -R 644 /usr/local/share/fonts/WindowsFonts/*
-      fc-cache --force
-      fc-cache-32 --force
-    sudo: true
-    depends:
-      - packages: [7zip, lib32-fontconfig] # lib32-fontconfig: fc-cache-32
-      - files: [~/Downloads/isos/Win11_25H2_English_x64_v2.iso]
-      - folders: ["!/usr/local/share/fonts/WindowsFonts"]
-      
   - name: tailscale
     command: |
       tailscale up --authkey=${secrets.tailscale_key}

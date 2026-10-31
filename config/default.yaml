@@ -27,6 +27,8 @@ variables:
   lucida_font: ${config_root}/files/fonts/LucidaProgrammerNerdFontMono-Regular.ttf
   ttf_fonts: /usr/share/fonts/TTF
   lucida_target: ${ttf_fonts}/LucidaProgrammerNerdFontMono-Regular.ttf
+  windows_fonts: ${config_root}/files/fonts/windows
+  windows_fonts_target: /usr/local/share/fonts/WindowsFonts
 
 # ─── secrets ──────────────────────────────────────────────────────────────────
 # Stores age-encrypted secret values. Encrypted with `stay-go encrypt`.
@@ -89,6 +91,7 @@ packages:
   - qt5-multimedia
   - ghostty
   - wl-clipboard
+  - lib32-fontconfig # fc-cache-32, used by the windows fonts command
   - package: docker
     services: [docker]
 
@@ -173,6 +176,10 @@ files:
   - source: ${lucida_font}
     target: ${lucida_target}
     sudo: true
+  # Generic Helvetica/Times/Courier → Arial/Times New Roman/Courier New.
+  - source: ${config_root}/files/fonts/70-windows-aliases.conf
+    target: /etc/fonts/conf.d/70-windows-aliases.conf
+    sudo: true
 
 # ─── commands ─────────────────────────────────────────────────────────────────
 # Declares named inline shell commands that stay-go runs and tracks by content hash.
@@ -202,6 +209,21 @@ commands:
   - name: refresh fonts
     command: fc-cache -f
     check: fc-list | grep -q "LucidaProgrammer"
+  # The check re-copies whenever a font in the repo is added, changed or
+  # missing from the target (files: can only symlink a directory).
+  - name: windows fonts
+    command: |
+      mkdir -p ${windows_fonts_target}
+      install -m 644 ${windows_fonts}/*.ttf ${windows_fonts}/*.ttc ${windows_fonts_target}/
+      fc-cache --force
+      fc-cache-32 --force
+    sudo: true
+    check: |
+      cd ${windows_fonts} && for f in *.ttf *.ttc; do
+        cmp -s "$f" "${windows_fonts_target}/$f" || { echo "$f out of date"; exit 1; }
+      done
+    depends:
+      - packages: [lib32-fontconfig]
 
 # ─── scripts ──────────────────────────────────────────────────────────────────
 # Declares shell scripts that stay-go runs and tracks by file content hash.

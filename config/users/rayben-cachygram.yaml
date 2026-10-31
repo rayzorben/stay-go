@@ -51,7 +51,6 @@ packages:
   - wayfreeze
   - satty
   - psmisc # killall, used by screenshot.sh
-  - lib32-fontconfig # fc-cache-32, used by the windows fonts command
   # Pin the 32-bit GL/Vulkan providers before the gaming meta: left to pick,
   # --noconfirm takes lib32-mesa-git, which conflicts with lib32-opencl-mesa.
   - lib32-mesa
@@ -521,22 +520,6 @@ commands:
       git config --global --unset user.name
       git config --global --unset user.email
 
-  - name: windows fonts
-    command: |
-      pushd ~/Downloads/isos
-      7z e Win11_25H2_English_x64_v2.iso sources/install.wim -aoa
-      7z e install.wim 1/Windows/{Fonts/"*".{ttf,ttc},System32/Licenses/neutral/"*"/"*"/license.rtf} -o/tmp/fonts/ -aoa
-      mkdir -p /usr/local/share/fonts/WindowsFonts
-      cp /tmp/fonts/*.ttf /usr/local/share/fonts/WindowsFonts/
-      chmod -R 644 /usr/local/share/fonts/WindowsFonts/*
-      fc-cache --force
-      fc-cache-32 --force
-    sudo: true
-    depends:
-      - packages: [7zip, lib32-fontconfig] # lib32-fontconfig: fc-cache-32
-      - files: [~/Downloads/isos/Win11_25H2_English_x64_v2.iso]
-      - folders: ["!/usr/local/share/fonts/WindowsFonts"]
-      
   - name: tailscale
     command: |
       tailscale up --authkey=${secrets.tailscale_key} --operator=$USER
