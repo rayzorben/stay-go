@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # ExecStart wrapper for dms.service (see the drop-in in
 # users/rayben-cachygram.yaml): launches DMS from a patched copy of its UI that
-# hides niri's "Scratch" workspace from the bar's workspace switcher.
+#   1. hides niri's "Scratch" workspace from the bar's workspace switcher, and
+#   2. gives the centre island (the clock + date pill) its own colour —
+#      light periwinkle with dark text and a darker periwinkle border — while
+#      it is collapsed. DMS has no
+#      colour setting for it; it follows the wallpaper theme, and
+#   3. draws the focused-window pill twice as wide as its text needs.
 #
 # Why a patched copy: DMS has no setting for this. Its niri workspace filter
 # (niriWorkspacesForScreen in Common/WorkspaceModel.js) only knows "is it
@@ -13,13 +18,14 @@
 # extracted read-only into $XDG_RUNTIME_DIR/dms-shell/<hash>/ on every
 # `dms run`, so there is no file on disk to patch any more. What DMS does
 # support is `dms run -c <dir>`: run a UI from a directory instead of the
-# embedded one. This script gets the embedded UI out of the binary, patches one
-# line, caches the result per dms build, and execs `dms ... -c <copy>`.
+# embedded one. This script gets the embedded UI out of the binary, patches it,
+# caches the result per dms build, and execs `dms ... -c <copy>`.
 #
-# A copy keyed by the binary is never stale: a dms-shell upgrade changes the
-# binary, so the next start rebuilds from the new embedded UI. If anything goes
-# wrong (extraction or the anchor line missing after an upstream rework) it
-# logs why and starts DMS unpatched — Scratch shows, but the bar always comes up.
+# A copy keyed by the binary and this script is never stale: a dms-shell
+# upgrade or an edit here changes the key, so the next start rebuilds. If
+# extraction fails it logs why and starts DMS unpatched; a patch whose anchor
+# line is gone after an upstream rework is logged and skipped on its own. The
+# bar always comes up.
 #
 # Usage: dms-hide-scratch <dms args...>   e.g. dms-hide-scratch run --session
 set -uo pipefail
@@ -28,10 +34,46 @@ DMS=/usr/bin/dms
 WORKSPACE="Scratch"
 MARKER="stay-go:hide-scratch"
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/stay-go/dms-ui"
+STAMP=".stay-go-patched"
 TARGET="Common/WorkspaceModel.js"
 # The niri workspace list for one screen, gathered and sorted but not yet
 # filtered for "occupied only" — filtering here hides Scratch either way.
 ANCHOR='const sorted = (onScreen.length > 0 ? onScreen : niriFallback()).slice().sort((a, b) => a.idx - b.idx);'
+
+# With "island": true the centre clock is drawn by the island (DIsland), not
+# by the bar's Clock widget, so both patches target island files.
+# Light, so it stands out against the darker Very Peri wallpaper.
+ISLAND_BG="#CCCCFF"   # periwinkle
+ISLAND_FG="#1F1A3D"   # ~11:1 contrast on ISLAND_BG
+ISLAND_BORDER="#4B4B9E"   # periwinkle at about half ISLAND_BG's lightness, darker than the wallpaper
+ISLAND_BORDER_WIDTH=2
+# The island surface's fill colour and border. Only the collapsed, standalone
+# island is restyled: expanded (notifications, media, popouts) keeps the theme
+# surface its theme-coloured contents are designed for, and a notification's
+# accent border still wins.
+SURFACE_TARGET="Modules/DIsland/DIslandSurface.qml"
+SURFACE_ANCHOR='    readonly property color effectiveSurfaceColor: '
+BORDER_WIDTH_ANCHOR='        border.width: root.notificationAccentColor '
+BORDER_COLOR_ANCHOR='        border.color: root.notificationAccentColor '
+COLLAPSED='!root.controller.expanded && !root.embedded'
+# The collapsed island's contents: the clock (whose text colour defaults to
+# the theme's) plus search, notification, volume and tray icons in the
+# theme's light text colours, which would vanish on the light background.
+CLOCK_TARGET="Modules/DIsland/Activities/HomeCompact.qml"
+CLOCK_DATE_LINE='        dateColor: Theme.surfaceTextMedium'
+CLOCK_SEP_LINE='        separatorColor: Theme.primary'
+
+# The focused-window pill (left of the bar) sizes itself to its text, so a
+# short title like "Claude" gives a stub of a pill. It is drawn twice as wide
+# as that: content c plus padding p on each side becomes 2c + 2p of content,
+# so the whole pill is 2(c + 2p). Both the width the bar's overflow layout
+# plans with (naturalPrimarySize) and the width the pill draws at (the
+# content's implicitWidth) are widened, or the layout would allot the old
+# size and squeeze it back. The focusedWindowSize cap and the space the bar
+# has left still apply.
+FOCUSED_TARGET="Modules/DBar/Widgets/FocusedApp.qml"
+FOCUSED_PLAN='Math.min(contentItem?.naturalWidth ?? 0, maxWidth - horizontalPadding * 2)'
+FOCUSED_DRAW='return Math.min(contentRow.implicitWidth, root.effectiveHorizontalInnerWidth);'
 
 log() { echo "dms-hide-scratch: $*" >&2; }
 
@@ -74,7 +116,7 @@ extract() {
 # awk rather than sed: the anchor is full of (), => and . that would all need
 # escaping in a regex, and a literal string comparison can't drift. `sorted`
 # is const, so the filter is chained onto the anchor rather than added after it.
-patch() {
+patch_scratch() {
     local file="$1/ui/$TARGET"
     [ "$(grep -cF "$ANCHOR" "$file" 2>/dev/null)" = "1" ] || return 1
     awk -v anchor="$ANCHOR" -v ws="$WORKSPACE" -v marker="$MARKER" '
@@ -86,15 +128,79 @@ patch() {
     ' "$file" > "$file.new" && mv "$file.new" "$file" && grep -qF "$MARKER" "$file"
 }
 
-# Size + mtime identify the installed build; pacman sets mtime from the package.
+# Both files are checked before either is touched, so the island is never
+# half-recoloured (white text on the dark theme surface, or the reverse).
+patch_island() {
+    local surface="$1/ui/$SURFACE_TARGET" clock="$1/ui/$CLOCK_TARGET"
+    local a
+    for a in "$SURFACE_ANCHOR" "$BORDER_WIDTH_ANCHOR" "$BORDER_COLOR_ANCHOR"; do
+        [ "$(grep -c "^$a" "$surface" 2>/dev/null)" = "1" ] || return 1
+    done
+    [ "$(grep -cxF "$CLOCK_DATE_LINE" "$clock" 2>/dev/null)" = "1" ] || return 1
+    [ "$(grep -cxF "$CLOCK_SEP_LINE" "$clock" 2>/dev/null)" = "1" ] || return 1
+    # Each override goes in front of the original expression as
+    # "(<collapsed>) ? <ours> : <original>". The border ones also step aside
+    # for a notification's accent border, which the original handles.
+    awk -v fill="$SURFACE_ANCHOR" -v bw="$BORDER_WIDTH_ANCHOR" -v bc="$BORDER_COLOR_ANCHOR" \
+        -v cond="$COLLAPSED" -v bg="$ISLAND_BG" -v border="$ISLAND_BORDER" -v width="$ISLAND_BORDER_WIDTH" '
+        function override(c, value,    start) {
+            start = index($0, ": ") + 2
+            $0 = substr($0, 1, start - 1) "(" c ") ? " value " : " substr($0, start) " // stay-go:island-color"
+        }
+        # notificationAccentColor is a color value: test its alpha, since === against
+        # the string "transparent" is always false.
+        BEGIN { quiet = cond " && root.notificationAccentColor.a === 0" }
+        index($0, fill) == 1 { override(cond, "\"" bg "\"") }
+        index($0, bw) == 1   { override(quiet, width) }
+        index($0, bc) == 1   { override(quiet, "\"" border "\"") }
+        { print }
+    ' "$surface" > "$surface.new" && mv "$surface.new" "$surface" || return 1
+    # Hover overlays are replaced before the plain text colours, whose name
+    # they start with.
+    awk -v date="$CLOCK_DATE_LINE" -v sep="$CLOCK_SEP_LINE" -v fg="$ISLAND_FG" '
+        $0 == date { print "        textColor: \"" fg "\" // stay-go:island-color"; print "        dateColor: \"" fg "\""; next }
+        $0 == sep  { print "        separatorColor: \"" fg "\""; next }
+        {
+            gsub(/Theme\.surfaceTextHover/, "Theme.withAlpha(\"" fg "\", 0.10)")
+            gsub(/Theme\.(surfaceText(Medium|Secondary)?|secondary)/, "\"" fg "\"")
+            print
+        }
+    ' "$clock" > "$clock.new" && mv "$clock.new" "$clock" || return 1
+    grep -qF "stay-go:island-color" "$surface" && grep -qF "stay-go:island-color" "$clock"
+}
+
+# Literal replacements inside a line, both anchors checked first so the plan
+# and the drawn width never disagree.
+patch_focused_width() {
+    local file="$1/ui/$FOCUSED_TARGET"
+    [ "$(grep -cF "$FOCUSED_PLAN" "$file" 2>/dev/null)" = "1" ] || return 1
+    [ "$(grep -cF "$FOCUSED_DRAW" "$file" 2>/dev/null)" = "1" ] || return 1
+    awk -v plan="$FOCUSED_PLAN" -v draw="$FOCUSED_DRAW" '
+        function swap(old, new,    pos) {
+            pos = index($0, old)
+            $0 = substr($0, 1, pos - 1) new substr($0, pos + length(old)) " // stay-go:focused-width"
+        }
+        index($0, plan) { swap(plan, "Math.min((contentItem?.naturalWidth ?? 0) * 2 + horizontalPadding * 2, maxWidth - horizontalPadding * 2)") }
+        index($0, draw) { swap(draw, "return Math.min(contentRow.implicitWidth * 2 + root.horizontalPadding * 2, root.effectiveHorizontalInnerWidth);") }
+        { print }
+    ' "$file" > "$file.new" && mv "$file.new" "$file" || return 1
+    [ "$(grep -cF "stay-go:focused-width" "$file")" = "2" ]
+}
+
+# Size + mtime identify the installed build (pacman sets mtime from the
+# package); the script's own hash rebuilds the copy when a patch changes.
 key=$(stat -c '%s-%Y' "$DMS") || unpatched "cannot stat $DMS" "$@"
+key="$key-$(sha256sum "$0" | cut -c1-12)" || unpatched "cannot hash $0" "$@"
 ui="$CACHE/$key"
 
-if ! grep -qsF "$MARKER" "$ui/$TARGET"; then
+if [ ! -e "$ui/$STAMP" ]; then
     mkdir -p "$CACHE" || unpatched "cannot create $CACHE" "$@"
     work=$(mktemp -d "$CACHE/.build.XXXXXX") || unpatched "cannot create a build dir" "$@"
     extract "$work" || unpatched "could not extract the embedded UI from $DMS" "$@"
-    patch "$work" || unpatched "anchor not found exactly once in $TARGET — upstream changed, patch needs review" "$@"
+    patch_scratch "$work" || log "anchor not found exactly once in $TARGET — upstream changed, Scratch stays visible"
+    patch_island "$work" || log "anchors not found exactly once in $SURFACE_TARGET / $CLOCK_TARGET — upstream changed, island keeps the theme colour"
+    patch_focused_width "$work" || log "anchors not found exactly once in $FOCUSED_TARGET — upstream changed, focused-window pill keeps its width"
+    touch "$work/ui/$STAMP"
     # Swap in the new build and drop copies for older dms builds.
     for old in "$CACHE"/*; do
         [ "$old" = "$ui" ] || rm -rf "$old"
