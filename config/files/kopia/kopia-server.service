@@ -26,7 +26,7 @@ RestartSec=30
 # and Kopia never restarts it; a restart starts a fresh one. An upload cut off
 # here resumes from its last checkpoint. kopia-watchdog catches it in between.
 RuntimeMaxSec=1d
-# Hashing and zstd yield the CPU to plex/jellyfin/frigate. (No IOSchedulingClass:
+# Hashing and zstd yield the CPU to frigate and the other containers. (No IOSchedulingClass:
 # ZFS has its own I/O scheduler and ignores the kernel's ioprio.)
 Nice=10
 

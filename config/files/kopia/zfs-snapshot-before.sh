@@ -2,8 +2,8 @@
 # Kopia before-snapshot-root action (managed by stay-go — config/hosts/orohost.yaml).
 #
 # Backs up a frozen copy instead of the live tree. /storage/apps holds running
-# databases (immich postgres, photoprism mariadb, the *arr and jellyfin sqlite
-# files); copied file by file while they write, those come out torn. A ZFS
+# databases (immich postgres, the sqlite files of frigate, adguard and the
+# rest); copied file by file while they write, those come out torn. A ZFS
 # snapshot is atomic and crash-consistent, which is exactly what a database
 # recovers from on restore.
 #

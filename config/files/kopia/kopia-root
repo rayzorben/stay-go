@@ -8,7 +8,7 @@
 #
 #   kopia-root snapshot list /storage/apps
 #   kopia-root ls -l k1a2b3c4/immich/postgres
-#   kopia-root restore k1a2b3c4/sonarr/config /tmp/sonarr-config
+#   kopia-root restore k1a2b3c4/frigate/config /tmp/frigate-config
 #   kopia-root mount all /mnt/kopia      # every snapshot as a browsable folder tree
 [ "$(id -u)" -eq 0 ] || exec sudo "$0" "$@"
 set -a
