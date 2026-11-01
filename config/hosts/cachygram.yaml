@@ -285,6 +285,17 @@ files:
     target: /etc/udev/rules.d/50-intel-bt-no-autosuspend.rules
     sudo: true
 
+  # ── Boot-time choice of GPU driver: i915 or xe ──
+  # limine-entry-tool post-hook: after every limine.conf regeneration (kernel
+  # update, initramfs rebuild, snapshot sync) it re-adds an "Arch Linux (xe
+  # driver)" menu entry with the same kernels, booted with i915 blocked for the
+  # iGPU and xe force-probed. The regular "Arch Linux" entry stays on i915 and
+  # stays the default. See the script for why it is a hook, not a cmdline profile.
+  - source: ${config_root}/files/limine-xe-entry.sh
+    target: /etc/boot/hooks/post.d/50-limine-xe-entry
+    sudo: true
+    mode: "+x"
+
 services:
   # The speaker fix. It was enabled by hand, never by stay-go.
   - service: necessary-verbs
@@ -338,6 +349,24 @@ commands:
     sudo: true
     depends:
       - files: [/etc/default/limine]
+
+  # Run the xe-entry hook now rather than waiting for the next limine.conf
+  # update. The stamp is the hook as of its last run; an edit re-runs it. No
+  # files: guard (see "Applying the drop-ins" below). A removed files entry
+  # leaves the file behind, so the rollback strips the entry and deletes the hook.
+  - name: limine-xe-entry
+    command: |
+      /etc/boot/hooks/post.d/50-limine-xe-entry
+      install -Dm644 /etc/boot/hooks/post.d/50-limine-xe-entry /var/lib/stay-go/applied/limine-xe-entry
+    check: |
+      cmp -s /etc/boot/hooks/post.d/50-limine-xe-entry /var/lib/stay-go/applied/limine-xe-entry \
+        || { echo "limine xe hook changed since it last ran"; exit 1; }
+      grep -qx '/+Arch Linux (xe driver)' /boot/limine.conf \
+        || { echo "xe driver boot entry missing from limine.conf"; exit 1; }
+    rollback: |
+      /etc/boot/hooks/post.d/50-limine-xe-entry --remove
+      rm -f /etc/boot/hooks/post.d/50-limine-xe-entry /var/lib/stay-go/applied/limine-xe-entry
+    sudo: true
 
   # Apply the Bluetooth autosuspend rule now; udev only runs it on the next
   # add/bind (boot or a chip reset). Writing power/control directly needs no
