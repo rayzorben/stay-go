@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
-# kopia-backup — snapshot cachygram's backup set into its Kopia repository on
-# orohost, or restore it (managed by stay-go — config/hosts/cachygram/backups.yaml).
+# kopia-backup — snapshot cachygram's backup set into the Kopia repository
+# through orohost's repository server, or restore it (managed by stay-go —
+# config/hosts/cachygram/backups.yaml).
 #
 #   kopia-backup              snapshot everything in /etc/kopia/backup-set.conf
 #                             (kopia-backup.timer runs this daily)
-#   kopia-backup list         every snapshot in the repository
+#   kopia-backup list         every snapshot of this machine's
 #   kopia-backup restore      put the newest snapshot of every source back where
 #                             it came from (stop Life first: systemctl --user stop life)
 #   kopia-backup restore <path>...   the same, for just these sources
 #
-# Retention (7 daily, 4 weekly, 12 monthly) is the repository's global policy,
-# set by config/scripts/kopia-cachygram-repository.sh; Kopia applies it after
-# every snapshot.
+# Retention (7 daily, 4 weekly, 12 monthly) is root@cachygram's policy, set on
+# orohost by config/scripts/kopia-policies.sh; Kopia applies it after every
+# snapshot.
 #
 # A folder holding SQLite databases, or with ignore patterns, is snapshotted
 # from a staged copy under $STAGE: rsync for the files, sqlite3 .backup for

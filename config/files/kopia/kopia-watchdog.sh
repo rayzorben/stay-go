@@ -18,7 +18,10 @@ STALE=$((2 * 3600)) # sources snapshot every 15 min
 STUCK=$((30 * 60))
 GRACE=$((60 * 60))  # time to open the repository and finish a first upload pass
 STATE=/run/kopia-watchdog
-API=http://127.0.0.1:51515/api/v1/control/sources
+# The server's certificate is for its ts.net name; --resolve keeps the request
+# on loopback, so a tailnet outage is never mistaken for a wedged server.
+API=https://orohost.tawny-tailor.ts.net:51515/api/v1/control/sources
+RESOLVE=orohost.tawny-tailor.ts.net:51515:127.0.0.1
 
 systemctl -q is-active kopia-server || exit 0
 since=$(systemctl show -P ActiveEnterTimestamp kopia-server)
@@ -36,7 +39,7 @@ set -a
 set +a
 # Credentials on stdin rather than argv, where ps would show them.
 json=$(printf 'user = "%s:%s"\n' "$KOPIA_SERVER_CONTROL_USER" "$KOPIA_SERVER_CONTROL_PASSWORD" \
-    | curl -sSf -m 20 -K - "$API") || restart "the control API did not answer"
+    | curl -sSf -m 20 -K - --resolve "$RESOLVE" "$API") || restart "the control API did not answer"
 
 mkdir -p "$STATE"
 now=$(date +%s)

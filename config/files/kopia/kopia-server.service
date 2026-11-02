@@ -1,10 +1,18 @@
 # Managed by stay-go — see config/hosts/orohost.yaml (Backups: Kopia → Google Drive).
 #
 # The Kopia server is the backup engine and the UI in one process: it runs every
-# source's scheduled snapshot, retention and repository maintenance, and serves
-# the web UI used to browse and restore. It listens on loopback only, without
-# TLS (--insecure); `tailscale serve` terminates HTTPS in front of it, so the UI
-# is reachable from the tailnet and nowhere else.
+# source's scheduled snapshot, retention and repository maintenance, serves
+# the web UI used to browse and restore, and is the repository server other
+# machines (cachygram) back up through. It listens on loopback only;
+# `tailscale serve` forwards raw TCP from the tailnet to it, so it is reachable
+# from the tailnet and nowhere else.
+#
+# It terminates TLS itself, with orohost's real ts.net certificate: clients
+# talk gRPC, which needs HTTP/2, and Kopia speaks only HTTP/1.1 without TLS
+# (--insecure), which an HTTPS proxy in front cannot fix. `tailscale cert`
+# returns the cached certificate and renews it when it nears expiry, and the
+# daily restart below re-runs it. A failure (tailscaled not up yet) keeps the
+# files already there.
 #
 # Runs as root: /storage/apps holds files owned by a dozen container uids, and the
 # before-snapshot action has to be able to `zfs snapshot`.
@@ -13,12 +21,13 @@
 Description=Kopia backup server (orohost → Google Drive)
 Documentation=https://kopia.io/docs/
 Wants=network-online.target zfs-mount.service
-After=network-online.target zfs-mount.service
+After=network-online.target zfs-mount.service tailscaled.service
 
 [Service]
 Type=simple
 EnvironmentFile=/etc/kopia/kopia.env
-ExecStart=/usr/bin/kopia server start --address=http://127.0.0.1:51515 --insecure
+ExecStartPre=-/usr/bin/tailscale cert --cert-file=/etc/kopia/tls.crt --key-file=/etc/kopia/tls.key orohost.tawny-tailor.ts.net
+ExecStart=/usr/bin/kopia server start --address=https://127.0.0.1:51515 --tls-cert-file=/etc/kopia/tls.crt --tls-key-file=/etc/kopia/tls.key
 Restart=always
 RestartSec=30
 # Restart daily. The rclone child the server talks to Google Drive through

@@ -1,10 +1,15 @@
-# ─── Backups: Kopia → orohost ────────────────────────────────────────────────
+# ─── Backups: Kopia → orohost's repository server → Google Drive ────────────
 # Included from config/hosts/cachygram.yaml.
 #
 # Once a day, Kopia snapshots the folders listed in
-# config/files/kopia/cachygram-backup-set.conf into an encrypted, deduplicated,
-# zstd-compressed repository on orohost (/storage/backup/kopia-cachygram),
-# reached over SFTP on the tailnet. Kept: 7 daily, 4 weekly, 12 monthly.
+# config/files/kopia/cachygram-backup-set.conf into orohost's repository in
+# Google Drive, through orohost's Kopia server on the tailnet
+# (https://orohost.tawny-tailor.ts.net:51515). One repository for every
+# machine: encrypted, zstd-compressed, deduplicated across machines.
+# cachygram logs in as root@cachygram and sees only its own snapshots; it
+# holds neither the repository password nor the Drive token. Retention
+# (7 daily, 4 weekly, 12 monthly) is set on orohost, in
+# config/scripts/kopia-policies.sh.
 #
 #   What                 config/files/kopia/cachygram-backup-set.conf
 #   Back up now          kopia-backup
@@ -15,22 +20,18 @@
 # Pieces:
 #   kopia-backup.timer     root; daily (and on the next boot if a day was missed)
 #   kopia-backup.service   runs /usr/local/bin/kopia-backup; retries hourly on failure
-#   /etc/kopia/kopia.env   repository password, read by kopia-root
-#   /etc/kopia/known_hosts orohost's SSH host key, so the SFTP login is verified
+#   /etc/kopia/kopia.env   the root@cachygram login password, read by kopia-root
 #
-# ── ONE-TIME SETUP ──
-# Fill in the secret below in plaintext (stay-go encrypts it in place on the
-# next run), then uncomment the block. Store it in your password manager too:
-# without it nobody can ever decrypt these backups, and a reinstall needs it
-# to reconnect.
-#   openssl rand -base64 32     (no single quotes: kopia.env single-quotes it)
-#
-# Until it exists, kopia-cachygram-repository.sh stops with a message and the
-# timer is skipped; nothing half-configured reaches orohost.
+# The login is created on orohost by its `kopia server user cachygram` command
+# (config/hosts/orohost/backups.yaml), from the same secret as below.
 
-# Uncomment as a whole: an empty `kopia:` group would itself be read as a secret.
 secrets:
   kopia:
+    # The login to orohost's repository server; the same value is in
+    # config/hosts/orohost/backups.yaml (stay-go secret update --all).
+    cachygram_password: !encrypted F0JdvCNU3e2BbKkUgSU2cGP4JgQEttivXRY/qYl7yJSOwYx6DTPRHC1g7YqEHUVRn8IFa0xH/zj8gSnC8ogXdqBxEQqjYParZIHI+NsYfdBZF3oAmxKcCG4Ttc8=
+    # Password of the retired SFTP repository in orohost:/storage/backup/kopia-cachygram,
+    # which holds the snapshots from before the move. Unused; delete it with that folder.
     repository_password: !encrypted MW7f7lKAzLg3husM+ge89abLFF1aBaTF6z0wdJZSxgW/cqBmNaDQaxUt7VRXLG3rXCtXVLXUqmtvs5QJL3DscN0bZWJPgmUAO6BEbPWEppdDjPC1gtlGzw==
 
 packages:
@@ -45,21 +46,9 @@ files:
       KOPIA_CACHE_DIRECTORY='/var/cache/kopia'
       KOPIA_LOG_DIR='/var/log/kopia'
       KOPIA_CHECK_FOR_UPDATES='false'
-      KOPIA_PASSWORD='${secrets.kopia.repository_password}'
+      KOPIA_PASSWORD='${secrets.kopia.cachygram_password}'
     target: /etc/kopia/kopia.env
     mode: "0600"
-    sudo: true
-
-  # orohost's host keys (ssh-keyscan -t ed25519,ecdsa,rsa orohost). Kopia's SFTP
-  # client refuses to connect without a known_hosts entry, and as a Go client it
-  # negotiates ECDSA ahead of ed25519: with only the ed25519 line it fails with
-  # "knownhosts: key mismatch", so every type orohost offers is listed.
-  - content: |
-      orohost ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL8HBK2LExKZZhpphS7RafazQhm+IwTt0Boy5csfVTfU
-      orohost ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBGsQJAJIpFYvdmSB83I4D+SZMdjkbBCjXvo0T5nFwEBUQCPxPT21+LulSSk/h8E1mGSzuadqSUaO0bpQwo8h2a8=
-      orohost ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDHFOqYIuusPo1IoB5EolNOG1rSfZMDWMXlvPq1vIU47WrjWQ69uTNTxTfLn5/Gy3K4PZKEMH5h1hDwbLp1JlN5Wr/1jpUxA9Bug2B7XU7bTRmIIGA5ooG1B0+DwGXBN/WWqLdCQ14wSkKjWh09HWyxJJm1ZcGMzvemh/9IqlZ7Fk7uIYU8Lj03mDkPhuznD+a760PV1gx5VuqRZpDGGXfOnKN5nIeaTuOSmTst1MuYRKajFilntBm6UZS1sF3BCxQqrEUhffHrcuZMoh5PIO5QmrJbBfp5Um5niq05jXFYfeQJeExi1Ryi3KQaL4JeR2wmyxEv1fURsnXlGUv8cMY4jBqkJVu0ATbMLECxNrIec8+p/tQhp6W/ol9UoMjodJiQ+RDiGF0tF6THJA8GI/vNjcrwWPphoU1BjDB0SLe3+YhuNbIvTrBQ3eYpOeSg3O+ed85Bc32uYMIIiaElQh3Dlia8uiwJmMXR3D82ojg0Nwr+19JefPmX0RIovzajvtU=
-    target: /etc/kopia/known_hosts
-    mode: "0644"
     sudo: true
 
   - source: ${config_root}/files/kopia/kopia-root
@@ -116,8 +105,8 @@ files:
     sudo: true
 
 scripts:
-  # Connect (or, the first time, create) the repository and set retention.
-  # Re-runs only when the script changes.
+  # Connect to orohost's repository server. Re-runs only when the script
+  # changes; kopia-root hands Kopia the password from kopia.env on every call.
   - script: ${config_root}/scripts/kopia-cachygram-repository.sh
     sudo: true
     depends:
@@ -125,9 +114,7 @@ scripts:
       - commands: [tailscale] # orohost is reached over the tailnet
       - files:
           - /etc/kopia/kopia.env
-          - /etc/kopia/known_hosts
           - /usr/local/bin/kopia-root
-          - ~/.ssh/id_rsa
 
 services:
   - service: kopia-backup.timer

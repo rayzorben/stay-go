@@ -6,18 +6,31 @@
 # reached through rclone. Every snapshot stays browsable and restorable — a
 # single file, or a whole folder, as it was at any snapshot time.
 #
+# Other machines back up into the same repository through orohost's Kopia
+# server (a "repository server"): one repository, deduplicated across every
+# machine. Each has its own login, sees only its own snapshots, and holds
+# neither the repository password nor the Drive token.
+#
 #   What / how often / how long   config/scripts/kopia-policies.sh
 #   Web UI (tailnet only)         https://orohost.tawny-tailor.ts.net:51515  (user rayben)
+#   Clients connect to            https://orohost.tawny-tailor.ts.net:51515  (user root@<host>)
 #   CLI                           kopia-root snapshot list /storage/apps
+#                                 kopia-root snapshot list --all   (every machine's)
 #                                 kopia-root mount all /mnt/kopia
 #
 # Pieces:
-#   kopia-server.service   root; schedules snapshots, retention, maintenance; UI on 127.0.0.1:51515
+#   kopia-server.service   root; schedules snapshots, retention, maintenance; UI and
+#                          repository server on 127.0.0.1:51515, TLS with the ts.net cert
 #   kopia-watchdog.timer   every 15 min: restarts the server when snapshots have stopped
-#   tailscale serve        HTTPS on the tailnet → that loopback port; nothing listens on the LAN
+#   tailscale serve        TCP on the tailnet → that loopback port; nothing listens on the LAN
 #   zfs-snapshot-*.sh      each run reads a ZFS snapshot, not the live tree (consistent DBs)
 #   /etc/kopia/kopia.env   repository + UI passwords, shared by the server and kopia-root
 #   /etc/kopia/rclone.conf Google Drive OAuth client and token
+#   /etc/kopia/tls.*       orohost.tawny-tailor.ts.net certificate (tailscale cert, at server start)
+#
+# Adding a machine: a `cachygram_password`-style secret here and in its own
+# host file, a `kopia server user` command below, and its retention in
+# kopia-policies.sh. See config/hosts/cachygram/backups.yaml for the client side.
 #
 # ── ONE-TIME SETUP (before the first apply that includes this file) ──
 # 1. Google Cloud console → new project → enable "Google Drive API".
@@ -53,6 +66,9 @@ secrets:
     ui_password: !encrypted RbSVll1HM1Wc34JzXn8ISNQokpDyBtkCHq3kMkfm0IQDC01jwXoo0yjuqfcI+JVr8iE84bIQPw==
     gdrive_client_id: !encrypted 6D1dNDmMfYitzEYvhzKcKxSAWezhm8NpBXPbfJm40EWyI6PskNwXMV2Wxs/WbkEFGv1/JAo4TY4ltuil73xmMOm4Bnq8bE7XRcRnYckzfIFTgjMVZw79j7XwKNvsrvC5Orb5VhBWwBIpWWwQYCeXj9LyaF0=
     gdrive_client_secret: !encrypted 7KfBFUpZhrTRWsE1uSevxUfxuNjBmoxyVWBEiEY/6GTttkQGvNyWuqP0MZg3fjY2iAVGtZbcH6e81HVHqT31rJs6FzkidJWA8Avda0uLMQ==
+    # cachygram's repository-server login; the same value is in
+    # config/hosts/cachygram/backups.yaml (stay-go secret update --all).
+    cachygram_password: !encrypted G9Bd6FpTcSGnZDHYmQY2cg8oDASfMV6Pja2JfUYCc8l6xjdHVI90/J/GIQtkB82IzwzYDqYX1fcewbvJA8+QC8aR7GK0qZp18K1yg7rhyJkk0SC2piL7yGbYXfA=
     gdrive_token: !encrypted rksxQmnj5htpjnkJOACeAu3LSHA7Bubf0tro0JEr0UD7SaucoeWiEwYdH/3pB5eHta9eOmRL7iaEvDvcnMghIOlXNNt+HirrE2DwpnqKKmBc2GFE2OOFOgcR2J04DDKtU9v8mV8WcE18+NNDiIbtRagk4pmdzLy6TRQH/Ce2THGSHYWTnNSY49XA2nMTp4prIgKyP660WC2mrcc1YqazJl5MIq2Tw/kV6hXluBs/YGIol7W1VH5RWTDe4uptIzXu+E3uW20Ue6SaPVdAjIhnW2y628Td0utfFEhfVrY38JsIsaAEQNZyhn0U2vCIl2LUqh5hl6lMHWOC3jvAihf0Vbqi+d1yml6TSiyQdHZeknedv817CDG6m+MnavDyNwqAGlT8JegXpxvPTDJKayzPK25cGtwZfYUCyaY4DVSXiuymiGNSTs2ZHVLbIj8gQqb+ej2OgauuJY6ex7pAQfkDQaxSAGkqY+qSvXHHM2zdSD14+6l5MeG35wO4rrM03TlGgUozkqNkBicZbk5iR9YA6glgYDkv2KDUOEudCTz/iMuxqDwtfjBuDZ59fs+79S1M1oKfPCi0wgMCq6mACM1kj0K4HGJtSAR3ml4Vq7sDeIAGQuea/dmi+b5XuQ+4RhEnNpt5tO/4YwRknLO9KQH2fSIFjrM+FeUtPVjCiWPN7nkLbTtt74P8M/9mjcDi
 
 packages:
@@ -163,6 +179,8 @@ scripts:
     depends:
       - scripts: ["${config_root}/scripts/kopia-repository.sh"]
       - files: [/etc/kopia/zfs-snapshot-before.sh, /etc/kopia/zfs-snapshot-after.sh]
+      # It talks to the server as configured now (TLS), so after any restart.
+      - commands: [kopia server reload]
 
 commands:
   # The services resource restarts a unit only when its own entry changes, so
@@ -170,11 +188,17 @@ commands:
   # here: reload, restart if running, and stamp what was applied. On the first
   # apply the server is not running yet and try-restart does nothing; the
   # service entry below then starts it. A checksum stamp rather than a copy,
-  # because kopia.env holds the passwords.
+  # because kopia.env holds the passwords. After a restart it waits (up to
+  # 2 min) for the server to answer, since the policies script and the user
+  # command talk to it next; any HTTP reply, a 401 included, means it is up.
   - name: kopia server reload
     command: |
       systemctl daemon-reload
       systemctl try-restart kopia-server.service
+      if systemctl -q is-active kopia-server.service; then
+        curl -s -o /dev/null -m 10 --retry 12 --retry-delay 10 --retry-connrefused \
+          --resolve orohost.tawny-tailor.ts.net:51515:127.0.0.1 https://orohost.tawny-tailor.ts.net:51515/ || true
+      fi
       mkdir -p /var/lib/stay-go/applied
       sha256sum /etc/systemd/system/kopia-server.service /etc/kopia/kopia.env > /var/lib/stay-go/applied/kopia-server.sha256
     check: |
@@ -185,20 +209,49 @@ commands:
       - packages: [kopia]
       - scripts: ["${config_root}/scripts/kopia-repository.sh"]
 
-  # Publish the loopback-only UI to the tailnet over HTTPS, with a real
-  # certificate for orohost.tawny-tailor.ts.net. Persists in tailscaled's
-  # state across reboots.
+  # Publish the loopback-only server to the tailnet as raw TCP: Kopia does its
+  # own TLS (see kopia-server.service for why an HTTPS proxy cannot carry its
+  # clients' gRPC). Persists in tailscaled's state across reboots. The first
+  # line drops the HTTPS proxy this port used to have; serve will not put TCP
+  # on a port that still has one.
   - name: kopia tailscale serve
-    command: tailscale serve --bg --https=51515 http://127.0.0.1:51515
+    command: |
+      tailscale serve --https=51515 off >/dev/null 2>&1 || true
+      tailscale serve --bg --tcp=51515 tcp://127.0.0.1:51515
     check: |
-      tailscale serve status --json | jq -e 'any(.Web[]?; .Handlers["/"].Proxy == "http://127.0.0.1:51515")' >/dev/null \
-        || { echo "the Kopia UI is not published on the tailnet"; exit 1; }
-    rollback: tailscale serve --https=51515 off
+      tailscale serve status --json | jq -e '.TCP["51515"].TCPForward == "127.0.0.1:51515"' >/dev/null \
+        || { echo "the Kopia server is not published on the tailnet"; exit 1; }
+    rollback: tailscale serve --tcp=51515 off
     sudo: true
     depends:
       - packages: [tailscale, jq]
       - commands: [tailscale]
       - services: [kopia-server.service] # never publish a port with nothing behind it
+
+  # cachygram's login to the repository server. `user set` on later runs, so a
+  # rotated secret takes effect; the refresh makes the server re-read its
+  # users now. The password is briefly in argv (Kopia reads it from no other
+  # non-interactive place); it only opens cachygram's own snapshots.
+  - name: kopia server user cachygram
+    command: |
+      if kopia-root server user info root@cachygram >/dev/null 2>&1; then
+        kopia-root server user set root@cachygram --user-password='${secrets.kopia.cachygram_password}'
+      else
+        kopia-root server user add root@cachygram --user-password='${secrets.kopia.cachygram_password}'
+      fi
+      . /etc/kopia/kopia.env
+      fingerprint=$(openssl x509 -in /etc/kopia/tls.crt -noout -fingerprint -sha256 | sed 's/.*=//; s/://g' | tr A-F a-f)
+      KOPIA_SERVER_PASSWORD=$KOPIA_SERVER_CONTROL_PASSWORD timeout 60 \
+        kopia server refresh --address=https://127.0.0.1:51515 --server-cert-fingerprint="$fingerprint" \
+        --server-control-username="$KOPIA_SERVER_CONTROL_USER" ||
+        echo "kopia server refresh failed; the server reads the user at its next refresh or restart" >&2
+    check: |
+      sudo -n kopia-root server user info root@cachygram >/dev/null 2>&1 \
+        || { echo "cachygram has no login on the Kopia server"; exit 1; }
+    rollback: kopia-root server user delete root@cachygram
+    sudo: true
+    depends:
+      - services: [kopia-server.service]
 
 services:
   # Started last: with the repository connected and the policies written, the

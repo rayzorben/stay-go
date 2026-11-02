@@ -13,10 +13,12 @@ set -a
 set +a
 
 # control_api — GET the server's source list as the control user, with the
-# credentials on stdin rather than argv (ps shows argv to every user).
+# credentials on stdin rather than argv (ps shows argv to every user). The
+# certificate is for the ts.net name; --resolve keeps the request on loopback.
 control_api() {
   printf 'user = "%s:%s"\n' "$KOPIA_SERVER_CONTROL_USER" "$KOPIA_SERVER_CONTROL_PASSWORD" |
-    curl -sSf -o /dev/null -K - "$@" http://127.0.0.1:51515/api/v1/control/sources
+    curl -sSf -o /dev/null -K - "$@" --resolve orohost.tawny-tailor.ts.net:51515:127.0.0.1 \
+      https://orohost.tawny-tailor.ts.net:51515/api/v1/control/sources
 }
 
 # A wedged server (see /usr/local/bin/kopia-watchdog) never answers the refresh
@@ -105,11 +107,27 @@ backup /storage/apps \
 backup /storage/backup \
   /.venv
 
+# ── Other machines ────────────────────────────────────────────────────────────
+# Repository-server clients (their logins: `kopia server user` commands in
+# config/hosts/orohost/backups.yaml). They schedule their own snapshots; their
+# retention is set here, per user@host, so it stays out of orohost's tiers.
+
+# cachygram: daily (kopia-backup.timer). A week of dailies, a month of
+# weeklies, a year of monthlies. keep-latest 1 only guarantees the newest
+# snapshot survives; it is always also that day's daily.
+kopia-root policy set root@cachygram \
+  --keep-latest=1 --keep-hourly=0 --keep-daily=7 --keep-weekly=4 \
+  --keep-monthly=12 --keep-annual=0
+
 # Have a running server see new or changed sources now rather than at its next
 # 4-hourly refresh. Not running yet (first apply) is fine: it reads them on start.
-# The password goes in through the environment, not --server-control-password.
+# The password goes in through the environment, not --server-control-password;
+# pinning the certificate's fingerprint lets the loopback address stand in for
+# the ts.net name it was issued to.
 if systemctl -q is-active kopia-server; then
+  fingerprint=$(openssl x509 -in /etc/kopia/tls.crt -noout -fingerprint -sha256 | sed 's/.*=//; s/://g' | tr A-F a-f)
   KOPIA_SERVER_PASSWORD=$KOPIA_SERVER_CONTROL_PASSWORD timeout 60 \
-    kopia server refresh --server-control-username="$KOPIA_SERVER_CONTROL_USER" ||
+    kopia server refresh --address=https://127.0.0.1:51515 --server-cert-fingerprint="$fingerprint" \
+    --server-control-username="$KOPIA_SERVER_CONTROL_USER" ||
     echo "kopia server refresh failed; the server picks the policies up at its next refresh" >&2
 fi
