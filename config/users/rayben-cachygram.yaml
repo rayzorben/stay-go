@@ -88,6 +88,7 @@ services:
     depends:
       - packages: [dropbox]
       - files:
+          - ~/.config/systemd/user/dropbox.service
           - ~/.config/systemd/user/dropbox.service.d/stay-go.conf
           - ~/.config/systemd/user/app-dropbox@autostart.service
   - service: dropbox-monitor.timer
@@ -422,6 +423,29 @@ files:
       ExecStart=/bin/sh -c 'test -x %h/.dropbox-dist/dropboxd && exec %h/.dropbox-dist/dropboxd; exec /usr/bin/dropbox'
     target: ~/.config/systemd/user/dropbox.service.d/stay-go.conf
 
+  # Nov 2 2026: the packaged unit is WantedBy=default.target, so Dropbox started
+  # a second before niri and DMS, found no tray to register with, and stayed
+  # iconless all session (it never retries) — it looked like it hadn't started.
+  # Shadow the package unit to tie it to the graphical session like dms.service;
+  # the ExecStart drop-in above still applies to this unit.
+  - content: |
+      # Managed by stay-go.
+      [Unit]
+      Description=Dropbox
+      PartOf=graphical-session.target
+      After=graphical-session.target
+
+      [Service]
+      Type=simple
+      ExecStart=/usr/bin/dropbox
+      ExecReload=/bin/kill -HUP $MAINPID
+      KillMode=process
+      Restart=on-failure
+
+      [Install]
+      WantedBy=graphical-session.target
+    target: ~/.config/systemd/user/dropbox.service
+
   # Dropbox rewrites ~/.config/autostart/dropbox.desktop on every start, so the
   # XDG autostart generator launches a second copy beside dropbox.service (it
   # started the loop above at login). Mask the generated unit — editing the
@@ -504,6 +528,17 @@ ghostty: !include "./commands/ghostty.yaml"
 verterm: !include "./commands/verterm.yaml"
 
 commands:
+  # The services resource only enables once, so a machine enabled under the
+  # package unit keeps its default.target.wants link; move it to
+  # graphical-session.target to match the stay-go unit.
+  - name: dropbox-graphical-session
+    command: systemctl --user daemon-reload && systemctl --user reenable dropbox.service
+    check: |
+      ! test -e ~/.config/systemd/user/default.target.wants/dropbox.service \
+        || { echo "dropbox.service still starts with default.target"; exit 1; }
+    depends:
+      - packages: [dropbox]
+
   # --ask=4 answers yes to pacman's "Remove zlib?" conflict question, which
   # --noconfirm alone answers no.
   - name: zlib-ng-compat
