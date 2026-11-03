@@ -45,6 +45,8 @@ packages:
   - zen-browser
   - docker-compose
   - freerdp
+  - remmina # its RDP plugin is the freerdp optdep above
+  - libsecret # remmina's secret plugin, so saved passwords go to the keyring
   - aria2
   - grim
   - slurp
