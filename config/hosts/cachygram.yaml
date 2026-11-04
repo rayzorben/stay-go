@@ -117,6 +117,11 @@ files:
       # (swap out) on every fragmentation event even with gigabytes free; with
       # zram full that spills to the dm-crypt swapfile and stalls the UI on I/O.
       vm.watermark_boost_factor = 0
+
+      # Wake kswapd ~390 MB before free memory runs out (default 10 = ~30 MB),
+      # so allocating tasks — niri included — stop doing direct reclaim, which
+      # compresses pages into zram synchronously in the middle of a frame.
+      vm.watermark_scale_factor = 125
     target: /etc/sysctl.d/99-zram-tuning.conf
     sudo: true
 
@@ -400,6 +405,7 @@ commands:
     check: |
       sysctl -n vm.page-cluster | grep -qx 0 && sysctl -n vm.vfs_cache_pressure | grep -qx 100 \
         && sysctl -n vm.watermark_boost_factor | grep -qx 0 \
+        && sysctl -n vm.watermark_scale_factor | grep -qx 125 \
         || { echo "live vm.* sysctls differ from 99-zram-tuning.conf"; exit 1; }
     sudo: true
 
@@ -537,6 +543,21 @@ commands:
         systemctl add-wants graphical.target lg-gram-thermals.service
         systemctl start lg-gram-thermals.service
       fi
+    sudo: true
+
+  # PPD 0.30 is battery-aware by default: unplugged on `balanced`, it rewrites
+  # every core's EPP to balance_power, silently undoing the balance_performance
+  # lg-gram-thermals set at boot (Nov 4 2026: all 22 cores on balance_power on
+  # battery; slow ramp-up on every keystroke on top of the 2.4 GHz cap). The
+  # setting persists in /var/lib/power-profiles-daemon/state.ini; re-run the
+  # envelope so EPP is restored now rather than at the next boot or resume.
+  - name: ppd-not-battery-aware
+    command: |
+      powerprofilesctl configure-battery-aware --disable
+      systemctl start lg-gram-thermals.service
+    check: |
+      powerprofilesctl query-battery-aware | grep -q 'False$' \
+        || { echo "power-profiles-daemon drops EPP to balance_power on battery"; exit 1; }
     sudo: true
 
 backups: !include "./cachygram/backups.yaml"

@@ -293,6 +293,27 @@ files:
     depends:
       - files: [~/.local/bin/dms-hide-scratch]
 
+  # ── Keep the compositor and shell out of swap ──
+  # Nov 4 2026: typing lag. With ~24 of 30 GiB taken by browsers and Electron,
+  # swappiness 150 had pushed 41 MiB of niri, 21 MiB of Xwayland and 107 MiB of
+  # quickshell into zram. Every keystroke runs through niri's main loop, and a
+  # swap-in fault there blocks input for everyone: libinput logged "event
+  # processing lagging behind by 228ms" on the keyd keyboard. swap.max=0 is a
+  # hard per-cgroup limit, so it holds even though the parent slices carry no
+  # memory protection (MemoryLow= would not). Apps run in their own scopes,
+  # not in niri.service, so only niri, Xwayland and xwayland-satellite are pinned.
+  - content: |
+      # Managed by stay-go.
+      [Service]
+      MemorySwapMax=0
+    target: ~/.config/systemd/user/niri.service.d/no-swap.conf
+
+  - content: |
+      # Managed by stay-go.
+      [Service]
+      MemorySwapMax=0
+    target: ~/.config/systemd/user/dms.service.d/no-swap.conf
+
   # Application config files
   - source: ${config_root}/files/config/electron-flags.conf
     target: ~/.config/electron-flags.conf
@@ -602,6 +623,24 @@ commands:
     check: '! systemctl --user is-active --quiet dms || pgrep -ax qs | grep -qF /stay-go/dms-ui/ || { echo "DMS is not running the Scratch-hiding UI"; exit 1; }'
     depends:
       - commands: [install dms]
+
+  # Apply the no-swap drop-ins to the running session without restarting niri
+  # (which would end the session). --runtime sets the same limit until logout;
+  # from the next login the drop-ins alone carry it. Pages already in zram come
+  # back on their next touch and are never swapped out again.
+  - name: compositor-no-swap
+    command: |
+      systemctl --user daemon-reload
+      for u in niri dms; do
+        ! systemctl --user is-active --quiet $u.service \
+          || systemctl --user set-property --runtime $u.service MemorySwapMax=0
+      done
+    check: |
+      for u in niri dms; do
+        cg=$(systemctl --user show -p ControlGroup --value $u.service)
+        [ -z "$cg" ] || grep -qx 0 /sys/fs/cgroup$cg/memory.swap.max \
+          || { echo "$u.service can still be swapped out"; exit 1; }
+      done
 
 scripts:
   - script: ${config_root}/scripts/configure-zoxide.sh
