@@ -1,23 +1,30 @@
 #!/bin/bash
 # Managed by stay-go. Bring the Sedanos IPsec tunnel up or down.
 #
-#   sedanos-vpn up       connect (reloads /etc/swanctl first)
-#   sedanos-vpn down     disconnect
-#   sedanos-vpn status   SA, interface, routes and DNS (default)
-#   sedanos-vpn log      follow charon's log, e.g. while a connect fails
+#   sedanos-vpn up       connect and keep it up (starts the watchdog)
+#   sedanos-vpn down     stop the watchdog and disconnect, until the next
+#                        `up` or boot
+#   sedanos-vpn status   watchdog, SA, interface, routes and DNS (default)
+#   sedanos-vpn log      follow charon's and the watchdog's log
 set -euo pipefail
 
 IFACE=xfrm-sedanos
+WATCHDOG=sedanos-vpn-watchdog
 
 case "${1:-status}" in
 up)
 	sudo swanctl --load-all >/dev/null
-	sudo swanctl --initiate --child sedanos --timeout 30
+	if ! sudo swanctl --list-sas --ike sedanos | grep -q INSTALLED; then
+		sudo swanctl --initiate --child sedanos --timeout 30
+	fi
+	sudo systemctl start "$WATCHDOG"
 	;;
 down)
+	sudo systemctl stop "$WATCHDOG"
 	sudo swanctl --terminate --ike sedanos
 	;;
 status)
+	echo "watchdog: $(systemctl is-active "$WATCHDOG")"
 	sudo swanctl --list-sas --ike sedanos
 	if ip link show "$IFACE" >/dev/null 2>&1; then
 		ip -br addr show "$IFACE"
@@ -28,7 +35,7 @@ status)
 	fi
 	;;
 log)
-	journalctl -u strongswan -f
+	journalctl -u strongswan -u "$WATCHDOG" -f
 	;;
 *)
 	echo "usage: sedanos-vpn up|down|status|log" >&2

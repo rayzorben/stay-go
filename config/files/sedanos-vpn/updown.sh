@@ -12,9 +12,14 @@ IF_ID=0x5ed
 SUBNETS=(10.200.0.0/16 10.0.0.0/16)
 DOMAINS=(~sedanos.com)
 DNS_SERVERS=()
+# IKE_SA that last brought the interface up. Reauthentication is
+# make-before-break: the new SA's up-client runs before the old SA's
+# down-client, which must then leave the interface alone.
+OWNER=/run/sedanos-vpn.owner
 
 case "$PLUTO_VERB" in
 up-client)
+	echo "$PLUTO_UNIQUEID" >"$OWNER"
 	ip link del "$IFACE" 2>/dev/null
 	ip link add "$IFACE" type xfrm if_id "$IF_ID"
 	ip addr add "$PLUTO_MY_SOURCEIP/32" dev "$IFACE"
@@ -40,6 +45,8 @@ up-client)
 	fi
 	;;
 down-client)
+	[[ $(cat "$OWNER" 2>/dev/null) == "$PLUTO_UNIQUEID" ]] || exit 0
+	rm -f "$OWNER"
 	# Deleting the link drops its routes and its resolved DNS scope with it.
 	ip link del "$IFACE" 2>/dev/null
 	;;
