@@ -1,3 +1,8 @@
+secrets:
+  sedanos:
+    vpn_psk: !encrypted yNACsgCIhMJkTVBDXmnNvN7xecahIUDjNmobcnqR3MNHX66KkFK0lhDS6OM0wc2hTyFqAOBnu1R83h+P5qMiAo+xMnCgxA==
+    vpn_password: !encrypted M71syGyf0rJz4jzLxqARl4ltVmUGpbeE+n+vDZ92PGxr9p2FjTR0SfIKClh/IYtKnkBSiPAVdCWu
+
 packages:
   - solaar
   - alsa-tools # for hda-verb
@@ -50,6 +55,9 @@ packages:
   # /etc/nsswitch.conf has no mdns entry, so glibc lookups do not use it yet.
   - package: nss-mdns
     services: [avahi-daemon]
+
+  # Sedanos IPsec VPN (see the files block further down).
+  - strongswan
 
 files:
   - source: ${config_root}/files/necessary-verbs.sh
@@ -301,7 +309,109 @@ files:
     sudo: true
     mode: "+x"
 
+  # ── Sedanos VPN: FortiGate IPsec dial-up, split tunnel ──
+  # Ported from the FortiClient export (Sedanos-QTS): IKEv2, local ID "IT",
+  # EAP for the user ("XAuth" in FortiClient's IKEv2 terms), PSK for the gateway.
+  # Route-based so only the Sedanos subnets in updown.sh use the tunnel;
+  # internet traffic stays on the normal default route. Connect on demand with
+  # `sedanos-vpn up` (start_action = none, nothing connects at boot).
+  - content: |
+      # Managed by stay-go.
+      charon {
+        # updown.sh adds the virtual IP and the routes on xfrm-sedanos.
+        install_routes = no
+        install_virtual_ip = no
+        plugins {
+          # resolve is the only plugin that asks the gateway for DNS servers
+          # (updown's dns_handler accepts them but never requests them). It
+          # unlinks and rewrites its file, which would replace resolved's
+          # /etc/resolv.conf stub symlink, so it writes a private file that
+          # updown.sh reads and hands to resolvectl for xfrm-sedanos instead.
+          # No resolvconf binary is installed, so it always uses the file.
+          resolve {
+            file = /run/sedanos-vpn.dns
+          }
+        }
+      }
+    target: /etc/strongswan.d/sedanos.conf
+    sudo: true
+    depends:
+      - packages: [strongswan]
+
+  - source: ${config_root}/files/sedanos-vpn/updown.sh
+    target: /usr/local/libexec/sedanos-vpn-updown
+    sudo: true
+    mode: "+x"
+
+  - source: ${config_root}/files/sedanos-vpn/sedanos-vpn
+    target: /usr/local/bin/sedanos-vpn
+    sudo: true
+    mode: "+x"
+
+  - content: |
+      # Managed by stay-go.
+      connections {
+        sedanos {
+          version = 2
+          remote_addrs = 12.43.107.130
+          vips = 0.0.0.0
+          proposals = aes256-sha256-ecp384-ecp256,aes256-md5-ecp384-ecp256
+          rekey_time = 24h
+          dpd_delay = 5s
+          if_id_in = 0x5ed
+          if_id_out = 0x5ed
+
+          # FortiGate IKEv2 + EAP: the client proves itself by EAP alone (the
+          # gateway offers MSCHAPv2), the gateway signs with the PSK. The
+          # FortiClient local ID is the literal string "@IT", "@" included;
+          # a bare `@IT` here is strongSwan syntax for FQDN "IT", which matches
+          # no dial-up tunnel, and the FortiGate drops IKE_AUTH without a reply.
+          local {
+            auth = eap
+            id = "fqdn:@IT"
+            eap_id = raymond.bennett@sedanos.com
+          }
+          remote {
+            auth = psk
+          }
+
+          children {
+            sedanos {
+              remote_ts = 10.200.0.0/16,10.0.0.0/16
+              esp_proposals = aes256-sha256-ecp384,aes256-sha1-ecp384
+              rekey_time = 12h
+              dpd_action = clear
+              start_action = none
+              updown = /usr/local/libexec/sedanos-vpn-updown
+            }
+          }
+        }
+      }
+
+      secrets {
+        ike-sedanos {
+          id = "fqdn:@IT"
+          secret = "${secrets.sedanos.vpn_psk}"
+        }
+        eap-sedanos {
+          id = raymond.bennett@sedanos.com
+          secret = "${secrets.sedanos.vpn_password}"
+        }
+      }
+    target: /etc/swanctl/conf.d/sedanos.conf
+    sudo: true
+    mode: "0600"
+    depends:
+      - packages: [strongswan]
+      - files: [/usr/local/libexec/sedanos-vpn-updown]
+
 services:
+  # charon-systemd; loads /etc/swanctl at start. The tunnel itself is on demand.
+  - service: strongswan
+    depends:
+      - packages: [strongswan]
+      - files: [/etc/strongswan.d/sedanos.conf, /etc/swanctl/conf.d/sedanos.conf]
+
   # The speaker fix. It was enabled by hand, never by stay-go.
   - service: necessary-verbs
     depends:

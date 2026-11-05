@@ -1,0 +1,37 @@
+#!/bin/bash
+# Managed by stay-go. Bring the Sedanos IPsec tunnel up or down.
+#
+#   sedanos-vpn up       connect (reloads /etc/swanctl first)
+#   sedanos-vpn down     disconnect
+#   sedanos-vpn status   SA, interface, routes and DNS (default)
+#   sedanos-vpn log      follow charon's log, e.g. while a connect fails
+set -euo pipefail
+
+IFACE=xfrm-sedanos
+
+case "${1:-status}" in
+up)
+	sudo swanctl --load-all >/dev/null
+	sudo swanctl --initiate --child sedanos --timeout 30
+	;;
+down)
+	sudo swanctl --terminate --ike sedanos
+	;;
+status)
+	sudo swanctl --list-sas --ike sedanos
+	if ip link show "$IFACE" >/dev/null 2>&1; then
+		ip -br addr show "$IFACE"
+		ip route show dev "$IFACE"
+		resolvectl status "$IFACE"
+	else
+		echo "$IFACE: down"
+	fi
+	;;
+log)
+	journalctl -u strongswan -f
+	;;
+*)
+	echo "usage: sedanos-vpn up|down|status|log" >&2
+	exit 2
+	;;
+esac
