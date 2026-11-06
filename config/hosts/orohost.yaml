@@ -43,6 +43,7 @@ packages:
   - cachyos-zfs
   - zfs-utils
   - openssh
+  - mosh # mosh-server for cachygram's terminal sessions (see cachygram.yaml)
 
 files:
   - source: ${config_root}/files/config/solaar.yaml

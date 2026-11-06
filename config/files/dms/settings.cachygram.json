@@ -258,5 +258,10 @@
   "launcherStyle": "full",
   "niriOverviewLauncherStyle": "spotlight",
   "dankLauncherV2Size": "micro",
-  "appLauncherGridColumns": 4
+  "appLauncherGridColumns": 4,
+  "displayProfileAutoSelect": true,
+  "clipboardClickToPaste": true,
+  "clipboardEnterToPaste": true,
+  "clipboardSize": "micro",
+  "clipboardUseOverlayLayer": false
 }
