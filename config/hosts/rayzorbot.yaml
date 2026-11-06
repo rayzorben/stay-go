@@ -1,0 +1,81 @@
+# rayzorbot — Thunderobot Zero Air 15, cachygram's replacement.
+# Core Ultra 7 356H (Panther Lake, Xe3 iGPU on the xe driver), RTX 5060 Laptop
+# (Blackwell), 64G RAM, 2TB NVMe. Installed by `scripts/bootstrap.sh rayzorbot`.
+#
+# Everything generic lives in hosts/common/laptop.yaml, included below; this
+# file is only what this machine's hardware needs. None of cachygram's LG Gram
+# fixes apply here: the i915 flags (this iGPU is xe-only), the ALC298 speaker
+# verbs, the EC thermal envelope, the WMI keyboard backlight, the UCSI
+# blacklist and the AX211 autosuspend rule all target hardware this box lacks.
+#
+# Not yet known, check on first boot before adding anything for them:
+#   audio      cat /proc/asound/cards — Panther Lake SoundWire codecs have
+#              shipped with no ALSA card at all on other 356H laptops.
+#   bluetooth  lsusb — which chip, and whether bt-headset-watchdog's headset
+#              drops calls on it the way it did on cachygram's AX211.
+#   vendor EC  ls /sys/bus/wmi/devices — Thunderobot's fan modes, keyboard RGB
+#              and charge limit have no Linux driver (Leishen ControlCenter 3.x,
+#              built by Quanta); set them in Windows before the wipe, the EC
+#              keeps them.
+
+laptop: !include "./common/laptop.yaml"
+
+packages:
+  # ── NVIDIA RTX 5060 (Blackwell) ──
+  # Blackwell runs only on the open kernel modules; prebuilt for both kernels
+  # bootstrap.sh installs (it also puts them in the pacstrap transaction, so
+  # the first boot has the driver and nvidia-utils' nouveau blacklist).
+  # nvidia-utils sets nvidia_drm modeset=1 itself, so the cmdline needs nothing.
+  - linux-cachyos-nvidia-open
+  - linux-cachyos-lts-nvidia-open
+  - nvidia-utils
+  - lib32-nvidia-utils # Steam/Proton, beside lib32-vulkan-intel
+  - nvidia-prime # prime-run: render one app on the dGPU
+  # Not nvidia-powerd (Dynamic Boost): with it running, the dGPU of another
+  # RTX 5060 laptop never reached runtime D3, so it drained the battery idle.
+
+files:
+  # nvidia-open 615.78.08 hangs in nv_pci_shutdown at poweroff on RTX 5060
+  # laptops (GB206M): the journal ends, the machine stays on until the power
+  # button is held; reboot is fine. Unloading the modules first avoids it
+  # (NVIDIA/open-gpu-kernel-modules#1412 is the unmerged fix). ExecStop runs
+  # after the display manager has stopped, since this unit starts before it.
+  # Drop this once a driver release fixes the hang.
+  - content: |
+      # Managed by stay-go.
+      [Unit]
+      Description=Unload NVIDIA modules before poweroff (nv_pci_shutdown hang workaround)
+      Before=systemd-user-sessions.service display-manager.service
+      Before=plymouth-poweroff.service plymouth-reboot.service plymouth-halt.service plymouth-kexec.service
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/usr/bin/true
+      ExecStop=-/usr/bin/modprobe -r nvidia_drm nvidia_modeset nvidia_uvm nvidia
+      TimeoutStopSec=30
+
+      [Install]
+      WantedBy=multi-user.target
+    target: /etc/systemd/system/nvidia-unload.service
+    sudo: true
+
+services:
+  # Save and restore VRAM across suspend and hibernate (nvidia-utils ships the
+  # units; without them the desktop comes back from sleep with corrupt or
+  # missing surfaces).
+  - service: nvidia-suspend
+    depends:
+      - packages: [nvidia-utils]
+  - service: nvidia-resume
+    depends:
+      - packages: [nvidia-utils]
+  - service: nvidia-hibernate
+    depends:
+      - packages: [nvidia-utils]
+
+  - service: nvidia-unload
+    depends:
+      - files: [/etc/systemd/system/nvidia-unload.service]
+
+backups: !include "./rayzorbot/backups.yaml"

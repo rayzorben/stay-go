@@ -1,0 +1,720 @@
+# Shared user layer for rayben on the CachyOS laptops (cachygram, rayzorbot).
+# Included from users/rayben-<host>.yaml, which adds only per-machine glue:
+# ~/.config/niri/config.kdl (its include list) and the DMS settings link.
+#
+# The basis for this config is cachy-os with no desktop installed.
+# The default Niri install contains a different shell that is difficult to remove.
+
+variables:
+  home:
+    sedanos: /home/distrobox/sedanos
+    visionet: /home/distrobox/visionet
+    stoneridge: /home/distrobox/stoneridge
+    motion: /home/distrobox/${secrets.privileged.c4}
+
+secrets:
+  privileged:
+    c1: !encrypted 5Mc1+tOjH40ekJkE/aVO659O18nBeShohsZZ5WX+VLXTn8LszFpmgxF26msJmc7inc9r
+    c2: !encrypted 6NsavEkJk0W3vGS8NE8PMXNCbQSEtPZ2ONLp2R6j95QsBrPBpc6apzcVwh7aPdaiM1lTXA==
+    c3: !encrypted lomKP5luiYA2NkLvgInedS8TcKY+XYTo9G0I0sZXjMn97AjXTyDUiflh93EUoJ5acTdOlhhb
+    c4: !encrypted 5ZdMUY/om/KEfDzZD9SyihpLyKJwdttZ+9HnW7pHE7cg0D8qtdTZ0yRS/sLSC4LK5x4=
+  ssh:
+    id_ed25519: !encrypted x4Ymy7QRZy+muTonTD21H4vODMLPPGAZNg+IxlBU760tJD/Y03dmqKcFv2cInY7HpqgJcT4TqPm9u5wgGQFqJdH5Tk/1baJMaeVoVYl/c8sPeIlGLHt4k2V3ZiKOyOzFyJqNTxChLsd8F0wAxS9L3UMoyIRjPFfJG9kPeq23K/gN58j/jw6XDli3k3m0GgrCvDSDPo/9s9iPclOcQsr4/MSbOAWfjakkBIOwfiYXcQH4J5n/zLv5m9X9p0TZ9GLJaLtuKglRHNZj6tgOkQkpCZUIFBNdCZDWJt7OnqAE6c3DvoyjZud/ac/BDRT6VjliKxGNdC+yyoqc/OUwZqLS91/tt8SJvNEhPw3VIObX+BlatC9ztgaEqe/dpAYMLYts0Bqb0ec0X/JDgePSxHrWP+54F4fVd82Okcky/1qv/igrAgdve1gmw17iCol+WQJ7b3Ctmi9EsVC9mH/lg9U8narPCp0PdMp5zENq/3oWhOxcqy3j8gjZy6tw9k2kKfeUhh7Ieg8jEzVxqCkLPPCibxZqbOroCMMGrKzajdI8mgOIT9z1z8FFJeTHbUN0EgYNANYthVT1dZQIvwdSlfhOxMSqJ8oqrzIkuQmGEVzsTmhZdzjFGTpo2HDqNlukBI190b5Z5sKvAKiA79JEKzKD7/VfGkRdpWpxntVkiQ==
+    id_rsa: !encrypted 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
+    config: !encrypted 7hr9oCjNw7sQQxa2iXpdz7Iznh4/1v119F4TCaMsX29JPABlg3pyfi0gqbw3UX1gL9zw/s7E1AgJgRmpxVHYTvFA48qM2wTIzUzp1Txq9EnTTLHT/2fcNM7hEDcVBMKh7/mH1XWg9uvAlwmYVEMxpLblJkIribq3HC3qx0FD3egN0ARPm0047Dgts+aPCuI+uGdR8fQS90oQYClQmlTmV2yR1EtUTXzBXCh4ikOYGGfKnZE+VX3PzZOnyeJa0+fu9p1qWT6b4ohJARQ6kB1tuPBHj1CrqSno6a1WUz0f8TEe/luVhwtlpgmL/47tM/qdlmfSWv39QhqgWyNnYooIeSQaCMF5kTKWqfolT21E85E2WWfaXF1ySHJ+MX7+CH/shhrIMVMKFBd15S2fssH+JuW6ZaV8tvNe7zzpF/LlRkKovY+G2obZZ89z9RiwHuIzE1Y=
+  databricks:
+    client_secret: !encrypted CLmAj/yRvCT61C9Ze3lZu/cbnVrFmnMwE7e2KkNNVKIRxpRHXNfKJYrT1cFiMoxKG+jwfqyWnBUY57TFwn5M1ahHYEhv7q+k9s3KBtkX2iSKehtu
+    production_pat: !encrypted c4gdGfaIHqUuh857LIEpP/2PjNt4k1xI5CNtjRgbeqdCFSrkz8d48MqNdfWplmsZF5KiaClhxpbuNKcIMnRne1l3wPzVW0NdakYtUoBLSjpS7w==
+    test_client_secret: !encrypted 3Qlb79G+Nul/5iuBKNUFUu6XMAFRBUwERcBmFnq/AE7OhjY+R6t7lw+AQEhENW7mRDkyTWAYb0eJSS12a1s34Gl4LSgNdugtKZoc8XZPctQ=
+    prod_client_secret: !encrypted Ao2yEY+mcAJsJgZwNPthyr7op3mM0sA5M4vmOJo5FV4a/HZXJ0UuRr12/7q3purYMVZwZFiJMNHZ6r6+xyLBgEcfzs822D2nhQsW13O3oUk=
+  tailscale_key: !encrypted CFh3d0YEkLYvW/k184L8E7E2QaIuVoFHg2h3vFbHyaCt+lUDHyuRFGHzOGfXSEbyCg7ngd7epYNV4lgMAUTbn+odFY72MP/eXAOiBG2Jagfm5QD9OG2UNPVQAUz8rCthVrOGeYBuAHu8eg==
+
+packages:
+  - ttf-mona-sans
+  - tailscale
+  - zoxide
+  - fzf
+  - visual-studio-code-bin
+  - go
+  - entr # for monitoring file events for diff
+  - gron # same
+  - firefox
+  - gnome-calculator
+  - onlyoffice-bin
+  - libappindicator
+  - dropbox
+  - nautilus-dropbox
+  - distrobox
+  - discord
+  - zen-browser
+  - docker-compose
+  - freerdp
+  - remmina # its RDP plugin is the freerdp optdep above
+  - libsecret # remmina's secret plugin, so saved passwords go to the keyring
+  - aria2
+  - grim
+  - slurp
+  - wayfreeze
+  - satty
+  - psmisc # killall, used by screenshot.sh
+  # Pin the 32-bit GL/Vulkan providers before the gaming meta: left to pick,
+  # --noconfirm takes lib32-mesa-git, which conflicts with lib32-opencl-mesa.
+  - lib32-mesa
+  - lib32-vulkan-intel
+  - cachyos-gaming-meta
+  # Needs zlib-ng-compat, which conflicts with zlib; --noconfirm answers the
+  # removal prompt "no", so commands/zlib-ng-compat swaps it in first.
+  - package: cachyos-gaming-applications
+    depends:
+      - commands: [zlib-ng-compat]
+  - 7zip
+  - spotify-launcher
+  - claude-desktop
+  - claude-code # the `claude` CLI; Desktop's bundled copy isn't on PATH
+  - flatpak
+  - jq # verterm dropdown scripts
+  - attr # getfattr/setfattr, used by dropbox-exclude.sh
+  - python # dropbox-monitor
+  - libnotify # notify-send, used by dropbox-monitor alerts
+  - xwayland-satellite # niri starts it on demand for X11 apps
+  - noto-fonts-emoji
+  - noto-fonts-cjk
+  - cantarell-fonts
+  - ttf-opensans
+  - awesome-terminal-fonts
+  - btop
+  - pavucontrol # floated by a window rule in files/niri/rules.kdl
+
+services:
+  - service: gcr-ssh-agent.socket
+    user: true
+  - service: tailscaled.service
+  - service: dropbox.service # shipped by the dropbox package; nothing else starts it
+    user: true
+    depends:
+      - packages: [dropbox]
+      - files:
+          - ~/.config/systemd/user/dropbox.service
+          - ~/.config/systemd/user/dropbox.service.d/stay-go.conf
+          - ~/.config/systemd/user/app-dropbox@autostart.service
+  - service: dropbox-monitor.timer
+    user: true
+    depends:
+      - packages: [dropbox]
+      - files:
+          - ~/.config/systemd/user/dropbox-monitor.timer
+          - ~/.config/systemd/user/dropbox-monitor.service
+          - ~/.local/bin/dropbox-monitor
+  - service: bt-headset-watchdog.service
+    user: true
+    depends:
+      - files:
+          - ~/.config/systemd/user/bt-headset-watchdog.service
+          - ~/.local/bin/bt-headset-watchdog
+  # Nightly backup of Life's data to orohost.
+  - service: life-backup.timer
+    user: true
+    depends:
+      - files:
+          - ~/.config/systemd/user/life-backup.service
+          - ~/.config/systemd/user/life-backup.timer
+
+files:
+  # Own drop-in rather than editing the installer's sudoers.d file, which a
+  # reinstall may name differently or not create at all.
+  - content: |
+      # Managed by stay-go.
+      %wheel ALL=(ALL:ALL) NOPASSWD: ALL
+    target: /etc/sudoers.d/20-wheel-nopasswd
+    mode: "0440"
+    sudo: true
+
+  # SSH keys and config (written first; dotfiles clone depends on them)
+  - source: ${secrets.ssh.id_ed25519}
+    target: "~/.ssh/id_ed25519"
+    mode: "0600"
+
+  - source: ${secrets.ssh.id_rsa}
+    target: "~/.ssh/id_rsa"
+    mode: "0600"
+
+  - source: ${secrets.ssh.config}
+    target: "~/.ssh/config"
+
+  # ── Folder links into ~ ──────────────────────────────────────────────────
+  # ~/code and ~/work are the stable paths everything else refers to, so a
+  # Dropbox reorganisation only changes these two sources.
+  - source: ~/Dropbox/Ray/Code
+    target: ~/code
+    symlink: true
+
+  - source: ~/Dropbox/Ray/Work
+    target: ~/work
+    symlink: true
+
+  # Life runs as a user service straight from its repo.
+  - source: ~/code/life/systemd/life.service
+    target: ~/.config/systemd/user/life.service
+    symlink: true
+
+  - source: ~/code/life/systemd/life.service
+    target: ~/.config/systemd/user/graphical-session.target.wants/life.service
+    symlink: true
+
+  - source: ~/code/life/systemd/life-backup.service
+    target: ~/.config/systemd/user/life-backup.service
+    symlink: true
+
+  - source: ~/code/life/systemd/life-backup.timer
+    target: ~/.config/systemd/user/life-backup.timer
+    symlink: true
+
+  # mudengine loads the private konami-engine extension from its build output.
+  - source: ~/code/konami-engine/dist
+    target: ~/.config/mudengine/extensions/konami
+    symlink: true
+
+  # ── SSH passphrases, typed once ──────────────────────────────────────────
+  # gcr-ssh-agent (gcr-4's replacement for the ssh component gnome-keyring
+  # dropped, enabled as gcr-ssh-agent.socket above) is what answers on
+  # $SSH_AUTH_SOCK. On the first agent request it scans ~/.ssh for *.pub and
+  # runs ssh-add over each match with /usr/lib/gcr4-ssh-askpass: the passphrase
+  # is looked up in the Secret Service first, and only on a miss does it
+  # prompt — with an "Automatically unlock this key whenever I'm logged in"
+  # checkbox that writes the passphrase back into the default keyring under
+  # "ssh-store:<path>". Tick it once and the key loads silently from then on.
+  #
+  # The two entries below are what that mechanism was missing here.
+
+  # Public halves of the keys. The secrets above ship only the private halves,
+  # so ~/.ssh held no *.pub at all: gcr-ssh-agent preloaded nothing and
+  # `ssh-add -l` came back empty. Their absence also defeats the github.com
+  # block in ~/.ssh/config — under `IdentitiesOnly yes` ssh matches agent keys
+  # against the public half of each IdentityFile, and with no .pub on disk it
+  # has to decrypt the private key to derive it, which is a passphrase prompt
+  # on every connection even when the agent already holds the key. Public by
+  # definition: these are derived from the encrypted secrets above, nothing more.
+  - content: |
+      ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKBoMkTnztfde1TGffhY4EBd4fYlPCSU3Ltcy//4abR3 raymond.bennett@gmail.com
+    target: ~/.ssh/id_ed25519.pub
+    mode: "0644"
+
+  - content: |
+      ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCjKda239tzwtWEM3Z17r2U6+TCak6zXX8CmU7fLJy/17NGfTF9RvfvoJQcme2CXRG41niTj27tLn/cWRI+dbslTpKX4GTxKc1DhrNLjRXv1Q2QkfCLJx6ny0TlzFf/Ti8xruErHx6ldHVNMQd9qqK4SG6KdUFmp9lntefJ+2EqNNi0Vjyj4QfM6mxu/uQSDsYReHyI6b62b+teckVKv+SCke0Ncm9HdQXbLmry+4Yz6RPcLFCjd3673p5pL0H2FNhx/xDRFmK61+c3hwmD9p4+iItKl+x4NhY0/qDYGIivRCpODicyV910kADVa+WlAs1EINUKr5ivjJx2OMC9lbiz raymond.bennett@gmail.com
+    target: ~/.ssh/id_rsa.pub
+    mode: "0644"
+
+  # Point the default keyring at Login. gcr-ssh-agent stores through libsecret
+  # with a NULL collection, i.e. into whatever this alias file names. This box
+  # carries two password-protected keyrings — "Login" (login.keyring) and a
+  # separately created "Default keyring" — and the alias named the latter, so a
+  # remembered passphrase would land in a keyring nothing opens automatically.
+  # Only Login is free: /etc/pam.d/sddm runs pam_gnome_keyring with auto_start,
+  # handing the daemon the password typed at the greeter and unlocking
+  # login.keyring with it. Anything in the other keyring costs one unlock prompt
+  # per session, which is exactly the prompt this change exists to remove.
+  #
+  # Only new secrets follow the alias; items already in "Default keyring" stay
+  # put and keep resolving while it is unlocked. Written with |- so the file is
+  # the bare keyring identifier with no trailing newline, byte-for-byte what
+  # gnome-keyring writes here itself.
+  - content: |-
+      login
+    target: ~/.local/share/keyrings/default
+
+  # Niri compositor config
+  - source: ${config_root}/files/niri/screenshot.sh
+    target: ~/.config/niri/screenshot.sh
+    symlink: true
+    mode: "+x"
+
+  - source: ${config_root}/files/niri/rules.kdl
+    target: ~/.config/niri/rules.kdl
+    symlink: true
+
+  - source: ${config_root}/files/niri/spawn.kdl
+    target: ~/.config/niri/spawn.kdl
+    symlink: true
+
+  - source: ${config_root}/files/niri/binds.kdl
+    target: ~/.config/niri/binds.kdl
+    symlink: true
+
+  - content: |
+      
+      # stay
+      copy-on-select = true
+    target: ~/.config/ghostty/config
+    add: true
+    depends:
+      - commands: [install dms] # its installer replaces both files
+
+  # ── Hide niri's "Scratch" workspace from the DMS bar ──
+  # Scratch is the parking slot for the hidden dropdown terminal (see
+  # files/niri/rules.kdl). DMS has no setting to hide a workspace and, since
+  # dms-shell 2.0, no UI file on disk to patch: the wrapper extracts the UI
+  # embedded in /usr/bin/dms, patches one line, caches it per dms build and runs
+  # `dms run -c <copy>` (details in the script). The drop-in makes dms.service
+  # start DMS through it. Copied, not symlinked: the bar starts at login and
+  # must not depend on the repo being readable then.
+  - source: ${config_root}/files/dms/dms-hide-scratch
+    target: ~/.local/bin/dms-hide-scratch
+    mode: "0755"
+
+  - content: |
+      [Service]
+      ExecStart=
+      ExecStart=%h/.local/bin/dms-hide-scratch run --session
+    target: ~/.config/systemd/user/dms.service.d/hide-scratch.conf
+    depends:
+      - files: [~/.local/bin/dms-hide-scratch]
+
+  # ── Keep the compositor and shell out of swap ──
+  # Nov 4 2026: typing lag. With ~24 of 30 GiB taken by browsers and Electron,
+  # swappiness 150 had pushed 41 MiB of niri, 21 MiB of Xwayland and 107 MiB of
+  # quickshell into zram. Every keystroke runs through niri's main loop, and a
+  # swap-in fault there blocks input for everyone: libinput logged "event
+  # processing lagging behind by 228ms" on the keyd keyboard. swap.max=0 is a
+  # hard per-cgroup limit, so it holds even though the parent slices carry no
+  # memory protection (MemoryLow= would not). Apps run in their own scopes,
+  # not in niri.service, so only niri, Xwayland and xwayland-satellite are pinned.
+  - content: |
+      # Managed by stay-go.
+      [Service]
+      MemorySwapMax=0
+    target: ~/.config/systemd/user/niri.service.d/no-swap.conf
+
+  - content: |
+      # Managed by stay-go.
+      [Service]
+      MemorySwapMax=0
+    target: ~/.config/systemd/user/dms.service.d/no-swap.conf
+
+  # Application config files
+  - source: ${config_root}/files/config/electron-flags.conf
+    target: ~/.config/electron-flags.conf
+    symlink: true
+
+  - content: |
+      [prod-man]
+      host = https://adb-7405608649113470.10.azuredatabricks.net
+      auth_type = azure-client-secret
+      azure_tenant_id = 10895ab2-90e3-4778-a157-855870900fb7
+      azure_client_id = ca971a3e-1cc2-41b4-a76c-db4bf4c9494d
+      azure_client_secret = ${secrets.databricks.client_secret}
+
+      [test-man]
+      host = https://adb-7405619906526803.3.azuredatabricks.net
+      auth_type = azure-client-secret
+      azure_tenant_id = 10895ab2-90e3-4778-a157-855870900fb7
+      azure_client_id = ca971a3e-1cc2-41b4-a76c-db4bf4c9494d
+      azure_client_secret = ${secrets.databricks.client_secret}
+      
+      [test]
+      host = https://adb-1871084061330888.8.azuredatabricks.net
+      client_id = a667e418-f433-4dfa-a2f3-33132684eb93
+      client_secret = ${secrets.databricks.test_client_secret}
+    target: ~/.databrickscfg
+    mode: "0600"
+
+  # The sedanos box's own Databricks config: the profiles above plus [prod]
+  # (service principal) and the two U2M browser-login profiles. U2M tokens are
+  # not in this file -- auth_storage = secure keeps them in the GNOME keyring.
+  - content: |
+      ; The profile defined in the DEFAULT section is to be used as a fallback when no profile is explicitly specified.
+      [DEFAULT]
+
+      [prod-man]
+      host                = https://adb-7405608649113470.10.azuredatabricks.net
+      auth_type           = azure-client-secret
+      azure_tenant_id     = 10895ab2-90e3-4778-a157-855870900fb7
+      azure_client_id     = ca971a3e-1cc2-41b4-a76c-db4bf4c9494d
+      azure_client_secret = ${secrets.databricks.client_secret}
+
+      [test-man]
+      host                = https://adb-7405619906526803.3.azuredatabricks.net/
+      auth_type           = azure-client-secret
+      azure_tenant_id     = 10895ab2-90e3-4778-a157-855870900fb7
+      azure_client_id     = ca971a3e-1cc2-41b4-a76c-db4bf4c9494d
+      azure_client_secret = ${secrets.databricks.client_secret}
+
+      [test]
+      host          = https://adb-1871084061330888.8.azuredatabricks.net
+      auth_type     = oauth-m2m
+      client_id     = a667e418-f433-4dfa-a2f3-33132684eb93
+      client_secret = ${secrets.databricks.test_client_secret}
+
+      [prod]
+      host          = https://adb-3748765281244117.17.azuredatabricks.net
+      client_id     = 69294183-8bc8-46a7-9d22-2cf9335bf0e2
+      client_secret = ${secrets.databricks.prod_client_secret}
+      auth_type     = oauth-m2m
+
+      [prod-u2m]
+      host         = https://adb-3748765281244117.17.azuredatabricks.net
+      account_id   = 6113a58e-f9c6-4565-8ef8-3751321f8b13
+      workspace_id = 3748765281244117
+      auth_type    = databricks-cli
+
+      [__settings__]
+      auth_storage = secure
+
+      [dev-u2m]
+      host         = https://adb-7405606637327328.8.azuredatabricks.net
+      account_id   = 6113a58e-f9c6-4565-8ef8-3751321f8b13
+      workspace_id = 7405606637327328
+      auth_type    = databricks-cli
+    target: ${home.sedanos}/.databrickscfg
+    mode: "0600"
+    depends:
+      - distrobox: [sedanos] # creates and chowns the box home under /home/distrobox
+
+  # Fish shell functions
+  - content: |
+      function watchdiff
+        set file $argv[1]
+        set backup ".$file.bak"
+
+        # Create the initial backup if it doesn't exist
+        cp $file $backup
+
+        echo "Watching $file... (Ctrl+C to stop)"
+
+        # We use -p to postpone the first run until a change actually occurs
+        echo $file | entr -s "diff -u $backup $file; cp $file $backup"
+      end
+    target: ~/.config/fish/functions/watchdiff.fish
+    mode: "+x"
+    depends:
+      - packages: [entr]
+
+  - content: |
+      function watchjson
+        set file $argv[1]
+        set old_flat "/tmp/$file.old.txt"
+        set new_flat "/tmp/$file.new.txt"
+
+        # Initial state
+        gron $file > $old_flat
+
+        echo "Watching JSON paths in $file... (Ctrl+C to stop)"
+
+        # Watch the file, flatten it, diff it, then update the "old" snapshot
+        echo $file | entr -s "gron $file > $new_flat; diff -u $old_flat $new_flat | grep '^[-+][^---]'; mv $new_flat $old_flat"
+      end
+    target: ~/.config/fish/functions/watchjson.fish
+    mode: "+x"
+    depends:
+      - packages: [gron]
+
+  # ── Dropbox: one launcher, running the self-updated client ──
+  # Oct 30 2026: 500 restarts, one every 6s, status stuck on "Connecting". The
+  # packaged /usr/bin/dropbox (274.x) hands off to the newer client Dropbox
+  # auto-updated into ~/.dropbox-dist (278.x), which SIGKILLs the launcher;
+  # Restart=on-failure starts another launcher, whose fresh child kills the one
+  # left over by KillMode=process, and so on. Run ~/.dropbox-dist directly when
+  # it exists (no handoff); a fresh machine falls back to the package until the
+  # first auto-update lands there.
+  - content: |
+      # Managed by stay-go.
+      [Service]
+      ExecStart=
+      ExecStart=/bin/sh -c 'test -x %h/.dropbox-dist/dropboxd && exec %h/.dropbox-dist/dropboxd; exec /usr/bin/dropbox'
+    target: ~/.config/systemd/user/dropbox.service.d/stay-go.conf
+
+  # Nov 2 2026: the packaged unit is WantedBy=default.target, so Dropbox started
+  # a second before niri and DMS, found no tray to register with, and stayed
+  # iconless all session (it never retries) — it looked like it hadn't started.
+  # Shadow the package unit to tie it to the graphical session like dms.service;
+  # the ExecStart drop-in above still applies to this unit.
+  - content: |
+      # Managed by stay-go.
+      [Unit]
+      Description=Dropbox
+      PartOf=graphical-session.target
+      After=graphical-session.target
+
+      [Service]
+      Type=simple
+      ExecStart=/usr/bin/dropbox
+      ExecReload=/bin/kill -HUP $MAINPID
+      KillMode=process
+      Restart=on-failure
+
+      [Install]
+      WantedBy=graphical-session.target
+    target: ~/.config/systemd/user/dropbox.service
+
+  # Dropbox rewrites ~/.config/autostart/dropbox.desktop on every start, so the
+  # XDG autostart generator launches a second copy beside dropbox.service (it
+  # started the loop above at login). Mask the generated unit — editing the
+  # .desktop file would be undone.
+  - source: /dev/null
+    target: ~/.config/systemd/user/app-dropbox@autostart.service
+    symlink: true
+
+  # ── Dropbox sync monitor ──
+  # Oct 2026: the daemon sat frozen for 8 days (alive, 2m40s CPU in 9 days) and
+  # nothing noticed. Every 5 min the monitor checks the process, that its
+  # command socket answers, that its status isn't an error / stuck, and that an
+  # hourly canary file in ~/Dropbox/.dropbox-monitor/ actually syncs (rules in
+  # the script). A failure lasting 10 min sends a critical notification (at most
+  # every 30 min until fixed) and leaves an alert for SSH logins.
+  # Copied, not symlinked: the monitor must not live in the thing it watches.
+  - source: ${config_root}/files/dropbox-monitor.py
+    target: ~/.local/bin/dropbox-monitor
+    mode: "0755"
+    depends:
+      - packages: [python, libnotify]
+
+  - content: |
+      [Unit]
+      Description=Check that Dropbox is running and syncing
+
+      [Service]
+      Type=oneshot
+      ExecStart=%h/.local/bin/dropbox-monitor
+      TimeoutStartSec=2min
+    target: ~/.config/systemd/user/dropbox-monitor.service
+
+  - content: |
+      [Unit]
+      Description=Check Dropbox sync every 5 minutes
+
+      [Timer]
+      OnStartupSec=5min
+      OnUnitActiveSec=5min
+
+      [Install]
+      WantedBy=timers.target
+    target: ~/.config/systemd/user/dropbox-monitor.timer
+
+  # On SSH login, live-check Dropbox and print a banner if it isn't syncing.
+  # Live rather than just reading the timer's alert: with no graphical session
+  # neither Dropbox nor the timer may be running at all.
+  - content: |
+      if status is-interactive; and set -q SSH_CONNECTION; and test -x ~/.local/bin/dropbox-monitor
+          ~/.local/bin/dropbox-monitor --motd
+      end
+    target: ~/.config/fish/conf.d/dropbox-monitor.fish
+
+  # ── Poly V4320 headset watchdog ──
+  # The headset's call audio died on cachygram's Intel AX211 Bluetooth and used
+  # to need a power cycle. The watchdog reconnects it (or resets a crashed chip)
+  # when PipeWire reports the link failed. Script header has the details;
+  # hosts/cachygram.yaml also keeps that chip out of USB autosuspend.
+  - source: ${config_root}/files/bt-headset-watchdog.sh
+    target: ~/.local/bin/bt-headset-watchdog
+    mode: "0755"
+    depends:
+      - packages: [jq, libnotify]
+
+  - content: |
+      [Unit]
+      Description=Reconnect the Bluetooth headset when its audio link fails
+      After=pipewire.service wireplumber.service
+
+      [Service]
+      ExecStart=%h/.local/bin/bt-headset-watchdog 38:5C:76:C3:D5:20
+      Restart=always
+      RestartSec=10
+
+      [Install]
+      WantedBy=default.target
+    target: ~/.config/systemd/user/bt-headset-watchdog.service
+
+ghostty: !include "../commands/ghostty.yaml"
+verterm: !include "../commands/verterm.yaml"
+
+commands:
+  # The services resource only enables once, so a machine enabled under the
+  # package unit keeps its default.target.wants link; move it to
+  # graphical-session.target to match the stay-go unit.
+  - name: dropbox-graphical-session
+    command: systemctl --user daemon-reload && systemctl --user reenable dropbox.service
+    check: |
+      ! test -e ~/.config/systemd/user/default.target.wants/dropbox.service \
+        || { echo "dropbox.service still starts with default.target"; exit 1; }
+    depends:
+      - packages: [dropbox]
+
+  # --ask=4 answers yes to pacman's "Remove zlib?" conflict question, which
+  # --noconfirm alone answers no.
+  - name: zlib-ng-compat
+    command: pacman -Qq zlib-ng-compat >/dev/null 2>&1 || pacman -S --noconfirm --ask=4 zlib-ng-compat
+    check: pacman -Qq zlib-ng-compat >/dev/null 2>&1
+    sudo: true
+
+  - name: git config
+    command: |
+      git config --global user.name "Raymond Bennett"
+      git config --global user.email "raymond.bennett@gmail.com"
+    depends:
+      - packages: [git]
+    rollback: |
+      git config --global --unset user.name
+      git config --global --unset user.email
+
+  - name: tailscale
+    command: |
+      tailscale up --authkey=${secrets.tailscale_key} --operator=$USER
+      tailscale configure systray --enable-startup=systemd
+      tailscale set --operator=$USER
+    sudo: true
+    depends:
+      - services: [tailscaled.service]
+      - packages: [tailscale]
+
+  # ── Keep regenerable folders out of Dropbox sync ──
+  # Marks node_modules, __pycache__, venvs, .claude/worktrees, git-ignored
+  # build output and the like with user.com.dropbox.ignored so new projects
+  # never churn (rules in the script). `check` re-scans on every stay-go run,
+  # so the command re-runs only when a new folder needs excluding.
+  # Opt a folder out with an empty .dropbox-keep file inside it.
+  - name: dropbox-exclude-regenerable
+    command: bash ${config_root}/scripts/dropbox-exclude.sh
+    check: bash ${config_root}/scripts/dropbox-exclude.sh --check
+    depends:
+      - packages: [dropbox, attr]
+
+  # Firefox user.js. A command rather than a files: entry because the profile
+  # directory has to be read from profiles.ini when it runs, not when the
+  # config loads (before Firefox has created a profile on a fresh machine).
+  # The check re-runs it when the profile's copy drifts from the repo's.
+  - name: firefox user.js
+    command: bash ${config_root}/scripts/firefox-user-js.sh
+    check: bash ${config_root}/scripts/firefox-user-js.sh --check
+    depends:
+      - packages: [firefox]
+
+  # Restart DMS onto the Scratch-hiding UI (files above). The check passes
+  # when the running quickshell was started from the patched copy — or when
+  # DMS isn't running at all (no graphical session, e.g. over SSH). If the
+  # wrapper fell back to the stock UI after a dms-shell upgrade reworked the
+  # patched line, this re-plans on purpose: see `journalctl --user -u dms`.
+  # No files: guard on the wrapper and drop-in — that is a plan-time condition
+  # and would skip the first run; files are written before commands run anyway.
+  - name: dms-restart-hide-scratch
+    command: systemctl --user daemon-reload && systemctl --user restart dms
+    check: '! systemctl --user is-active --quiet dms || pgrep -ax qs | grep -qF /stay-go/dms-ui/ || { echo "DMS is not running the Scratch-hiding UI"; exit 1; }'
+    depends:
+      - commands: [install dms]
+
+  # Apply the no-swap drop-ins to the running session without restarting niri
+  # (which would end the session). --runtime sets the same limit until logout;
+  # from the next login the drop-ins alone carry it. Pages already in zram come
+  # back on their next touch and are never swapped out again.
+  - name: compositor-no-swap
+    command: |
+      systemctl --user daemon-reload
+      for u in niri dms; do
+        ! systemctl --user is-active --quiet $u.service \
+          || systemctl --user set-property --runtime $u.service MemorySwapMax=0
+      done
+    check: |
+      for u in niri dms; do
+        cg=$(systemctl --user show -p ControlGroup --value $u.service)
+        [ -z "$cg" ] || grep -qx 0 /sys/fs/cgroup$cg/memory.swap.max \
+          || { echo "$u.service can still be swapped out"; exit 1; }
+      done
+
+scripts:
+  - script: ${config_root}/scripts/configure-zoxide.sh
+    depends:
+      - packages: [zoxide, fzf]
+
+flatpak:
+  remotes:
+    - name: flathub
+      url: https://dl.flathub.org/repo/flathub.flatpakrepo
+
+distrobox:
+  - name: sedanos
+    image: docker.io/cachyos/cachyos-v3:latest
+    home: ${home.sedanos}
+    home_sudo: true
+    extends: ${config_root}/users/distrobox-base.yaml
+    depends: # docker must be running and rayben in its group (extends doesn't merge depends)
+      - services: [docker]
+      - users: [rayben]
+    exports:
+      - code
+      - cursor
+      - StorageExplorer
+      - claude
+    packages:
+      - visual-studio-code-bin
+      - cursor-bin
+      - azure-cli
+      - storageexplorer
+      - jdk-openjdk
+      - azure-cli
+      - pulumi
+      - nodejs
+      - npm
+      - opentofu
+      - claude-desktop
+      - claude-code
+      - databricks-cli-bin
+      - graphify-bin
+      - ninjarmm-ncplayer
+      - ruff
+      - jq
+      - zoxide
+    commands:
+      # The CLI used to come from Databricks' curl installer, which drops a
+      # binary in /usr/local/bin; that sits ahead of /usr/bin on PATH and would
+      # shadow databricks-cli-bin. No-op once it is gone.
+      - name: retire curl databricks cli
+        command: rm -f /usr/local/bin/databricks
+        sudo: true
+        depends:
+          - packages: [databricks-cli-bin]
+      # A one-off native install left ~/.local/bin/claude pointing at a
+      # versions/ dir that no longer exists; it shadows claude-code's
+      # /usr/bin/claude. Only removes the link while it is dangling.
+      - name: retire native claude link
+        command: |
+          l=${home.sedanos}/.local/bin/claude
+          if [ -L "$l" ] && [ ! -e "$l" ]; then rm -f "$l"; fi
+        depends:
+          - packages: [claude-code]
+      - name: Install uv
+        command: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+      - name: azure cli extensions
+        command: |
+          for ext in azure-devops containerapp databricks datafactory scheduled-query; do
+            az extension add --upgrade --name $ext
+          done
+        depends:
+          - packages: [azure-cli]
+      - name: link dev folder
+        command: |
+          ln -sfn /home/${env:USER}/work/sedanos/development ${home.sedanos}/development
+        depends:
+          - folders: ["/home/${env:USER}/work/sedanos/development"]
+      - name: fish config
+        command: |
+          # --noninteractive: otherwise the installer ends with `exec fish < /dev/tty`,
+          # which drops the run into an interactive shell until you exit it
+          curl -fsSL https://raw.githubusercontent.com/oh-my-fish/oh-my-fish/master/bin/install -o /tmp/omf-install
+          fish /tmp/omf-install --noninteractive --yes
+
+  - name: motion
+    image: docker.io/cachyos/cachyos-v3:latest
+    home: ${home.motion}
+    home_sudo: true
+    extends: ${config_root}/users/distrobox-base.yaml
+    depends: # docker must be running and rayben in its group (extends doesn't merge depends)
+      - services: [docker]
+      - users: [rayben]
+
+  - name: stoneridge
+    image: docker.io/cachyos/cachyos-v3:latest
+    home: ${home.stoneridge}
+    home_sudo: true
+    extends: ${config_root}/users/distrobox-base.yaml
+    depends: # docker must be running and rayben in its group (extends doesn't merge depends)
+      - services: [docker]
+      - users: [rayben]

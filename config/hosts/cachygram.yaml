@@ -1,63 +1,16 @@
-secrets:
-  sedanos:
-    vpn_psk: !encrypted yNACsgCIhMJkTVBDXmnNvN7xecahIUDjNmobcnqR3MNHX66KkFK0lhDS6OM0wc2hTyFqAOBnu1R83h+P5qMiAo+xMnCgxA==
-    vpn_password: !encrypted M71syGyf0rJz4jzLxqARl4ltVmUGpbeE+n+vDZ92PGxr9p2FjTR0SfIKClh/IYtKnkBSiPAVdCWu
+# cachygram — LG Gram 16T90SP (Meteor Lake, i915), being replaced by rayzorbot.
+#
+# Everything generic lives in hosts/common/laptop.yaml, included below; this
+# file is only the LG Gram's own hardware fixes and the cleanup commands
+# from this machine's history.
+
+laptop: !include "./common/laptop.yaml"
 
 packages:
-  - solaar
   - alsa-tools # for hda-verb
-  - gparted
-  - wtype
-  - power-profiles-daemon # supplies the balanced EPP baseline lg-gram-thermals pins
-  - package: keyd
-    services: [keyd]
   # LG Gram keyboard backlight (see the files block further down).
   - acpi_call-dkms
   - linux-cachyos-headers # acpi_call-dkms builds against the running kernel
-  - python-evdev # solaar and lutris need it (it once served a keyboard daemon)
-
-  # ── Hardware stack the CachyOS installer used to provide ──
-  # bootstrap.sh installs a bare system; these came with the original desktop
-  # install and nothing else pulls them in.
-
-  # Audio: the Meteor Lake codec loads its DSP topology from sof-firmware, so
-  # without it there is no sound card at all (necessary-verbs only patches the
-  # speaker amp on top). PipeWire is the server; these are its ALSA/Pulse shims.
-  - sof-firmware
-  - alsa-firmware
-  - alsa-utils
-  - pipewire-pulse
-  - pipewire-alsa
-  - wireplumber
-  - gst-plugin-pipewire
-
-  # Bluetooth: bt-headset-watchdog and the autosuspend rule below assume it.
-  - package: bluez
-    services: [bluetooth]
-  - bluez-utils
-  - bluez-obex
-  - bluez-hid2hci
-
-  # Intel Arc (Meteor Lake) GPU: Vulkan, VA-API/VPL video decode, OpenCL.
-  - vulkan-intel
-  - intel-media-driver
-  - vpl-gpu-rt
-  - mesa-utils
-  - opencl-mesa
-  - lib32-opencl-mesa
-
-  # OOM killer ahead of the kernel's, so a runaway process dies before the
-  # desktop freezes on swap.
-  - package: earlyoom
-    services: [earlyoom]
-
-  # mDNS (.local names). avahi-daemon was enabled by the installer.
-  # /etc/nsswitch.conf has no mdns entry, so glibc lookups do not use it yet.
-  - package: nss-mdns
-    services: [avahi-daemon]
-
-  # Sedanos IPsec VPN (see the files block further down).
-  - strongswan
 
 files:
   - source: ${config_root}/files/necessary-verbs.sh
@@ -89,60 +42,6 @@ files:
       - files: [/usr/local/sbin/necessary-verbs.sh]
       - packages: ['alsa-tools']
       
-  - source: ${config_root}/files/config/solaar.yaml
-    target: ~/.config/solaar/config.yaml
-    symlink: true
-    depends:
-      - packages: [solaar]
-
-  - content: |
-      [ids]
-      *
-
-      [main]
-      shift = oneshot(shift)
-      leftmeta = overload(meta, M-d)
-            
-    target: /etc/keyd/default.conf
-    sudo: true
-    depends:
-      - packages: [keyd]
-
-  # ── Display / latency tuning (see commands: limine-i915-psr for the kernel flag) ──
-
-  # Kill multi-page readahead stalls on zRAM swap lookups and normalise VFS
-  # cache pressure so reclaim drops dentries/inodes before thrashing anon pages.
-  - content: |
-      # Managed by stay-go.
-      # Keep swappiness high for zram (CachyOS default is fine),
-      # but adjust page-cluster to minimize multi-page read-ahead stalls on swap
-      vm.page-cluster = 0
-
-      # Encourage reclaiming cached dentries/inodes instead of thrashing anonymous pages
-      vm.vfs_cache_pressure = 100
-
-      # No watermark boosting. CachyOS ships 15000, which makes kswapd reclaim
-      # (swap out) on every fragmentation event even with gigabytes free; with
-      # zram full that spills to the dm-crypt swapfile and stalls the UI on I/O.
-      vm.watermark_boost_factor = 0
-
-      # Wake kswapd ~390 MB before free memory runs out (default 10 = ~30 MB),
-      # so allocating tasks — niri included — stop doing direct reclaim, which
-      # compresses pages into zram synchronously in the middle of a frame.
-      vm.watermark_scale_factor = 125
-    target: /etc/sysctl.d/99-zram-tuning.conf
-    sudo: true
-
-  # THP `always` (CachyOS default) shreds the free lists into sub-2M pieces on a
-  # long-uptime desktop full of Electron/browser processes: 540k+ THP fault
-  # fallbacks and constant compaction stalls. madvise keeps huge pages for the
-  # apps that ask for them. sysfs is not a sysctl, so tmpfiles writes it at boot.
-  - content: |
-      # Managed by stay-go.
-      w /sys/kernel/mm/transparent_hugepage/enabled - - - - madvise
-    target: /etc/tmpfiles.d/thp-madvise.conf
-    sudo: true
-
   # The ACPI UCSI typec modules flap with -110 timeouts on this board and wedge
   # the Embedded Controller; blacklisting both stops the stall.
   - content: |
@@ -151,24 +50,6 @@ files:
       blacklist typec_ucsi
     target: /etc/modprobe.d/blacklist-ucsi.conf
     sudo: true
-
-  # Electron/Chromium apps go native Wayland instead of XWayland, whose damage
-  # rect mismatches drive the atomic update drops.
-  - content: |
-      # Managed by stay-go.
-      ELECTRON_OZONE_PLATFORM_HINT=auto
-    target: /etc/environment.d/95-electron-wayland.conf
-    sudo: true
-
-  # Mesa's rusticl is the OpenCL driver for Intel here; it stays off unless a
-  # driver is named.
-  - content: |
-      # Managed by stay-go.
-      RUSTICL_ENABLE=iris
-    target: /etc/environment.d/30-opencl.conf
-    sudo: true
-    depends:
-      - packages: [opencl-mesa]
 
   # ── LG Gram (16T90SP) thermal envelope ──
   # The chassis sheds roughly 18 W over one heatpipe and a single blower.
@@ -309,156 +190,7 @@ files:
     sudo: true
     mode: "+x"
 
-  # ── Sedanos VPN: FortiGate IPsec dial-up, split tunnel ──
-  # Ported from the FortiClient export (Sedanos-QTS): IKEv2, local ID "IT",
-  # EAP for the user ("XAuth" in FortiClient's IKEv2 terms), PSK for the gateway.
-  # Route-based so only the Sedanos subnets in updown.sh use the tunnel;
-  # internet traffic stays on the normal default route. Always on: the
-  # watchdog service connects at boot and reconnects whenever the tunnel stops
-  # carrying traffic; `sedanos-vpn down` pauses it until `up` or the next boot.
-  #
-  # The FortiGate stops sending ESP to this client whenever this side deletes
-  # an old SA after its replacement is up: a CHILD_SA rekey, an IKE rekey and a
-  # make-before-break reauthentication all left IKE (and DPD) healthy with no
-  # inbound traffic. A fresh negotiation always works, so this side never
-  # rekeys: it reauthenticates break-before-make every ~10-11h, before the
-  # gateway's 12h CHILD_SA lifetime, and the watchdog covers anything else.
-  - content: |
-      # Managed by stay-go.
-      charon {
-        # Reauthenticate by tearing down first; see cachygram.yaml.
-        make_before_break = no
-        # updown.sh adds the virtual IP and the routes on xfrm-sedanos.
-        install_routes = no
-        install_virtual_ip = no
-        plugins {
-          # resolve is the only plugin that asks the gateway for DNS servers
-          # (updown's dns_handler accepts them but never requests them). It
-          # unlinks and rewrites its file, which would replace resolved's
-          # /etc/resolv.conf stub symlink, so it writes a private file that
-          # updown.sh reads and hands to resolvectl for xfrm-sedanos instead.
-          # No resolvconf binary is installed, so it always uses the file.
-          resolve {
-            file = /run/sedanos-vpn.dns
-          }
-        }
-      }
-    target: /etc/strongswan.d/sedanos.conf
-    sudo: true
-    depends:
-      - packages: [strongswan]
-
-  - source: ${config_root}/files/sedanos-vpn/updown.sh
-    target: /usr/local/libexec/sedanos-vpn-updown
-    sudo: true
-    mode: "+x"
-
-  - source: ${config_root}/files/sedanos-vpn/sedanos-vpn
-    target: /usr/local/bin/sedanos-vpn
-    sudo: true
-    mode: "+x"
-
-  - content: |
-      # Managed by stay-go.
-      connections {
-        sedanos {
-          version = 2
-          remote_addrs = 12.43.107.130
-          vips = 0.0.0.0
-          proposals = aes256-sha256-ecp384-ecp256,aes256-md5-ecp384-ecp256
-          # Never rekey; reauthenticate instead (see the comment above).
-          rekey_time = 0
-          reauth_time = 11h
-          keyingtries = 0
-          dpd_delay = 5s
-          if_id_in = 0x5ed
-          if_id_out = 0x5ed
-
-          # FortiGate IKEv2 + EAP: the client proves itself by EAP alone (the
-          # gateway offers MSCHAPv2), the gateway signs with the PSK. The
-          # FortiClient local ID is the literal string "@IT", "@" included;
-          # a bare `@IT` here is strongSwan syntax for FQDN "IT", which matches
-          # no dial-up tunnel, and the FortiGate drops IKE_AUTH without a reply.
-          local {
-            auth = eap
-            id = "fqdn:@IT"
-            eap_id = raymond.bennett@sedanos.com
-          }
-          remote {
-            auth = psk
-          }
-
-          children {
-            sedanos {
-              remote_ts = 10.200.0.0/16,10.0.0.0/16
-              esp_proposals = aes256-sha256-ecp384,aes256-sha1-ecp384
-              # Replaced by each reauthentication before it ever expires.
-              rekey_time = 0
-              life_time = 12h
-              dpd_action = restart
-              close_action = start
-              # The watchdog service makes the first connection.
-              start_action = none
-              updown = /usr/local/libexec/sedanos-vpn-updown
-            }
-          }
-        }
-      }
-
-      secrets {
-        ike-sedanos {
-          id = "fqdn:@IT"
-          secret = "${secrets.sedanos.vpn_psk}"
-        }
-        eap-sedanos {
-          id = raymond.bennett@sedanos.com
-          secret = "${secrets.sedanos.vpn_password}"
-        }
-      }
-    target: /etc/swanctl/conf.d/sedanos.conf
-    sudo: true
-    mode: "0600"
-    depends:
-      - packages: [strongswan]
-      - files: [/usr/local/libexec/sedanos-vpn-updown]
-
-  - source: ${config_root}/files/sedanos-vpn/watchdog.sh
-    target: /usr/local/libexec/sedanos-vpn-watchdog
-    sudo: true
-    mode: "+x"
-
-  - content: |
-      [Unit]
-      Description=Keep the Sedanos IPsec tunnel up
-      Requires=strongswan.service
-      After=strongswan.service network-online.target
-      Wants=network-online.target
-
-      [Service]
-      ExecStart=/usr/local/libexec/sedanos-vpn-watchdog
-      Restart=always
-      RestartSec=10
-
-      [Install]
-      WantedBy=multi-user.target
-    target: /etc/systemd/system/sedanos-vpn-watchdog.service
-    sudo: true
-    depends:
-      - files: [/usr/local/libexec/sedanos-vpn-watchdog]
-
 services:
-  # charon-systemd; loads /etc/swanctl at start.
-  - service: strongswan
-    depends:
-      - packages: [strongswan]
-      - files: [/etc/strongswan.d/sedanos.conf, /etc/swanctl/conf.d/sedanos.conf]
-
-  # Connects the Sedanos tunnel and keeps it carrying traffic.
-  - service: sedanos-vpn-watchdog
-    depends:
-      - services: [strongswan]
-      - files: [/etc/systemd/system/sedanos-vpn-watchdog.service]
-
   # The speaker fix. It was enabled by hand, never by stay-go.
   - service: necessary-verbs
     depends:
@@ -514,7 +246,7 @@ commands:
 
   # Run the xe-entry hook now rather than waiting for the next limine.conf
   # update. The stamp is the hook as of its last run; an edit re-runs it. No
-  # files: guard (see "Applying the drop-ins" below). A removed files entry
+  # files: guard (see "Applying the drop-ins" in common/laptop.yaml). A removed files entry
   # leaves the file behind, so the rollback strips the entry and deletes the hook.
   - name: limine-xe-entry
     command: |
@@ -548,32 +280,6 @@ commands:
       done
     sudo: true
 
-  # ── Applying the drop-ins above ──
-  # A command re-runs only when its own text changes, never when the file it
-  # applies changes, so each one carries a check: that compares the live system
-  # (or a copy taken when it last ran) against the file. None has a files:
-  # guard: that is a plan-time condition, so on a fresh machine it would skip
-  # before the file was written. Files with no depends run ahead of commands.
-  # Stamps live in /var/lib/stay-go/applied, readable by the unprivileged check.
-
-  # Apply the sysctl drop-in now so a reboot is not required.
-  - name: reload-sysctl-zram-tuning
-    command: sysctl --system
-    check: |
-      sysctl -n vm.page-cluster | grep -qx 0 && sysctl -n vm.vfs_cache_pressure | grep -qx 100 \
-        && sysctl -n vm.watermark_boost_factor | grep -qx 0 \
-        && sysctl -n vm.watermark_scale_factor | grep -qx 125 \
-        || { echo "live vm.* sysctls differ from 99-zram-tuning.conf"; exit 1; }
-    sudo: true
-
-  # Apply the THP drop-in now so a reboot is not required.
-  - name: apply-thp-madvise
-    command: systemd-tmpfiles --create /etc/tmpfiles.d/thp-madvise.conf
-    check: |
-      grep -q '\[madvise\]' /sys/kernel/mm/transparent_hugepage/enabled \
-        || { echo "THP is not madvise: $(cat /sys/kernel/mm/transparent_hugepage/enabled)"; exit 1; }
-    sudo: true
-
   # The UCSI blacklist lives in the initramfs, so it needs a rebuild to take
   # effect. The stamp is the blacklist as of the last rebuild; an edit re-runs it.
   # limine-mkinitcpio, not mkinitcpio -P: this box has no /etc/mkinitcpio.d
@@ -594,19 +300,6 @@ commands:
     command: '! grep -q "^huawei_wmi " /proc/modules || modprobe -r huawei_wmi'
     check: '! grep -q "^huawei_wmi " /proc/modules || { echo "huawei_wmi is loaded"; exit 1; }'
     sudo: true
-
-  # keyd reads /etc/keyd/default.conf only at start; reload it after an edit.
-  - name: keyd-reload
-    command: |
-      keyd reload
-      install -Dm644 /etc/keyd/default.conf /var/lib/stay-go/applied/keyd-default.conf
-    check: |
-      cmp -s /etc/keyd/default.conf /var/lib/stay-go/applied/keyd-default.conf \
-        || { echo "keyd config changed since the last reload"; exit 1; }
-    sudo: true
-    depends:
-      - packages: [keyd]
-      - services: [keyd]
 
   # The speaker unit used to sit failed (start-limit-hit, see its file entry).
   # Pick up the oneshot unit, clear the failure and apply the verbs now. The

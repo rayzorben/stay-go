@@ -1,0 +1,109 @@
+# ─── Backups: Kopia → orohost's repository server → Google Drive ────────────
+# Shared client side for the laptops; included from hosts/common/laptop.yaml.
+#
+# Once a day, Kopia snapshots the folders listed in
+# config/files/kopia/laptop-backup-set.conf into orohost's repository in
+# Google Drive, through orohost's Kopia server on the tailnet
+# (https://orohost.tawny-tailor.ts.net:51515). One repository for every
+# machine: encrypted, zstd-compressed, deduplicated across machines.
+# Each laptop logs in as root@<hostname> and sees only its own snapshots; it
+# holds neither the repository password nor the Drive token. Retention
+# (7 daily, 4 weekly, 12 monthly) is set on orohost, in
+# config/scripts/kopia-policies.sh.
+#
+#   What                 config/files/kopia/laptop-backup-set.conf
+#   Back up now          kopia-backup
+#   List snapshots       kopia-backup list
+#   Restore after a wipe kopia-backup restore      (systemctl --user stop life first)
+#   Anything else        kopia-root ...            (the kopia CLI against this repository)
+#
+# Pieces:
+#   kopia-backup.timer     root; daily (and on the next boot if a day was missed)
+#   kopia-backup.service   runs /usr/local/bin/kopia-backup; retries hourly on failure
+#   /etc/kopia/kopia.env   the host's login password, read by kopia-root
+#
+# Per host, in hosts/<host>/backups.yaml: the login secret (also defined on
+# orohost) and the /etc/kopia/kopia.env that carries it. A host without that
+# file has its repository connection, and everything after it, skipped.
+
+packages:
+  - kopia
+  - sqlite # sqlite3 .backup, for consistent database copies
+  - rsync
+
+files:
+  - source: ${config_root}/files/kopia/kopia-root
+    target: /usr/local/bin/kopia-root
+    mode: "0755"
+    sudo: true
+
+  - source: ${config_root}/files/kopia/kopia-backup.sh
+    target: /usr/local/bin/kopia-backup
+    mode: "0755"
+    sudo: true
+
+  # The backup set. Copied, not linked: root reads it from the timer, and must
+  # not depend on the repo (a Dropbox path) being readable at that moment.
+  - source: ${config_root}/files/kopia/laptop-backup-set.conf
+    target: /etc/kopia/backup-set.conf
+    mode: "0644"
+    sudo: true
+
+  # Restart=on-failure retries every hour while orohost is unreachable (away
+  # from home without the tailnet up), until a run succeeds.
+  - content: |
+      # Managed by stay-go — see config/hosts/common/backups.yaml
+      [Unit]
+      Description=Back up %H to orohost (Kopia)
+      Wants=network-online.target
+      After=network-online.target tailscaled.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/kopia-backup
+      Restart=on-failure
+      RestartSec=1h
+      Nice=10
+      IOSchedulingClass=idle
+    target: /etc/systemd/system/kopia-backup.service
+    mode: "0644"
+    sudo: true
+
+  - content: |
+      # Managed by stay-go — see config/hosts/common/backups.yaml
+      [Unit]
+      Description=Daily Kopia backup to orohost
+
+      [Timer]
+      OnCalendar=*-*-* 12:00:00
+      RandomizedDelaySec=30min
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+    target: /etc/systemd/system/kopia-backup.timer
+    mode: "0644"
+    sudo: true
+
+scripts:
+  # Connect to orohost's repository server. Re-runs only when the script
+  # changes; kopia-root hands Kopia the password from kopia.env on every call.
+  - script: ${config_root}/scripts/kopia-client-repository.sh
+    sudo: true
+    depends:
+      - packages: [kopia]
+      - commands: [tailscale] # orohost is reached over the tailnet
+      - files:
+          - /etc/kopia/kopia.env
+          - /usr/local/bin/kopia-root
+
+services:
+  - service: kopia-backup.timer
+    depends:
+      - packages: [kopia, sqlite, rsync, jq]
+      - files:
+          - /usr/local/bin/kopia-backup
+          - /etc/kopia/backup-set.conf
+          - /etc/systemd/system/kopia-backup.service
+          - /etc/systemd/system/kopia-backup.timer
+      - scripts: ["${config_root}/scripts/kopia-client-repository.sh"]

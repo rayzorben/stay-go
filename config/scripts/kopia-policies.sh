@@ -119,6 +119,11 @@ kopia-root policy set root@cachygram \
   --keep-latest=1 --keep-hourly=0 --keep-daily=7 --keep-weekly=4 \
   --keep-monthly=12 --keep-annual=0
 
+# rayzorbot: cachygram's replacement, same schedule and retention.
+kopia-root policy set root@rayzorbot \
+  --keep-latest=1 --keep-hourly=0 --keep-daily=7 --keep-weekly=4 \
+  --keep-monthly=12 --keep-annual=0
+
 # Have a running server see new or changed sources now rather than at its next
 # 4-hourly refresh. Not running yet (first apply) is fine: it reads them on start.
 # The password goes in through the environment, not --server-control-password;

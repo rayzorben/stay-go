@@ -1,0 +1,27 @@
+# rayben on rayzorbot. Everything that is not tied to this machine lives in
+# users/common/rayben-laptop.yaml, included below; this file is only the
+# per-machine glue: niri's include list and this host's DMS settings.
+
+laptop: !include "./common/rayben-laptop.yaml"
+
+files:
+  - content: |
+
+      // added by stay
+      include "rules.kdl"
+      include "spawn.kdl"
+      include "binds.kdl"
+    target: ~/.config/niri/config.kdl
+    add: true
+    depends:
+      - commands: [install dms] # its installer replaces both files
+
+  # ── DMS settings ──
+  # Symlinked into the repo so every change made in the DMS settings UI lands
+  # in files/dms/settings.rayzorbot.json, ready to commit (DMS saves through
+  # the link and leaves it in place). Started as a copy of cachygram's.
+  - source: ${config_root}/files/dms/settings.rayzorbot.json
+    target: ~/.config/dms/settings.json
+    symlink: true
+    depends:
+      - commands: [install dms]

@@ -4,7 +4,7 @@ set -euo pipefail
 # ==========================================
 # CONFIGURATION VARIABLES
 # ==========================================
-# Usage: bootstrap.sh <host>     (host: cachy-vm | cachygram)
+# Usage: bootstrap.sh <host>     (host: cachy-vm | cachygram | rayzorbot)
 VG_NAME="vg_cachyos"
 LUKS_NAME="cryptlvm"
 USERNAME="rayben"
@@ -64,8 +64,33 @@ load_host_profile() {
             EXTRA_PKGS=""
             EXTRA_SERVICES=""
             ;;
+        rayzorbot)
+            # Thunderobot Zero Air 15: 2TB NVMe, Panther Lake (xe), RTX 5060, 64G RAM.
+            # BIOS first: Secure Boot off (limine is unsigned), graphics in
+            # hybrid mode, not dGPU-only.
+            DISK="/dev/nvme0n1"
+            HOSTNAME="rayzorbot"
+            EFI_SIZE="4G"
+            # Twice cachygram's: Docker/distrobox images and the gaming
+            # packages all land on root, and the disk is twice the size.
+            ROOT_LV_SIZE="256G"
+            SWAP_LV_SIZE="32G"
+            HOME_LV_EXTENTS="90%FREE"
+            ZRAM_SIZE="ram"
+            # No i915 flags: Panther Lake's iGPU is driven by xe only.
+            EXTRA_CMDLINE="nowatchdog"
+            # Intel VMD (RST) puts the NVMe behind a vmd controller, and
+            # autodetect only catches it if the live ISO loaded the module.
+            # Pinned so the root disk is found either way.
+            INITRAMFS_MODULES="vmd"
+            # Blackwell needs the open modules, prebuilt per kernel, so the
+            # first boot already has the driver (nvidia-utils also blacklists
+            # nouveau). The rest of the NVIDIA stack is in hosts/rayzorbot.yaml.
+            EXTRA_PKGS="nvidia-utils linux-cachyos-nvidia-open linux-cachyos-lts-nvidia-open"
+            EXTRA_SERVICES=""
+            ;;
         *)
-            echo "[!] Unknown host '$1'. Usage: $0 <cachy-vm|cachygram>"
+            echo "[!] Unknown host '$1'. Usage: $0 <cachy-vm|cachygram|rayzorbot>"
             exit 1
             ;;
     esac
@@ -121,7 +146,7 @@ if [[ "$CURRENT_STEP" -gt 0 && -f "$HOST_FILE" ]]; then
     HOST_ARG="$SAVED_HOST"
 fi
 if [[ -z "$HOST_ARG" ]]; then
-    echo "Usage: $0 <cachy-vm|cachygram>"
+    echo "Usage: $0 <cachy-vm|cachygram|rayzorbot>"
     exit 1
 fi
 load_host_profile "$HOST_ARG"

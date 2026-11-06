@@ -30,7 +30,7 @@
 #
 # Adding a machine: a `cachygram_password`-style secret here and in its own
 # host file, a `kopia server user` command below, and its retention in
-# kopia-policies.sh. See config/hosts/cachygram/backups.yaml for the client side.
+# kopia-policies.sh. See config/hosts/common/backups.yaml for the client side.
 #
 # ── ONE-TIME SETUP (before the first apply that includes this file) ──
 # 1. Google Cloud console → new project → enable "Google Drive API".
@@ -69,6 +69,9 @@ secrets:
     # cachygram's repository-server login; the same value is in
     # config/hosts/cachygram/backups.yaml (stay-go secret update --all).
     cachygram_password: !encrypted G9Bd6FpTcSGnZDHYmQY2cg8oDASfMV6Pja2JfUYCc8l6xjdHVI90/J/GIQtkB82IzwzYDqYX1fcewbvJA8+QC8aR7GK0qZp18K1yg7rhyJkk0SC2piL7yGbYXfA=
+    # rayzorbot's (cachygram's replacement); the same value is in
+    # config/hosts/rayzorbot/backups.yaml.
+    rayzorbot_password: !encrypted ubo/6dRblXVZAEmoEu79RHK9pBrGq2Xry4VBd5tOyC+2bMq0QDBpvM/vcJYeZJag42g3SICqzpenbwP+DRGkHe71qzg8xxFQIRlVRwOHir/J0io6ma5BmQ==
     gdrive_token: !encrypted rksxQmnj5htpjnkJOACeAu3LSHA7Bubf0tro0JEr0UD7SaucoeWiEwYdH/3pB5eHta9eOmRL7iaEvDvcnMghIOlXNNt+HirrE2DwpnqKKmBc2GFE2OOFOgcR2J04DDKtU9v8mV8WcE18+NNDiIbtRagk4pmdzLy6TRQH/Ce2THGSHYWTnNSY49XA2nMTp4prIgKyP660WC2mrcc1YqazJl5MIq2Tw/kV6hXluBs/YGIol7W1VH5RWTDe4uptIzXu+E3uW20Ue6SaPVdAjIhnW2y628Td0utfFEhfVrY38JsIsaAEQNZyhn0U2vCIl2LUqh5hl6lMHWOC3jvAihf0Vbqi+d1yml6TSiyQdHZeknedv817CDG6m+MnavDyNwqAGlT8JegXpxvPTDJKayzPK25cGtwZfYUCyaY4DVSXiuymiGNSTs2ZHVLbIj8gQqb+ej2OgauuJY6ex7pAQfkDQaxSAGkqY+qSvXHHM2zdSD14+6l5MeG35wO4rrM03TlGgUozkqNkBicZbk5iR9YA6glgYDkv2KDUOEudCTz/iMuxqDwtfjBuDZ59fs+79S1M1oKfPCi0wgMCq6mACM1kj0K4HGJtSAR3ml4Vq7sDeIAGQuea/dmi+b5XuQ+4RhEnNpt5tO/4YwRknLO9KQH2fSIFjrM+FeUtPVjCiWPN7nkLbTtt74P8M/9mjcDi
 
 packages:
@@ -249,6 +252,31 @@ commands:
       sudo -n kopia-root server user info root@cachygram >/dev/null 2>&1 \
         || { echo "cachygram has no login on the Kopia server"; exit 1; }
     rollback: kopia-root server user delete root@cachygram
+    sudo: true
+    depends:
+      - services: [kopia-server.service]
+
+  # rayzorbot's login to the repository server. `user set` on later runs, so a
+  # rotated secret takes effect; the refresh makes the server re-read its
+  # users now. The password is briefly in argv (Kopia reads it from no other
+  # non-interactive place); it only opens rayzorbot's own snapshots.
+  - name: kopia server user rayzorbot
+    command: |
+      if kopia-root server user info root@rayzorbot >/dev/null 2>&1; then
+        kopia-root server user set root@rayzorbot --user-password='${secrets.kopia.rayzorbot_password}'
+      else
+        kopia-root server user add root@rayzorbot --user-password='${secrets.kopia.rayzorbot_password}'
+      fi
+      . /etc/kopia/kopia.env
+      fingerprint=$(openssl x509 -in /etc/kopia/tls.crt -noout -fingerprint -sha256 | sed 's/.*=//; s/://g' | tr A-F a-f)
+      KOPIA_SERVER_PASSWORD=$KOPIA_SERVER_CONTROL_PASSWORD timeout 60 \
+        kopia server refresh --address=https://127.0.0.1:51515 --server-cert-fingerprint="$fingerprint" \
+        --server-control-username="$KOPIA_SERVER_CONTROL_USER" ||
+        echo "kopia server refresh failed; the server reads the user at its next refresh or restart" >&2
+    check: |
+      sudo -n kopia-root server user info root@rayzorbot >/dev/null 2>&1 \
+        || { echo "rayzorbot has no login on the Kopia server"; exit 1; }
+    rollback: kopia-root server user delete root@rayzorbot
     sudo: true
     depends:
       - services: [kopia-server.service]

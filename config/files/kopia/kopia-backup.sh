@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# kopia-backup — snapshot cachygram's backup set into the Kopia repository
+# kopia-backup — snapshot this laptop's backup set into the Kopia repository
 # through orohost's repository server, or restore it (managed by stay-go —
-# config/hosts/cachygram/backups.yaml).
+# config/hosts/common/backups.yaml).
 #
 #   kopia-backup              snapshot everything in /etc/kopia/backup-set.conf
 #                             (kopia-backup.timer runs this daily)
@@ -10,7 +10,7 @@
 #                             it came from (stop Life first: systemctl --user stop life)
 #   kopia-backup restore <path>...   the same, for just these sources
 #
-# Retention (7 daily, 4 weekly, 12 monthly) is root@cachygram's policy, set on
+# Retention (7 daily, 4 weekly, 12 monthly) is root@<host>'s policy, set on
 # orohost by config/scripts/kopia-policies.sh; Kopia applies it after every
 # snapshot.
 #

@@ -1,0 +1,26 @@
+# ─── Backups: rayzorbot's login to orohost's Kopia server ───────────────────
+# Included from config/hosts/rayzorbot.yaml. Everything else about backups is
+# shared with the other laptops: config/hosts/common/backups.yaml.
+#
+# rayzorbot logs in as root@rayzorbot, so it sees only its own snapshots, not
+# cachygram's. The login is created on orohost by its
+# `kopia server user rayzorbot` command (config/hosts/orohost/backups.yaml),
+# from the same secret as below.
+
+secrets:
+  kopia:
+    # The login to orohost's repository server; the same value is in
+    # config/hosts/orohost/backups.yaml (stay-go secret update --all).
+    rayzorbot_password: !encrypted LRfq4uRDeBcDZAQCVLhDJXVd2S7GkzKuCjuL55Qiy/9N4uhtSqpS2UR/deVFXo3qJFfpzeSX1rjboXWLyLFdHZx0IsvxdTVq+Rro07Wd3cgk7d3AF4tMxw==
+
+files:
+  - content: |
+      # Managed by stay-go — config/hosts/rayzorbot/backups.yaml
+      KOPIA_CONFIG_PATH='/var/lib/kopia/repository.config'
+      KOPIA_CACHE_DIRECTORY='/var/cache/kopia'
+      KOPIA_LOG_DIR='/var/log/kopia'
+      KOPIA_CHECK_FOR_UPDATES='false'
+      KOPIA_PASSWORD='${secrets.kopia.rayzorbot_password}'
+    target: /etc/kopia/kopia.env
+    mode: "0600"
+    sudo: true
