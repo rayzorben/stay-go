@@ -1,6 +1,10 @@
 config/data/**
 bin/**
 
+# Microsoft's Windows fonts: their license forbids redistribution, and this
+# repo is public. They reach each machine through Dropbox, not git.
+config/files/fonts/windows/
+
 # Local daily build counter (see scripts/compute-build-version.sh)
 .build-version
 
