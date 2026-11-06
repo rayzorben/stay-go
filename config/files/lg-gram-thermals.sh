@@ -92,6 +92,17 @@ if command -v powerprofilesctl > /dev/null 2>&1; then
             log "FAILED to set power profile to balanced (was $current)"
         fi
     fi
+    # PPD 0.30 is battery-aware by default: unplugged on `balanced` it rewrites
+    # every core's EPP to balance_power, undoing the EPP below. Its setting is
+    # not persisted here (/var/lib/power-profiles-daemon stays empty and a reboot
+    # turned it back on), so switch it off on every run.
+    if powerprofilesctl query-battery-aware 2>/dev/null | grep -q 'True$'; then
+        if powerprofilesctl configure-battery-aware --disable 2>/dev/null; then
+            log "power-profiles-daemon battery-aware: on -> off"
+        else
+            log "FAILED to turn off power-profiles-daemon battery-aware"
+        fi
+    fi
 fi
 
 poke 1 "$FAN_MODE"

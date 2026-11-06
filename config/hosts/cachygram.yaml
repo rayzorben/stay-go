@@ -398,13 +398,12 @@ commands:
   # PPD 0.30 is battery-aware by default: unplugged on `balanced`, it rewrites
   # every core's EPP to balance_power, silently undoing the balance_performance
   # lg-gram-thermals set at boot (Nov 4 2026: all 22 cores on balance_power on
-  # battery; slow ramp-up on every keystroke on top of the 2.4 GHz cap). The
-  # setting persists in /var/lib/power-profiles-daemon/state.ini; re-run the
-  # envelope so EPP is restored now rather than at the next boot or resume.
+  # battery; slow ramp-up on every keystroke on top of the 2.4 GHz cap).
+  # The setting did not survive the Nov 5 reboot (PPD left its state dir
+  # empty), so lg-gram-thermals now turns it off on every boot and resume;
+  # this re-runs the envelope when the live state has drifted anyway.
   - name: ppd-not-battery-aware
-    command: |
-      powerprofilesctl configure-battery-aware --disable
-      systemctl start lg-gram-thermals.service
+    command: systemctl start lg-gram-thermals.service
     check: |
       powerprofilesctl query-battery-aware | grep -q 'False$' \
         || { echo "power-profiles-daemon drops EPP to balance_power on battery"; exit 1; }
