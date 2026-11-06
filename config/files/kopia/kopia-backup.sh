@@ -9,6 +9,8 @@
 #   kopia-backup restore      put the newest snapshot of every source back where
 #                             it came from (stop Life first: systemctl --user stop life)
 #   kopia-backup restore <path>...   the same, for just these sources
+#   kopia-backup sources      the folders the backup set names on this machine,
+#                             "path<TAB>ignore..." (scripts/migrate-from.sh copies these)
 #
 # Retention (7 daily, 4 weekly, 12 monthly) is root@<host>'s policy, set on
 # orohost by config/scripts/kopia-policies.sh; Kopia applies it after every
@@ -144,5 +146,6 @@ case ${1:-} in
 '') backup ;;
 list) kopia snapshot list --all ;;
 restore) shift; restore "$@" ;;
-*) echo "usage: kopia-backup [list | restore [path...]]" >&2; exit 2 ;;
+sources) sources ;;
+*) echo "usage: kopia-backup [list | restore [path...] | sources]" >&2; exit 2 ;;
 esac

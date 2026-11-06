@@ -15,6 +15,8 @@
 #   Back up now          kopia-backup
 #   List snapshots       kopia-backup list
 #   Restore after a wipe kopia-backup restore      (systemctl --user stop life first)
+#   Move to a new laptop scripts/migrate-from.sh   (this set, copied live from the old
+#                                                   one: restore sees only its own host)
 #   Anything else        kopia-root ...            (the kopia CLI against this repository)
 #
 # Pieces:
