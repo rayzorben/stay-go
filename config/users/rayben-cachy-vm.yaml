@@ -44,6 +44,7 @@ packages:
   - distrobox
   - discord
   - zen-browser
+  - microsoft-edge-stable-bin # one host Edge with a profile per context (replaces an Edge per distrobox)
   - docker-compose
   - freerdp
   - aria2
@@ -69,6 +70,11 @@ services:
   - service: tailscaled.service
 
 files:
+  # Edge flags: Wayland, GTK4, libsecret keyring, PipeWire screen share.
+  - source: ${config_root}/files/config/microsoft-edge-stable-flags.conf
+    target: ~/.config/microsoft-edge-stable-flags.conf
+    symlink: true
+
   # ── DMS settings ──
   # Symlinked into the repo so every change made in the DMS settings UI lands
   # in files/dms/settings.cachy-vm.json, ready to commit (DMS saves through the
@@ -335,6 +341,7 @@ containers:
 
 distrobox:
   - name: sedanos
+    disabled: true # work moved to cloud sessions; box rm keeps its home dir
     image: docker.io/cachyos/cachyos-v3:latest
     home: ${home.sedanos}
     home_sudo: true
@@ -382,12 +389,14 @@ distrobox:
           fish /tmp/omf-install --noninteractive --yes
 
   - name: motion
+    disabled: true # work moved to cloud sessions; box rm keeps its home dir
     image: docker.io/cachyos/cachyos-v3:latest
     home: ${home.motion}
     home_sudo: true
     extends: ${config_root}/users/distrobox-base.yaml
 
   - name: stoneridge
+    disabled: true # work moved to cloud sessions; box rm keeps its home dir
     image: docker.io/cachyos/cachyos-v3:latest
     home: ${home.stoneridge}
     home_sudo: true

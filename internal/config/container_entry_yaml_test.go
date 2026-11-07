@@ -115,3 +115,24 @@ containers:
 		t.Fatalf("want only neolink, got %+v", cfg.Containers)
 	}
 }
+
+// TestDisabledDistroboxDropped verifies that disabled: true removes a distrobox
+// entry after normalisation, while leaving its siblings intact.
+func TestDisabledDistroboxDropped(t *testing.T) {
+	const src = `
+distrobox:
+  - name: sedanos
+    image: docker.io/cachyos/cachyos-v3:latest
+    disabled: true
+  - name: motion
+    image: docker.io/cachyos/cachyos-v3:latest
+`
+	var cfg Config
+	if err := yaml.Unmarshal([]byte(src), &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	NormalizeExpandedForms(&cfg)
+	if len(cfg.Distrobox) != 1 || cfg.Distrobox[0].Name != "motion" {
+		t.Fatalf("want only motion, got %+v", cfg.Distrobox)
+	}
+}

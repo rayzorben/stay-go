@@ -724,6 +724,7 @@ type DistroboxEntry struct {
 	Commands []CommandEntry        `yaml:"commands,omitempty" secrets:"-"`  // in-box inline commands
 	Exports    []string              `yaml:"exports,omitempty"`   // app names to export via distrobox-export
 	Lock       bool                  `yaml:"lock,omitempty"`      // exclude from --update (no distrobox upgrade)
+	Disabled   bool                  `yaml:"disabled,omitempty"`  // dropped after layer merge → tracked box is REMOVEd (home dir kept)
 	Depends    []map[string][]string `yaml:"depends,omitempty"`   // host-level deps (e.g. services: [docker])
 	SourceFile string                `yaml:"-" json:"-"`          // relative path to source YAML, set by LoadAll
 }

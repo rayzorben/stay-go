@@ -26,6 +26,14 @@ func dropDisabled(cfg *Config) {
 		}
 	}
 	cfg.Containers = kept
+
+	boxes := cfg.Distrobox[:0]
+	for _, d := range cfg.Distrobox {
+		if !d.Disabled {
+			boxes = append(boxes, d)
+		}
+	}
+	cfg.Distrobox = boxes
 }
 
 func expandPackageEmbeddedServices(cfg *Config) {

@@ -6,6 +6,9 @@
 # The default Niri install contains a different shell that is difficult to remove.
 
 variables:
+  # Edge profiles, each with its own menu launcher (scripts/edge-profiles.sh).
+  # Space-separated; a name with spaces won't work here.
+  edge_profiles: Sedanos Motion
   home:
     sedanos: /home/distrobox/sedanos
     visionet: /home/distrobox/visionet
@@ -47,6 +50,7 @@ packages:
   - distrobox
   - discord
   - zen-browser
+  - microsoft-edge-stable-bin # one host Edge with a profile per context (replaces an Edge per distrobox)
   - docker-compose
   - freerdp
   - remmina # its RDP plugin is the freerdp optdep above
@@ -140,6 +144,11 @@ files:
 
   - source: ${secrets.ssh.config}
     target: "~/.ssh/config"
+
+  # Edge flags: Wayland, GTK4, libsecret keyring, PipeWire screen share.
+  - source: ${config_root}/files/config/microsoft-edge-stable-flags.conf
+    target: ~/.config/microsoft-edge-stable-flags.conf
+    symlink: true
 
   # ── Folder links into ~ ──────────────────────────────────────────────────
   # ~/code and ~/work are the stable paths everything else refers to, so a
@@ -587,6 +596,12 @@ commands:
     depends:
       - packages: [firefox]
 
+  - name: edge profiles
+    command: bash ${config_root}/scripts/edge-profiles.sh ${edge_profiles}
+    check: bash ${config_root}/scripts/edge-profiles.sh --check ${edge_profiles}
+    depends:
+      - packages: [microsoft-edge-stable-bin]
+
   # Restart DMS onto the Scratch-hiding UI (files above). The check passes
   # when the running quickshell was started from the patched copy — or when
   # DMS isn't running at all (no graphical session, e.g. over SSH). If the
@@ -630,6 +645,7 @@ flatpak:
 
 distrobox:
   - name: sedanos
+    disabled: true # work moved to cloud sessions; box rm keeps its home dir
     image: docker.io/cachyos/cachyos-v3:latest
     home: ${home.sedanos}
     home_sudo: true
@@ -702,6 +718,7 @@ distrobox:
           fish /tmp/omf-install --noninteractive --yes
 
   - name: motion
+    disabled: true # work moved to cloud sessions; box rm keeps its home dir
     image: docker.io/cachyos/cachyos-v3:latest
     home: ${home.motion}
     home_sudo: true
@@ -711,6 +728,7 @@ distrobox:
       - users: [rayben]
 
   - name: stoneridge
+    disabled: true # work moved to cloud sessions; box rm keeps its home dir
     image: docker.io/cachyos/cachyos-v3:latest
     home: ${home.stoneridge}
     home_sudo: true

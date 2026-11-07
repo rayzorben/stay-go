@@ -296,6 +296,8 @@ scripts:
 #                               #   Only distrobox entries support extends; it is not available
 #                               #   on other resource types.
 #   exports: [string]           # optional — app names to export to host via distrobox-export
+#   disabled: bool              # optional — drop the entry after layers merge, so a tracked box
+#                               #   is planned as REMOVE (distrobox rm). Its home dir is kept.
 #   depends: [{resource: [names]}]  # optional — host-level deps (e.g. services: [docker])
 #   packages: [PackageEntry]    # optional — packages to install inside the box
 #   commands:                   # optional — inline commands to run inside the box
