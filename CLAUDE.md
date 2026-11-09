@@ -487,3 +487,12 @@ make test       # run unit tests
 make cover      # test coverage report
 make install    # install to /usr/local/bin
 ```
+
+---
+
+## Not Life
+
+Life (`~/code/life`, Ray's command center) runs on orohost and builds, deploys and runs its own pieces: itself, its containers, any
+browser or service it needs (Ray, Nov 9 2026). Never add Life's services, containers or images to stay-go. The one Life entry here is the
+laptop's `life-forward.service` (an ssh forward of localhost:4490 and 4477 to orohost). A `life.service` linked here once started a stale
+second Life at every login.
