@@ -115,13 +115,14 @@ services:
       - files:
           - ~/.config/systemd/user/bt-headset-watchdog.service
           - ~/.local/bin/bt-headset-watchdog
-  # Nightly backup of Life's data to orohost.
-  - service: life-backup.timer
+  # Life runs on orohost (and backs itself up there); this laptop only
+  # forwards localhost:4490 (Life) and 4477 (Aurora) to it, so the page,
+  # sign-in redirects and the Life extension in Zen reach the real one.
+  - service: life-forward.service
     user: true
     depends:
       - files:
-          - ~/.config/systemd/user/life-backup.service
-          - ~/.config/systemd/user/life-backup.timer
+          - ~/.config/systemd/user/life-forward.service
 
 files:
   # Own drop-in rather than editing the installer's sudoers.d file, which a
@@ -161,21 +162,9 @@ files:
     target: ~/work
     symlink: true
 
-  # Life runs as a user service straight from its repo.
-  - source: ~/code/life/systemd/life.service
-    target: ~/.config/systemd/user/life.service
-    symlink: true
-
-  - source: ~/code/life/systemd/life.service
-    target: ~/.config/systemd/user/graphical-session.target.wants/life.service
-    symlink: true
-
-  - source: ~/code/life/systemd/life-backup.service
-    target: ~/.config/systemd/user/life-backup.service
-    symlink: true
-
-  - source: ~/code/life/systemd/life-backup.timer
-    target: ~/.config/systemd/user/life-backup.timer
+  # Life itself runs on orohost (Life's tools/host.sh); here only the forward.
+  - source: ~/code/life/systemd/life-forward.service
+    target: ~/.config/systemd/user/life-forward.service
     symlink: true
 
   # mudengine loads the private konami-engine extension from its build output.
