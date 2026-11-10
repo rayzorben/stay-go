@@ -75,6 +75,7 @@ packages:
   - spotify-launcher
   - claude-desktop
   - claude-code # the `claude` CLI; Desktop's bundled copy isn't on PATH
+  - google-chrome # claude-sedanos's sign-in browser (its own profile)
   - flatpak
   - jq # verterm dropdown scripts
   - attr # getfattr/setfattr, used by dropbox-exclude.sh
@@ -267,6 +268,29 @@ files:
   - source: ${config_root}/files/dms/dms-hide-scratch
     target: ~/.local/bin/dms-hide-scratch
     mode: "0755"
+
+  # ── A second Claude Desktop that shares nothing with the main one ──
+  # Same /usr/bin/claude-desktop under its own HOME and XDG dirs
+  # (~/.local/share/claude-sedanos/home): own login, settings, ~/.claude and
+  # caches. Its sign-in links open in a separate Chrome profile under that HOME
+  # and claude:// comes back to it, never to the main app (details in the script).
+  - source: ${config_root}/files/claude-sedanos
+    target: ~/.local/bin/claude-sedanos
+    mode: "0755"
+    depends:
+      - packages: [claude-desktop, google-chrome]
+
+  - content: |
+      [Desktop Entry]
+      Type=Application
+      Name=Claude (sedanos)
+      Comment=Separate Claude Desktop instance with its own data
+      Exec=/home/${env:USER}/.local/bin/claude-sedanos %U
+      Icon=claude-desktop
+      Categories=Utility;Development;
+    target: ~/.local/share/applications/claude-sedanos.desktop
+    depends:
+      - files: [~/.local/bin/claude-sedanos]
 
   - content: |
       [Service]

@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# claude-sedanos — a second Claude Desktop that shares nothing with the
+# main one: its own HOME and XDG dirs (config, cache, data, state), so its
+# own login, settings, Claude Code (~/.claude), MCP config and caches.
+#
+# Everything lives under $CLAUDE_SEDANOS_ROOT (default ~/.local/share/claude-sedanos).
+#
+#   - --password-store=basic: cookies/tokens are not encrypted with the
+#     keyring key the main instance uses (both would be "Claude Safe Storage").
+#   - Inside its env, http(s) opens Chrome with this HOME (a separate,
+#     empty Chrome profile) and claude:// comes back here, so sign-in deep
+#     links never reach the main instance via your normal browser.
+set -euo pipefail
+
+real_home=$(getent passwd "$(id -un)" | cut -d: -f6)
+root=${CLAUDE_SEDANOS_ROOT:-$real_home/.local/share/claude-sedanos}
+h=$root/home
+self=$(readlink -f "${BASH_SOURCE[0]}")
+
+export HOME=$h
+export XDG_CONFIG_HOME=$h/.config
+export XDG_CACHE_HOME=$h/.cache
+export XDG_DATA_HOME=$h/.local/share
+export XDG_STATE_HOME=$h/.local/state
+unset BROWSER
+
+mkdir -p "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME/applications" "$XDG_STATE_HOME"
+
+# The app re-registers com.anthropic.Claude.desktop as the claude:// handler
+# at every start; this copy shadows the system one inside this env.
+cat >"$XDG_DATA_HOME/applications/com.anthropic.Claude.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Claude (sedanos)
+Exec=$self %U
+Icon=claude-desktop
+NoDisplay=true
+MimeType=x-scheme-handler/claude;
+EOF
+
+cat >"$XDG_DATA_HOME/applications/claude-sedanos-browser.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Chrome (Claude sedanos)
+Exec=/usr/bin/google-chrome-stable %U
+NoDisplay=true
+MimeType=x-scheme-handler/http;x-scheme-handler/https;text/html;
+EOF
+
+cat >"$XDG_CONFIG_HOME/mimeapps.list" <<EOF
+[Default Applications]
+x-scheme-handler/claude=com.anthropic.Claude.desktop
+x-scheme-handler/http=claude-sedanos-browser.desktop
+x-scheme-handler/https=claude-sedanos-browser.desktop
+text/html=claude-sedanos-browser.desktop
+EOF
+
+exec /usr/bin/claude-desktop --password-store=basic "$@"
