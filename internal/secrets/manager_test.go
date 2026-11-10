@@ -276,3 +276,60 @@ func TestFileDefinesSecret(t *testing.T) {
 		t.Errorf("file without secrets: got %v, %v", got, err)
 	}
 }
+
+func TestUnlockFromPasswordFile(t *testing.T) {
+	token, err := encrypt(verifyMagic, "s3cret pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	t.Run("correct password, trailing newline dropped", func(t *testing.T) {
+		t.Setenv(PasswordFileEnv, write("good", "s3cret pass\n"))
+		m := New()
+		if err := m.Unlock(token); err != nil {
+			t.Fatalf("Unlock: %v", err)
+		}
+		if !m.IsUnlocked() {
+			t.Fatal("not unlocked")
+		}
+		ct, err := m.Encrypt("x")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pt, err := decrypt(ct, "s3cret pass"); err != nil || pt != "x" {
+			t.Fatalf("round trip: %q %v", pt, err)
+		}
+	})
+
+	for name, tc := range map[string]struct{ content, token string }{
+		"wrong password": {"nope", token},
+		"empty file":     {"\n", token},
+		"no sentinel":    {"s3cret pass", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(PasswordFileEnv, write(strings.ReplaceAll(name, " ", "-"), tc.content))
+			m := New()
+			if err := m.Unlock(tc.token); err == nil {
+				t.Fatal("Unlock succeeded, want error")
+			}
+			if m.IsUnlocked() {
+				t.Fatal("unlocked after error")
+			}
+		})
+	}
+
+	t.Run("missing file", func(t *testing.T) {
+		t.Setenv(PasswordFileEnv, filepath.Join(dir, "absent"))
+		if err := New().Unlock(token); err == nil {
+			t.Fatal("Unlock succeeded, want error")
+		}
+	})
+}

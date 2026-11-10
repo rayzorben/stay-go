@@ -267,6 +267,11 @@ A struct field tagged **`secrets:"-"`** is excluded from secret substitution
 structural marker rather than an inline value (`FileEntry.Source`) or a value
 serialised verbatim for a separate stay-go run (`DistroboxEntry.Packages/Commands`).
 
+The password comes from the keyring, else a hidden prompt. With
+`STAY_GO_SECRETS_PASSWORD_FILE` set (`secrets.PasswordFileEnv`) it is read from
+that file instead: no keyring read or write, no prompt, a wrong password is an
+error, and a `_verify` sentinel must already exist.
+
 In `command:`/`rollback:` strings, `${secrets.x}` and `${var}` substitute
 literally (no shell-quoting) — quote them in the YAML if a value may contain
 whitespace or shell metacharacters, exactly as you would any shell variable.
@@ -351,6 +356,24 @@ invocations proceed without prompting. It first tries `sudo -n true` and skips
 `sudo -v` when that succeeds: under sudo's default `verifypw=all`, `-v` prompts
 unless every sudoers rule for the user is NOPASSWD, even with a NOPASSWD
 drop-in in place.
+
+---
+
+## Bootstrap First Run
+
+`scripts/bootstrap.sh` STEP 6 runs stay-go once inside the target chroot
+(`--yes`, as the user), so the first boot already has its packages, files and
+enabled system services (sddm included). It needs: a private UTS namespace
+with the target's hostname (default.yaml selects layers via `$(hostname)`,
+which in a plain chroot is the ISO's), the secrets password (prompted at
+STEP 0, blank skips the run) in a file on the chroot's tmpfs `/run` via
+`STAY_GO_SECRETS_PASSWORD_FILE`, a temporary NOPASSWD sudoers drop-in (removed
+and verified gone), and a plain copy of the ISO's `resolv.conf` (step 5's stub
+symlink points into an empty `/run`). Nodes that need a booted system (user
+services, `systemctl --user`, daemons, containers) fail there by design and
+stay out of state. The user unit `stay-go-first-login.service` then opens
+`scripts/first-login.sh` in ghostty at the first graphical login to finish the
+run, and removes itself once stay-go exits 0.
 
 ---
 

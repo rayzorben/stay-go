@@ -51,9 +51,17 @@ func (m *Manager) IsUnlocked() bool { return m.unlocked }
 //
 // Existing setup (verifyToken != ""): prompts once and verifies the password
 // decrypts the sentinel correctly (up to 3 attempts).
+//
+// When PasswordFileEnv is set, the password is read from that file instead and
+// nothing is prompted: a wrong or unreadable password is an error, not a retry.
+// This is for unattended runs with no terminal (bootstrap's chroot pass).
 func (m *Manager) Unlock(verifyToken string) error {
 	isNewSetup := verifyToken == ""
 	m.newSetup = isNewSetup
+
+	if path := os.Getenv(PasswordFileEnv); path != "" {
+		return m.unlockFromFile(path, verifyToken)
+	}
 
 	if !isNewSetup {
 		// Try the keyring first for existing setups only.
@@ -72,6 +80,37 @@ func (m *Manager) Unlock(verifyToken string) error {
 		return m.promptNewPassword()
 	}
 	return m.promptExistingPassword(verifyToken)
+}
+
+// PasswordFileEnv names an environment variable holding the path of a file
+// whose content is the secrets password. Set, it replaces the keyring and the
+// prompt (see Unlock).
+const PasswordFileEnv = "STAY_GO_SECRETS_PASSWORD_FILE"
+
+// unlockFromFile unlocks with the password stored in path. One trailing
+// newline is dropped so `echo pass > file` works. With no _verify sentinel yet
+// there is nothing to check the password against, and setting one up from an
+// unattended run would lock every later run behind an unconfirmed password.
+func (m *Manager) unlockFromFile(path, verifyToken string) error {
+	if verifyToken == "" {
+		return fmt.Errorf("%s is set but no secrets password has been set up yet (no _verify)", PasswordFileEnv)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", PasswordFileEnv, err)
+	}
+	pass := strings.TrimSuffix(strings.TrimSuffix(string(raw), "\n"), "\r")
+	if pass == "" {
+		return fmt.Errorf("%s: password file %q is empty", PasswordFileEnv, path)
+	}
+	if err := m.checkPassword(pass, verifyToken); err != nil {
+		return fmt.Errorf("%s: %w", PasswordFileEnv, err)
+	}
+	// Not stored in the keyring: an unattended run has none, and a run handed
+	// the password explicitly should leave the keyring as it found it.
+	m.password = pass
+	m.unlocked = true
+	return nil
 }
 
 // promptNewPassword handles first-time setup: prompts twice, requires match.

@@ -237,6 +237,8 @@ secrets:
 
 Decrypted values are available as `${secrets.name}` (or `${secrets.group.name}` for nested keys) anywhere in the config at execute time. They are **never shown in plan output**.
 
+For unattended runs with no terminal or keyring, set `STAY_GO_SECRETS_PASSWORD_FILE` to a file holding the password. It replaces both the keyring and the prompt, a wrong password is an error rather than a retry, and it requires an existing `_verify` sentinel (`scripts/bootstrap.sh` uses this for its chroot run).
+
 ```yaml
 files:
   - content: ${secrets.tailscale_auth_key}

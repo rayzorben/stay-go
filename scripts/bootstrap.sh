@@ -202,6 +202,15 @@ read_secret_confirmed() {
     done
 }
 
+# The stay-go secrets password, for the first stay-go run in the chroot (STEP 6).
+# Asked once, not confirmed: it is an existing password, and stay-go checks it
+# against the config's _verify sentinel. Blank skips the chroot run, leaving
+# all of stay-go's first run to the first login.
+read_secrets_pass() {
+    read -rsp "Enter stay-go secrets password (blank = skip the chroot stay-go run): " SECRETS_PASS
+    echo
+}
+
 if [[ "$CURRENT_STEP" -eq 0 ]]; then
     echo "========================================================"
     echo " Host Profile      : $HOST_ARG"
@@ -214,6 +223,7 @@ if [[ "$CURRENT_STEP" -eq 0 ]]; then
     echo " Bootloader        : Limine (Graphical)"
     echo " Crypt UI / Splash : Plymouth Graphical Prompt"
     echo " Go Repo Clone     : $REPO_URL -> /home/$USERNAME/stay"
+    echo " First stay-go run : in the chroot, finished in a terminal at first login"
     echo " Username          : $USERNAME (Wheel Sudoer)"
     echo " Hostname          : $HOSTNAME"
     echo "========================================================"
@@ -225,10 +235,12 @@ if [[ "$CURRENT_STEP" -eq 0 ]]; then
 
     read_secret_confirmed LUKS_PASS "LUKS Disk Encryption Passphrase"
     read_secret_confirmed USER_PASS "System User/Root Password"
+    read_secrets_pass
 
     # %q, not '...': a passphrase containing ' (or $, ", `) must round-trip
     # through 'source' verbatim instead of breaking or executing on resume.
-    ( umask 077; printf 'LUKS_PASS=%q\nUSER_PASS=%q\n' "$LUKS_PASS" "$USER_PASS" > "$VARS_FILE" )
+    ( umask 077; printf 'LUKS_PASS=%q\nUSER_PASS=%q\nSECRETS_PASS=%q\n' \
+        "$LUKS_PASS" "$USER_PASS" "$SECRETS_PASS" > "$VARS_FILE" )
 else
     if [[ -f "$VARS_FILE" ]]; then
         # shellcheck disable=SC1090
@@ -237,8 +249,11 @@ else
         echo "[!] Variables file missing. Please re-enter credentials."
         read_secret_confirmed LUKS_PASS "LUKS Disk Encryption Passphrase"
         read_secret_confirmed USER_PASS "System User/Root Password"
+        read_secrets_pass
     fi
 fi
+# A vars file written by an older bootstrap has no SECRETS_PASS: no chroot pass.
+SECRETS_PASS="${SECRETS_PASS:-}"
 
 ensure_storage_ready() {
     if ! cryptsetup status "$LUKS_NAME" >/dev/null 2>&1; then
@@ -905,9 +920,141 @@ CHROOT_SCRIPT
 fi
 
 # ==========================================
-# 6. TEARDOWN
+# 6. FIRST STAY-GO RUN (CHROOT) + FIRST-LOGIN HANDOFF
 # ==========================================
-echo "[*] STEP 6: Unmounting and finalizing..."
+# Runs stay-go once inside the target so the first boot already has its
+# packages, files, groups/users and enabled system services (sddm included),
+# instead of a bare system that needs a TTY login to run stay-go by hand.
+#
+# A chroot is not a booted system, so some nodes are expected to fail here and
+# are simply retried later (failed nodes never enter the state file):
+# systemd --user units and `systemctl --user` commands (no user manager),
+# commands that talk to daemons (tailscale up, keyd reload), and containers.
+# Kernel-facing commands (sysctl --system) hit the ISO's kernel; their check:
+# probes re-plan them on the first real run. The first-login unit installed
+# below opens a terminal at the first graphical login to finish the job.
+#
+# What the chroot run needs that arch-chroot does not give it:
+#   hostname  default.yaml picks the host/user layers with $(hostname), which
+#             in a plain chroot is the ISO's -- every layer would be silently
+#             skipped. A private UTS namespace carries the target's hostname.
+#   secrets   no keyring and no terminal: the password goes in a file on the
+#             chroot's /run (a fresh tmpfs, never the target disk) named by
+#             STAY_GO_SECRETS_PASSWORD_FILE. Every node waits on the secrets
+#             barrier, so without it nothing would run.
+#   sudo      stay-go runs as $USERNAME and escalates with sudo; a temporary
+#             NOPASSWD drop-in covers the run and is removed afterwards
+#             (trap inside the chroot, rm + verify outside it).
+#   DNS       step 5 made /etc/resolv.conf a symlink into /run, which is empty
+#             inside the chroot; a plain copy of the ISO's stands in meanwhile.
+FIRST_RUN_DROPIN="/etc/sudoers.d/99-stay-go-first-run"
+FIRST_LOGIN_UNIT="stay-go-first-login.service"
+
+# Opens a terminal running scripts/first-login.sh at the first graphical login;
+# the script removes the unit once stay-go succeeds. Written as files (no
+# systemctl --user in a chroot), owned by the target's $USERNAME.
+install_first_login_unit() {
+    local ids home="/mnt/home/$USERNAME"
+    ids=$(awk -F: -v u="$USERNAME" '$1 == u {print $3 ":" $4}' /mnt/etc/passwd)
+    local unit_dir="$home/.config/systemd/user"
+    install -d -o "${ids%:*}" -g "${ids#*:}" "$home/.config" "$home/.config/systemd" \
+        "$unit_dir" "$unit_dir/graphical-session.target.wants"
+    cat > "$unit_dir/$FIRST_LOGIN_UNIT" <<UNIT
+[Unit]
+Description=Finish stay-go's first run in a terminal (removed once it succeeds)
+After=graphical-session.target
+ConditionPathExists=/usr/bin/ghostty
+ConditionPathExists=%h/stay/scripts/first-login.sh
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ghostty -e /usr/bin/bash %h/stay/scripts/first-login.sh
+
+[Install]
+WantedBy=graphical-session.target
+UNIT
+    ln -sfn "../$FIRST_LOGIN_UNIT" "$unit_dir/graphical-session.target.wants/$FIRST_LOGIN_UNIT"
+    chown -h "$ids" "$unit_dir/$FIRST_LOGIN_UNIT" \
+        "$unit_dir/graphical-session.target.wants/$FIRST_LOGIN_UNIT"
+}
+
+if [[ "$CURRENT_STEP" -lt 6 ]]; then
+    echo "[*] STEP 6: First stay-go run in the chroot..."
+    ensure_mounts_ready
+    install_first_login_unit
+
+    if [[ -z "$SECRETS_PASS" ]]; then
+        echo "[*] No secrets password given: stay-go's first run waits for the first login."
+    else
+        # Quoted heredoc: nothing here is expanded by this shell; the values
+        # arrive as arguments. Same file-not-stdin rule as STEP 5 -- stdin
+        # carries only the password, read first, then is pinned to /dev/null.
+        cat > /mnt/root/stay-go-first-run.sh <<'FIRST_RUN'
+set -euo pipefail
+user=$1 host=$2 dropin=$3
+home=/home/$user
+pwfile=/run/stay-go-first-run.pass
+
+trap 'rm -f "$pwfile" "$dropin"' EXIT
+( umask 077; cat > "$pwfile" )
+chown "$user:" "$pwfile"
+exec < /dev/null
+
+echo "[*] Building stay-go..."
+runuser -u "$user" -- env -i HOME="$home" USER="$user" PATH=/usr/bin \
+    bash -c 'cd "$HOME/stay" && make build'
+install -m 755 "$home/stay/bin/stay-go" /usr/local/bin/stay-go
+
+printf '%s ALL=(ALL:ALL) NOPASSWD: ALL\n' "$user" > "$dropin"
+chmod 0440 "$dropin"
+visudo -c -f "$dropin" >/dev/null
+
+# shellcheck disable=SC1091
+. /etc/locale.conf
+echo "[*] Running stay-go as $user on $host..."
+set +e
+unshare --uts /bin/bash -c 'hostname "$1" && shift && exec "$@"' _ "$host" \
+    runuser -u "$user" -- env -i HOME="$home" USER="$user" LOGNAME="$user" SHELL=/bin/bash \
+        PATH=/usr/local/sbin:/usr/local/bin:/usr/bin TERM="${TERM:-linux}" LANG="${LANG:-C.UTF-8}" \
+        STAY_GO_SECRETS_PASSWORD_FILE="$pwfile" \
+        /usr/local/bin/stay-go -c "$home/stay/config" --yes
+rc=$?
+set -e
+exit "$rc"
+FIRST_RUN
+
+        rm -f /mnt/etc/resolv.conf
+        cp -L /etc/resolv.conf /mnt/etc/resolv.conf
+        set +e
+        printf '%s' "$SECRETS_PASS" \
+            | TERM="${TERM:-linux}" arch-chroot /mnt /bin/bash /root/stay-go-first-run.sh \
+                "$USERNAME" "$HOSTNAME" "$FIRST_RUN_DROPIN"
+        FIRST_RUN_RC=$?
+        set -e
+        rm -f /mnt/root/stay-go-first-run.sh "/mnt$FIRST_RUN_DROPIN"
+        ln -sf /run/systemd/resolve/stub-resolv.conf /mnt/etc/resolv.conf
+
+        if [[ -e "/mnt$FIRST_RUN_DROPIN" ]]; then
+            echo "[!] $FIRST_RUN_DROPIN is still in the target. Refusing to continue."
+            exit 1
+        fi
+        if [[ "$FIRST_RUN_RC" -eq 0 ]]; then
+            echo "[*] stay-go's chroot run completed with no failures."
+        else
+            echo "[!] stay-go's chroot run exited $FIRST_RUN_RC. Nodes that need a running"
+            echo "    system (user services, daemons) fail here by design; the terminal at"
+            echo "    first login runs stay-go again to finish them. Log, in the target:"
+            echo "    /home/$USERNAME/.local/share/stay-go/logs/latest.log"
+        fi
+    fi
+
+    set_checkpoint 6
+fi
+
+# ==========================================
+# 7. TEARDOWN
+# ==========================================
+echo "[*] STEP 7: Unmounting and finalizing..."
 umount -R /mnt || true
 vgchange -an "$VG_NAME" || true
 cryptsetup close "$LUKS_NAME" || true
