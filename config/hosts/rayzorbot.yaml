@@ -5,18 +5,25 @@
 # Everything generic lives in hosts/common/laptop.yaml, included below; this
 # file is only what this machine's hardware needs. None of cachygram's LG Gram
 # fixes apply here: the i915 flags (this iGPU is xe-only), the ALC298 speaker
-# verbs, the EC thermal envelope, the WMI keyboard backlight, the UCSI
+# verbs, the EC thermal envelope, the LG WMI keyboard backlight, the UCSI
 # blacklist and the AX211 autosuspend rule all target hardware this box lacks.
 #
+# Audio is plain HDA, not SoundWire: a Realtek ALC255 (Clevo board, subsystem
+# 1558:f551) driving the two speakers from one pin, no smart amp or woofer.
+# The speaker EQ that stands in for Windows' DSP is in users/rayben-rayzorbot.yaml.
+#
 # Not yet known, check on first boot before adding anything for them:
-#   audio      cat /proc/asound/cards — Panther Lake SoundWire codecs have
-#              shipped with no ALSA card at all on other 356H laptops.
 #   bluetooth  lsusb — which chip, and whether bt-headset-watchdog's headset
 #              drops calls on it the way it did on cachygram's AX211.
-#   vendor EC  ls /sys/bus/wmi/devices — Thunderobot's fan modes, keyboard RGB
-#              and charge limit have no Linux driver (Leishen ControlCenter 3.x,
-#              built by Quanta); set them in Windows before the wipe, the EC
-#              keeps them.
+#
+# Keyboard backlight, Fn keys, performance profile, charge limit: thunderlight
+# (~/code/thunderlight), below. They all go through the board's Clevo firmware
+# interface \_SB.DCHU (CLV0001), the one Thunderobot's Windows Control Center
+# (Clevo CC 3.0) uses; the Fn light keys only notify the OS, so without the
+# daemon they do nothing. Tested Nov 10 2026: colour, four levels, on/off, Fn
+# events and profiles work; one zone; no firmware effects. If the backlight
+# goes dark and stays dark even through `tl kbd apply`, the EC has wedged:
+# shut down, unplug the charger, hold the power button 60s, boot.
 
 laptop: !include "./common/laptop.yaml"
 
@@ -33,6 +40,11 @@ packages:
   - nvidia-prime # prime-run: render one app on the dGPU
   # Not nvidia-powerd (Dynamic Boost): with it running, the dGPU of another
   # RTX 5060 laptop never reached runtime D3, so it drained the battery idle.
+
+  # ── thunderlight's kernel module is built by DKMS for both kernels ──
+  - dkms
+  - linux-cachyos-headers
+  - linux-cachyos-lts-headers
 
 files:
   # nvidia-open 615.78.08 hangs in nv_pci_shutdown at poweroff on RTX 5060
@@ -60,6 +72,20 @@ files:
     target: /etc/systemd/system/nvidia-unload.service
     sudo: true
 
+  # thunderlightd's settings. Fn keys and `tl` change the live ones (kept in
+  # /var/lib/thunderlight/state.json); a change to this file resets them to it.
+  # charge: "start end" in %, off, or keep (leave the firmware's alone).
+  # palette: what Fn+mode steps through.
+  - content: |
+      # Managed by stay-go.
+      colour = 0000ff
+      level = 4
+      profile = entertainment
+      charge = 70 80
+      palette = 0000ff 00ffff 00ff00 ffff00 ff8000 ff0000 ff00ff ffffff
+    target: /etc/thunderlight.conf
+    sudo: true
+
 services:
   # Save and restore VRAM across suspend and hibernate (nvidia-utils ships the
   # units; without them the desktop comes back from sleep with corrupt or
@@ -77,5 +103,21 @@ services:
   - service: nvidia-unload
     depends:
       - files: [/etc/systemd/system/nvidia-unload.service]
+
+  - service: thunderlightd
+    depends:
+      - commands: [thunderlight]
+      - files: [/etc/thunderlight.conf]
+
+commands:
+  # Module source to DKMS, tl and thunderlightd to /usr/local, the unit to
+  # /etc/systemd/system. The check re-runs it whenever the ~/code/thunderlight
+  # tree differs from what is installed, or a kernel lacks the module.
+  - name: thunderlight
+    command: ~/code/thunderlight/install.sh
+    check: ~/code/thunderlight/install.sh --check
+    sudo: true
+    depends:
+      - packages: [dkms, linux-cachyos-headers, linux-cachyos-lts-headers]
 
 backups: !include "./rayzorbot/backups.yaml"

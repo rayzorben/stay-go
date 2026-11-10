@@ -151,6 +151,15 @@ files:
     target: ~/.config/microsoft-edge-stable-flags.conf
     symlink: true
 
+  # Remmina RDP profile for rayzorwin. A copy, not a symlink: Remmina writes
+  # window size/scale back into the file on every connect, and a copy is only
+  # rewritten when this source changes. No password inside (password=. means
+  # it lives in the keyring via libsecret; Remmina asks once per machine).
+  - source: ${config_root}/files/remmina/rayzorwin.remmina
+    target: ~/.local/share/remmina/group_rdp_rayzorwin_rayzorwin.remmina
+    depends:
+      - packages: [remmina]
+
   # ── Folder links into ~ ──────────────────────────────────────────────────
   # ~/code and ~/work are the stable paths everything else refers to, so a
   # Dropbox reorganisation only changes these two sources.
@@ -584,6 +593,14 @@ commands:
     check: bash ${config_root}/scripts/firefox-user-js.sh --check
     depends:
       - packages: [firefox]
+
+  # Zen user.js, same mechanism (files/config/zen-user.js): unsigned
+  # extensions allowed via xpinstall.signatures.required=false.
+  - name: zen user.js
+    command: bash ${config_root}/scripts/firefox-user-js.sh zen
+    check: bash ${config_root}/scripts/firefox-user-js.sh --check zen
+    depends:
+      - packages: [zen-browser]
 
   - name: edge profiles
     command: bash ${config_root}/scripts/edge-profiles.sh ${edge_profiles}

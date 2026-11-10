@@ -88,6 +88,22 @@ files:
     depends:
       - packages: [keyd]
 
+  # keyd grabs the built-in keyboard and re-emits every key through a virtual
+  # device on bus USB, which libinput treats as external — so the touchpad's
+  # disable-while-typing never pairs with it and a palm brush steals focus
+  # mid-sentence. Mark it internal. libinput loads quirks when the compositor
+  # starts, so this takes effect at the next login.
+  - content: |
+      # Managed by stay-go.
+      [keyd virtual keyboard]
+      MatchUdevType=keyboard
+      MatchName=keyd virtual keyboard
+      AttrKeyboardIntegration=internal
+    target: /etc/libinput/local-overrides.quirks
+    sudo: true
+    depends:
+      - packages: [keyd]
+
   # ── Memory and display latency tuning ──
 
   # Kill multi-page readahead stalls on zRAM swap lookups and normalise VFS

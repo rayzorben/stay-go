@@ -20,8 +20,115 @@ files:
   # Symlinked into the repo so every change made in the DMS settings UI lands
   # in files/dms/settings.rayzorbot.json, ready to commit (DMS saves through
   # the link and leaves it in place). Started as a copy of cachygram's.
+  # Locking: logind's default HandleLidSwitch=suspend handles the lid, and DMS
+  # locks before every suspend (lockBeforeSuspend) and after 30 idle minutes on
+  # AC or battery (acLockTimeout/batteryLockTimeout, in seconds). The screen
+  # turns off after 30 idle minutes on AC, alongside the lock, and after 10 on
+  # battery, without locking (acMonitorTimeout/batteryMonitorTimeout). No face
+  # unlock: the only camera is a plain RGB Chicony (04f2:b86e), no IR sensor,
+  # so Howdy would accept a photo and would fail in the dark.
   - source: ${config_root}/files/dms/settings.rayzorbot.json
     target: ~/.config/dms/settings.json
     symlink: true
     depends:
       - commands: [install dms]
+
+  # Clipboard history lives in its own file, written by the dms server (it
+  # also saves through the link). 500 entries, 10 MiB max per entry.
+  - source: ${config_root}/files/dms/clsettings.rayzorbot.json
+    target: ~/.config/dms/clsettings.json
+    symlink: true
+    depends:
+      - commands: [install dms]
+
+  # ── Speaker EQ (EasyEffects) ──
+  # The ALC255 drives two small speakers raw (one speaker pin, no smart amp,
+  # no woofer), so without Windows' vendor DSP they sound thin. Presets are
+  # symlinked into the repo, so tuning in the EasyEffects window and saving
+  # the preset lands in files/easyeffects/, ready to commit.
+  - source: ${config_root}/files/easyeffects/laptop-speakers.json
+    target: ~/.local/share/easyeffects/output/laptop-speakers.json
+    symlink: true
+    depends:
+      - packages: [easyeffects]
+  - source: ${config_root}/files/easyeffects/flat.json
+    target: ~/.local/share/easyeffects/output/flat.json
+    symlink: true
+    depends:
+      - packages: [easyeffects]
+
+  # Autoload is per sink + route description. EasyEffects keeps the last
+  # preset when it switches to a device with no autoload, so headphones get
+  # an explicit flat one, and every other device (Bluetooth, HDMI, USB)
+  # falls back to flat through the easyeffects-fallback command below.
+  - content: |
+      {
+          "device": "alsa_output.pci-0000_00_1f.3.analog-stereo",
+          "device-description": "Built-in Audio Analog Stereo",
+          "device-profile": "Speakers",
+          "preset-name": "laptop-speakers"
+      }
+    target: ~/.local/share/easyeffects/autoload/output/alsa_output.pci-0000_00_1f.3.analog-stereo:Speakers.json
+    depends:
+      - packages: [easyeffects]
+  - content: |
+      {
+          "device": "alsa_output.pci-0000_00_1f.3.analog-stereo",
+          "device-description": "Built-in Audio Analog Stereo",
+          "device-profile": "Headphones",
+          "preset-name": "flat"
+      }
+    target: ~/.local/share/easyeffects/autoload/output/alsa_output.pci-0000_00_1f.3.analog-stereo:Headphones.json
+    depends:
+      - packages: [easyeffects]
+
+  # The package ships no unit; start it with the session like dms/dropbox.
+  - content: |
+      # Managed by stay-go.
+      [Unit]
+      Description=EasyEffects (speaker EQ)
+      PartOf=graphical-session.target
+      After=graphical-session.target pipewire-pulse.service wireplumber.service
+
+      [Service]
+      Type=simple
+      ExecStart=/usr/bin/easyeffects --service-mode --hide-window
+      Restart=on-failure
+      # It ignores SIGTERM for ~10s while tearing down its filters.
+      TimeoutStopSec=3
+
+      [Install]
+      WantedBy=graphical-session.target
+    target: ~/.config/systemd/user/easyeffects.service
+
+packages:
+  - easyeffects
+  - lsp-plugins-lv2 # equalizer, limiter, stereo tools
+  - calf # bass enhancer
+
+services:
+  - service: easyeffects.service
+    user: true
+    depends:
+      - packages: [easyeffects, lsp-plugins-lv2, calf]
+      - files:
+          - ~/.config/systemd/user/easyeffects.service
+          - ~/.local/share/easyeffects/output/laptop-speakers.json
+          - ~/.local/share/easyeffects/output/flat.json
+
+commands:
+  # Devices with no autoload file fall back to the flat preset. EasyEffects
+  # owns easyeffectsrc (window size etc.), so set just these two keys, with
+  # it stopped so it cannot write its old values back over them.
+  - name: easyeffects-fallback
+    command: |
+      systemctl --user stop easyeffects.service
+      kwriteconfig6 --file easyeffects/db/easyeffectsrc --group Window --key outputAutoloadingUsesFallback true
+      kwriteconfig6 --file easyeffects/db/easyeffectsrc --group Window --key outputAutoloadingFallbackPreset flat
+      systemctl --user start easyeffects.service
+    check: |
+      [ "$(kreadconfig6 --file easyeffects/db/easyeffectsrc --group Window --key outputAutoloadingUsesFallback)" = true ] \
+        && [ "$(kreadconfig6 --file easyeffects/db/easyeffectsrc --group Window --key outputAutoloadingFallbackPreset)" = flat ] \
+        || { echo "EasyEffects does not fall back to the flat preset"; exit 1; }
+    depends:
+      - services: [easyeffects.service]
