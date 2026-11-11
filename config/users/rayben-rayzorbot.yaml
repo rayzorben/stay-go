@@ -27,6 +27,9 @@ files:
   # battery, without locking (acMonitorTimeout/batteryMonitorTimeout). No face
   # unlock: the only camera is a plain RGB Chicony (04f2:b86e), no IR sensor,
   # so Howdy would accept a photo and would fail in the dark.
+  # Battery alerts: DMS sends a critical notification at 10% by default; the
+  # low one (batteryNotifyLow, 20%) is off by default, so it is turned on here
+  # as a notification (batteryLowNotificationType 1) rather than a toast.
   - source: ${config_root}/files/dms/settings.rayzorbot.json
     target: ~/.config/dms/settings.json
     symlink: true

@@ -269,5 +269,8 @@
   "clipboardClickToPaste": true,
   "clipboardEnterToPaste": true,
   "clipboardSize": "micro",
-  "clipboardUseOverlayLayer": false
+  "clipboardUseOverlayLayer": false,
+  "touchpadTapToClick": false,
+  "batteryNotifyLow": true,
+  "batteryLowNotificationType": 1
 }
