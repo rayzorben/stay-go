@@ -297,6 +297,39 @@ files:
     depends:
       - files: [~/.local/bin/claude-sedanos]
 
+  # ── Sedanos Teams and Outlook as app windows ──
+  # Edge --app windows in the Sedanos profile (edge profiles, below), so they
+  # share its Microsoft sign-in. On Wayland Edge gives each one the app-id
+  # msedge-<host>__-<profile dir>; StartupWMClass ties the window to its
+  # launcher and niri's rules.kdl routes them to Sedanos-Office.
+  - content: |
+      [Desktop Entry]
+      Type=Application
+      Name=Teams (Sedanos)
+      Comment=Microsoft Teams, Sedanos Edge profile
+      Exec=/usr/bin/microsoft-edge-stable --profile-directory=Sedanos --app=https://teams.cloud.microsoft/
+      Icon=microsoft-edge
+      Categories=Network;Chat;InstantMessaging;
+      StartupWMClass=msedge-teams.cloud.microsoft__-Sedanos
+      StartupNotify=true
+    target: ~/.local/share/applications/teams-sedanos.desktop
+    depends:
+      - packages: [microsoft-edge-stable-bin]
+
+  - content: |
+      [Desktop Entry]
+      Type=Application
+      Name=Outlook (Sedanos)
+      Comment=Microsoft Outlook, Sedanos Edge profile
+      Exec=/usr/bin/microsoft-edge-stable --profile-directory=Sedanos --app=https://outlook.cloud.microsoft/
+      Icon=application-msoutlook
+      Categories=Network;Email;
+      StartupWMClass=msedge-outlook.cloud.microsoft__-Sedanos
+      StartupNotify=true
+    target: ~/.local/share/applications/outlook-sedanos.desktop
+    depends:
+      - packages: [microsoft-edge-stable-bin]
+
   - content: |
       [Service]
       ExecStart=

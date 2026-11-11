@@ -95,6 +95,7 @@ window-rule {
 window-rule {
     match title="- SED -"
     match app-id="-sedanos$"
+    match app-id="^msedge-.*-Sedanos$"
     open-maximized true
 }
 
@@ -146,6 +147,8 @@ layer-rule {
 window-rule {
     match app-id="-sedanos$"
     match title="- SED -"
+    // Edge --app windows (Teams, Outlook) in the Sedanos profile.
+    match app-id="^msedge-.*-Sedanos$"
     open-on-workspace "Sedanos-Office"
 }
 
