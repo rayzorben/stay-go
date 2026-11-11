@@ -101,12 +101,55 @@ files:
       WantedBy=graphical-session.target
     target: ~/.config/systemd/user/easyeffects.service
 
+  # ── VRR on battery ──
+  # Full VRR on eDP-1 while unplugged (the 165 Hz panel drops its refresh
+  # when idle), fixed 165 Hz on AC. niri's config cannot key on the power
+  # source, so this flips it at runtime through `niri msg` on every
+  # power_supply uevent. A niri config reload that touches outputs resets it
+  # until the next plug event; restarting the unit reapplies it.
+  - content: |
+      #!/bin/bash
+      # Managed by stay-go.
+      apply() {
+        if [ "$(cat /sys/class/power_supply/AC/online)" = 1 ]; then want=off; else want=on; fi
+        [ "$want" = "$last" ] && return
+        niri msg output eDP-1 vrr "$want" && last=$want && echo "vrr $want"
+      }
+      apply
+      udevadm monitor --udev --subsystem-match=power_supply | while read -r _; do apply; done
+    target: ~/.local/lib/niri-vrr-battery.sh
+    mode: "0755"
+
+  - content: |
+      # Managed by stay-go.
+      [Unit]
+      Description=niri VRR on battery, off on AC
+      PartOf=graphical-session.target
+      After=graphical-session.target
+
+      [Service]
+      Type=simple
+      ExecStart=%h/.local/lib/niri-vrr-battery.sh
+      Restart=on-failure
+      RestartSec=5
+
+      [Install]
+      WantedBy=graphical-session.target
+    target: ~/.config/systemd/user/niri-vrr-battery.service
+
 packages:
   - easyeffects
   - lsp-plugins-lv2 # equalizer, limiter, stereo tools
   - calf # bass enhancer
 
 services:
+  - service: niri-vrr-battery.service
+    user: true
+    depends:
+      - files:
+          - ~/.local/lib/niri-vrr-battery.sh
+          - ~/.config/systemd/user/niri-vrr-battery.service
+
   - service: easyeffects.service
     user: true
     depends:
