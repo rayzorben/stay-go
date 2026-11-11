@@ -140,6 +140,31 @@ files:
       WantedBy=graphical-session.target
     target: ~/.config/systemd/user/niri-vrr-battery.service
 
+  # ── dGPU wake logger ──
+  # The RTX 5060 sleeps in runtime D3 but wakes for ~2-3s whenever anything
+  # enumerates GPUs, and was awake ~60% of uptime (Nov 11 2026). This logs
+  # each wake with the processes that just started or opened /dev/nvidia0,
+  # to ~/.local/state/gpu-wakes.log; `gpu-wake-logger --summary` totals it.
+  # Diagnostic: drop it once the wakers are dealt with.
+  - source: ${config_root}/files/gpu-wake-logger.py
+    target: ~/.local/bin/gpu-wake-logger
+    mode: "0755"
+    depends:
+      - packages: [python]
+  - content: |
+      [Unit]
+      Description=Log what wakes the NVIDIA dGPU
+
+      [Service]
+      ExecStart=%h/.local/bin/gpu-wake-logger
+      Restart=always
+      RestartSec=10
+      Nice=10
+
+      [Install]
+      WantedBy=default.target
+    target: ~/.config/systemd/user/gpu-wake-logger.service
+
 packages:
   - easyeffects
   - lsp-plugins-lv2 # equalizer, limiter, stereo tools
@@ -152,6 +177,13 @@ services:
       - files:
           - ~/.local/lib/niri-vrr-battery.sh
           - ~/.config/systemd/user/niri-vrr-battery.service
+
+  - service: gpu-wake-logger.service
+    user: true
+    depends:
+      - files:
+          - ~/.local/bin/gpu-wake-logger
+          - ~/.config/systemd/user/gpu-wake-logger.service
 
   - service: easyeffects.service
     user: true
