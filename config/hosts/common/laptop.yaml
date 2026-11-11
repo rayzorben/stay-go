@@ -147,6 +147,17 @@ files:
     target: /etc/environment.d/95-electron-wayland.conf
     sudo: true
 
+  # GTK4 initialises Vulkan at every app launch (even when rendering with GL),
+  # and enumerating devices wakes a runtime-suspended NVIDIA dGPU: ~2-3s before
+  # the window appears (satty measured 2.2s, Nov 10 2026; ghostty, nautilus,
+  # the GNOME file chooser are the same). GTK then renders with GL on the iGPU.
+  # Only GDK is kept off Vulkan; games and other Vulkan apps are unaffected.
+  - content: |
+      # Managed by stay-go.
+      GDK_DISABLE=vulkan
+    target: /etc/environment.d/40-gtk-no-vulkan.conf
+    sudo: true
+
   # Mesa's rusticl is the OpenCL driver for Intel here; it stays off unless a
   # driver is named.
   - content: |
