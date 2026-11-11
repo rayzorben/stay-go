@@ -76,20 +76,22 @@ files:
   # /var/lib/thunderlight/state.json); a change to this file resets them to it.
   # charge: "start end" in %, off, or keep (leave the firmware's alone).
   # palette: what Fn+mode steps through.
-  # profile / ppd on AC, battery_* on battery, switched on plug and unplug
-  # (ppd = power-profiles-daemon: CPU EPP and Intel's SoC power slider). The
+  # profile / ppd on AC; on battery the battery_curve step for the charge
+  # ("<from %> <profile> <ppd>", highest first), switched on plug and unplug
+  # and stepped down as the battery drains (never back up until plugged in).
+  # ppd = power-profiles-daemon: CPU EPP and Intel's SoC power slider. The
   # firmware profiles are CPU power limits, measured Nov 10 2026: quiet and
   # powersave PL1/PL2 23/29 W, entertainment 36/45 W, performance 65/65 W;
   # quiet also runs the fans slower.
-  # Full power on AC; the middle tier and ppd balanced on battery.
+  # Full power on AC and down to 70% (the charge window's floor, so a short
+  # unplug changes nothing), then balanced, power saving, and quiet last.
   - content: |
       # Managed by stay-go.
       colour = 0000ff
       level = 4
       profile = performance
-      battery_profile = entertainment
       ppd = performance
-      battery_ppd = balanced
+      battery_curve = 70 performance performance, 50 entertainment balanced, 30 powersave power-saver, 0 quiet power-saver
       charge = 70 80
       palette = 0000ff 00ffff 00ff00 ffff00 ff8000 ff0000 ff00ff ffffff
     target: /etc/thunderlight.conf
