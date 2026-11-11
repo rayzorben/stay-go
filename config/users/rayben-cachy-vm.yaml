@@ -52,6 +52,7 @@ packages:
   - slurp
   - wayfreeze
   - satty
+  - wf-recorder # screenrecord.sh (Shift+Alt+Print)
   - psmisc # killall, used by screenshot.sh
   - cachyos-gaming-meta
   # Needs zlib-ng-compat, which conflicts with zlib; --noconfirm answers the
@@ -112,6 +113,10 @@ files:
   # Niri compositor config
   - source: ${config_root}/files/niri/screenshot.sh
     target: ~/.config/niri/screenshot.sh
+    symlink: true
+    mode: "+x"
+  - source: ${config_root}/files/niri/screenrecord.sh
+    target: ~/.config/niri/screenrecord.sh
     symlink: true
     mode: "+x"
 

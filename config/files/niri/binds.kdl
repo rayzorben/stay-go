@@ -1,5 +1,6 @@
 binds {
     Print { spawn "~/.config/niri/screenshot.sh"; }
+    Shift+Alt+Print { spawn "~/.config/niri/screenrecord.sh"; }
     Mod+grave { spawn "~/.config/niri/verterm-dropdown-toggle.sh"; }
 
     // keyd sends Mod+D for a lone tap of Super (leftmeta = overload(meta, M-d)
