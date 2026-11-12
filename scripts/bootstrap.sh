@@ -1048,18 +1048,32 @@ FIRST_RUN
 
         rm -f /mnt/etc/resolv.conf
         cp -L /etc/resolv.conf /mnt/etc/resolv.conf
+        # Ctrl-C must stop the install here, not count as a finished run.
+        # stay-go catches SIGINT and exits normally (non-zero), so bash sees an
+        # ordinary failure rather than a child killed by the signal and would
+        # carry on -- checkpoint 6, teardown, and the teardown deletes the
+        # checkpoint files, so a re-run started over at STEP 0. The trap only
+        # records the interrupt; bash runs it once arch-chroot has returned.
+        FIRST_RUN_INTERRUPTED=0
+        trap 'FIRST_RUN_INTERRUPTED=1' INT
         set +e
         printf '%s' "$SECRETS_PASS" \
             | TERM="${TERM:-linux}" arch-chroot /mnt /bin/bash /root/stay-go-first-run.sh \
                 "$USERNAME" "$HOSTNAME" "$FIRST_RUN_DROPIN"
         FIRST_RUN_RC=$?
         set -e
+        trap - INT
         rm -f /mnt/root/stay-go-first-run.sh "/mnt$FIRST_RUN_DROPIN"
         ln -sf /run/systemd/resolve/stub-resolv.conf /mnt/etc/resolv.conf
 
         if [[ -e "/mnt$FIRST_RUN_DROPIN" ]]; then
             echo "[!] $FIRST_RUN_DROPIN is still in the target. Refusing to continue."
             exit 1
+        fi
+        if [[ "$FIRST_RUN_INTERRUPTED" -eq 1 ]]; then
+            echo "[!] Interrupted during the chroot stay-go run. Re-run bootstrap and"
+            echo "    resume: it picks up at STEP 6 (stay-go skips what is already done)."
+            exit 130
         fi
         if [[ "$FIRST_RUN_RC" -eq 0 ]]; then
             echo "[*] stay-go's chroot run completed with no failures."
