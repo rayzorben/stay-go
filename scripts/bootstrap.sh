@@ -20,7 +20,8 @@ HOST_FILE="/tmp/cachyos_installer_host"
 # hardware lives here; the steps below only read these variables.
 #
 #   ROOT_LV_SIZE   btrfs root: both kernels + headers, firmware, the pacman
-#                  cache (@pkg) and every snapper snapshot share it.
+#                  cache (@pkg), Docker (@docker, @containerd) and every
+#                  snapper snapshot share it.
 #   SWAP_LV_SIZE   disk swap behind zram ("" = none). Priority 10, so zram
 #                  (100) is always used first and this only takes the overflow.
 #   HOME_LV_EXTENTS  XFS cannot shrink, so /home deliberately does not take the
@@ -279,10 +280,20 @@ ensure_mounts_ready() {
     if ! mountpoint -q /mnt; then
         echo "[*] Re-mounting filesystems for resume..."
         mount -o noatime,compress=zstd:1,discard=async,subvol=@ "/dev/$VG_NAME/lv_root" /mnt
-        mkdir -p /mnt/{.snapshots,var/log,var/cache/pacman/pkg,home,boot}
+        mkdir -p /mnt/{.snapshots,var/log,var/cache/pacman/pkg,var/lib/docker,var/lib/containerd,home,boot}
         mount -o noatime,compress=zstd:1,discard=async,subvol=@snapshots "/dev/$VG_NAME/lv_root" /mnt/.snapshots
         mount -o noatime,compress=zstd:1,discard=async,subvol=@var_log "/dev/$VG_NAME/lv_root" /mnt/var/log
         mount -o noatime,compress=zstd:1,discard=async,subvol=@pkg "/dev/$VG_NAME/lv_root" /mnt/var/cache/pacman/pkg
+        # Docker 29's containerd image store keeps images and container layers
+        # in /var/lib/containerd; /var/lib/docker keeps volumes. Separate
+        # subvolumes keep both out of snapper's snapshots of @ (snapshots stop
+        # pinning dead image layers, and a rollback leaves Docker alone).
+        mount -o noatime,compress=zstd:1,discard=async,subvol=@docker "/dev/$VG_NAME/lv_root" /mnt/var/lib/docker
+        mount -o noatime,compress=zstd:1,discard=async,subvol=@containerd "/dev/$VG_NAME/lv_root" /mnt/var/lib/containerd
+        # No copy-on-write for volumes: databases rewrite in place and CoW
+        # fragments them. +C only takes on files created after it is set, and
+        # the directory is empty on a fresh install; a no-op once data exists.
+        chattr +C /mnt/var/lib/docker 2>/dev/null || true
         mount -o noatime "/dev/$VG_NAME/lv_home" /mnt/home
         ensure_esp_ready
         mount "$PART_EFI" /mnt/boot
@@ -417,6 +428,8 @@ if [[ "$CURRENT_STEP" -lt 2 ]]; then
     btrfs subvolume create /mnt/@snapshots
     btrfs subvolume create /mnt/@var_log
     btrfs subvolume create /mnt/@pkg
+    btrfs subvolume create /mnt/@docker
+    btrfs subvolume create /mnt/@containerd
     umount /mnt
 
     mkfs.xfs -f -L cachyos-home "/dev/$VG_NAME/lv_home"
