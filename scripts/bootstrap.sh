@@ -235,6 +235,9 @@ fetch_stay_go() {
         | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1) || return 1
     [[ -n "$tag" ]] || return 1
     ver=${tag#v}
+    # Releases before this one have no `secret decrypt` and would take the
+    # arguments for a normal run; refuse them without running anything.
+    [[ "${ver%%.*}" =~ ^[0-9]+$ && "${ver%%.*}" -ge 20261111 ]] || return 1
     name="stay-go_${ver}_linux_${arch}"
     base="$REPO_URL/releases/download/$tag"
     rm -rf "$dir" && mkdir -p "$dir"
