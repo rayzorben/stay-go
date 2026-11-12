@@ -361,7 +361,13 @@ drop-in in place.
 
 ## Bootstrap First Run
 
-`scripts/bootstrap.sh` STEP 6 runs stay-go once inside the target chroot
+`scripts/bootstrap.sh` STEP 0 asks only for the secrets password: the LUKS
+passphrase and user/root password are ciphertexts in the script
+(`LUKS_PASS_ENC`, `USER_PASS_ENC`), decrypted by the latest GitHub release's
+`stay-go secret decrypt` (checksum-verified download). A blank password, no
+release, or three wrong tries falls back to typing them.
+
+STEP 6 runs stay-go once inside the target chroot
 (`--yes`, as the user), so the first boot already has its packages, files and
 enabled system services (sddm included). It needs: a private UTS namespace
 with the target's hostname (default.yaml selects layers via `$(hostname)`,
@@ -483,6 +489,11 @@ stay-go [-c dir] secret update <key> [value] [--all]
                           re-encrypt an existing secret with a new value in place
                           (cmd/stay-go/secret.go → secrets.Manager.SetInFile);
                           value prompted hidden when omitted, or read from stdin
+stay-go [-c dir] secret encrypt
+                          print a value's ciphertext under the config's password
+stay-go secret decrypt <ciphertext>
+                          print the plaintext; no config needed (password from
+                          STAY_GO_SECRETS_PASSWORD_FILE, else keyring, else prompt)
 ```
 
 ---

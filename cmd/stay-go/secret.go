@@ -17,6 +17,8 @@ import (
 
 const secretUsage = `Usage:
   stay-go [-c dir] secret update <key> [value] [--all]
+  stay-go [-c dir] secret encrypt
+  stay-go secret decrypt <ciphertext>
 
 Replaces an existing secret's value and encrypts it in place in the config.
 <key> is the dot-joined name used in ${secrets.<key>} (e.g. kopia.repository_password).
@@ -30,6 +32,13 @@ Replaces an existing secret's value and encrypts it in place in the config.
           host resolves it from.
 
 The next apply sees the new ciphertext and re-runs whatever uses the secret.
+
+encrypt prints the ciphertext of a value (prompted hidden, or read from stdin)
+under this config's secrets password, for use outside the config.
+
+decrypt prints the plaintext of a ciphertext. It needs no config: the password
+comes from $STAY_GO_SECRETS_PASSWORD_FILE, else the keyring, else a hidden prompt. Exit 1 on a
+wrong password. bootstrap.sh uses it for the disk and login passwords.
 `
 
 // unlockSecrets returns a Manager unlocked from the keyring or a password
@@ -45,6 +54,12 @@ func runSecret(configDir string, args []string) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
 		fmt.Fprint(os.Stderr, secretUsage)
 		return nil
+	}
+	switch args[0] {
+	case "encrypt":
+		return runSecretEncrypt(configDir, args[1:])
+	case "decrypt":
+		return runSecretDecrypt(args[1:])
 	}
 	if args[0] != "update" {
 		return fmt.Errorf("secret: unknown subcommand %q\n\n%s", args[0], secretUsage)
@@ -218,4 +233,70 @@ func relPaths(configDir string, paths []string) []string {
 		out[i] = relPath(configDir, p)
 	}
 	return out
+}
+
+// runSecretEncrypt implements `stay-go secret encrypt`: the value's ciphertext
+// under the config's password, printed on stdout. The config is read only for
+// its _verify sentinel, so the password is the one every other secret uses.
+func runSecretEncrypt(configDir string, args []string) error {
+	if len(args) != 0 {
+		return fmt.Errorf("secret encrypt: takes no arguments (value is prompted or read from stdin)\n\n%s", secretUsage)
+	}
+	cfg, err := config.LoadAll(configDir)
+	if err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	verify, ok := cfg.Secrets[secretspkg.VerifyKey]
+	if !ok || !verify.Encrypted {
+		return errors.New("secret encrypt: no secrets password is set up yet")
+	}
+	mgr, err := unlockSecrets(verify.RawValue)
+	if err != nil {
+		return fmt.Errorf("unlocking secrets: %w", err)
+	}
+	value, err := readSecretValue("the value")
+	if err != nil {
+		return err
+	}
+	if value == "" {
+		return errors.New("secret encrypt: value cannot be empty")
+	}
+	ct, err := mgr.Encrypt(value)
+	if err != nil {
+		return fmt.Errorf("encrypting: %w", err)
+	}
+	fmt.Println(ct)
+	return nil
+}
+
+// runSecretDecrypt implements `stay-go secret decrypt <ciphertext>`. The
+// plaintext goes to stdout with no trailing newline, so $(…) captures it as is.
+func runSecretDecrypt(args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("secret decrypt: expected <ciphertext>\n\n%s", secretUsage)
+	}
+	var pass string
+	if path := os.Getenv(secretspkg.PasswordFileEnv); path != "" {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("reading %s: %w", secretspkg.PasswordFileEnv, err)
+		}
+		pass = strings.TrimSuffix(strings.TrimSuffix(string(raw), "\n"), "\r")
+	} else if kp, ok := secretspkg.KeyringPassword(); ok {
+		pass = kp
+	} else {
+		fmt.Fprint(os.Stderr, "Secrets password: ")
+		raw, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Fprintln(os.Stderr)
+		if err != nil {
+			return fmt.Errorf("reading password: %w", err)
+		}
+		pass = string(raw)
+	}
+	pt, err := secretspkg.DecryptWithPassword(strings.TrimSpace(args[0]), pass)
+	if err != nil {
+		return fmt.Errorf("secret decrypt: %w", err)
+	}
+	fmt.Print(pt)
+	return nil
 }

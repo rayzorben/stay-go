@@ -82,3 +82,7 @@ func promptPassword(prompt string) (string, error) {
 	}
 	return string(raw), nil
 }
+
+// KeyringPassword returns the secrets password cached in the keyring, if any.
+// It is not verified; a wrong one fails decryption.
+func KeyringPassword() (string, bool) { return loadFromKeyring() }

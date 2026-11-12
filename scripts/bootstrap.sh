@@ -12,6 +12,14 @@ TIMEZONE="America/New_York"
 LOCALE="en_US.UTF-8"
 REPO_URL="https://github.com/rayzorben/stay-go"
 
+# The LUKS passphrase and the user/root password, encrypted under the stay-go
+# secrets password (`stay-go secret encrypt`). With the secrets password at
+# STEP 0 they are decrypted by a stay-go release binary, so nothing else is
+# asked; blank secrets password, or no network to fetch it, prompts for them.
+# Rotate: printf %s 'new' | stay-go -c config secret encrypt
+LUKS_PASS_ENC="BkGldYuKPC9CB1VSjF3nYtPVMzo7DrBXBTQmSMcqwPnDEuao9Tm2FVhM8GH9/zc7l3vdXlKchN4="
+USER_PASS_ENC="Cf9Owwnj8b6qh6BIP9a4RptqK7RP33MHWO9OF/l17ykJK2PA/DKxAQ/TNGDke7a8u2AwR8EG1w=="
+
 STATE_FILE="/tmp/cachyos_installer_state"
 VARS_FILE="/tmp/cachyos_installer_vars"
 HOST_FILE="/tmp/cachyos_installer_host"
@@ -208,8 +216,72 @@ read_secret_confirmed() {
 # against the config's _verify sentinel. Blank skips the chroot run, leaving
 # all of stay-go's first run to the first login.
 read_secrets_pass() {
-    read -rsp "Enter stay-go secrets password (blank = skip the chroot stay-go run): " SECRETS_PASS
+    read -rsp "Enter stay-go secrets password (blank = type every password, skip the chroot stay-go run): " SECRETS_PASS
     echo
+}
+
+# Download the latest stay-go release (checksum-verified) for `secret decrypt`.
+# The repo is not cloned and Go is not installed on the ISO at this point.
+SG_BIN=""
+fetch_stay_go() {
+    [[ -n "$SG_BIN" && -x "$SG_BIN" ]] && return 0
+    local arch tag ver name dir=/tmp/stay-go-release base
+    case "$(uname -m)" in
+        x86_64) arch=amd64 ;;
+        aarch64) arch=arm64 ;;
+        *) return 1 ;;
+    esac
+    tag=$(curl -fsSL https://api.github.com/repos/rayzorben/stay-go/releases/latest \
+        | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1) || return 1
+    [[ -n "$tag" ]] || return 1
+    ver=${tag#v}
+    name="stay-go_${ver}_linux_${arch}"
+    base="$REPO_URL/releases/download/$tag"
+    rm -rf "$dir" && mkdir -p "$dir"
+    curl -fsSL -o "$dir/$name.tar.gz" "$base/$name.tar.gz" || return 1
+    curl -fsSL -o "$dir/SHA256SUMS" "$base/SHA256SUMS" || return 1
+    ( cd "$dir" && grep " $name.tar.gz\$" SHA256SUMS | sha256sum -c --quiet - ) || return 1
+    tar -C "$dir" -xzf "$dir/$name.tar.gz" || return 1
+    SG_BIN="$dir/$name/stay-go"
+    [[ -x "$SG_BIN" ]]
+}
+
+# decrypt_secret CIPHERTEXT: plaintext on stdout. The password goes through a
+# 0600 file on the ISO's tmpfs, never argv or the environment.
+decrypt_secret() {
+    local pwfile rc=0
+    pwfile=$(umask 077; mktemp /tmp/stay-go-pass.XXXXXX)
+    printf %s "$SECRETS_PASS" > "$pwfile"
+    # timeout + /dev/null: a release older than `secret decrypt` takes these
+    # arguments for a normal run and would sit at its prompts.
+    STAY_GO_SECRETS_PASSWORD_FILE="$pwfile" timeout 60 "$SG_BIN" secret decrypt "$1" \
+        < /dev/null || rc=$?
+    rm -f "$pwfile"
+    return $rc
+}
+
+# Fill LUKS_PASS and USER_PASS: decrypted from the secrets password when it is
+# given (re-asked on a wrong one), else typed in.
+read_install_passwords() {
+    local attempt
+    for attempt in 1 2 3; do
+        read_secrets_pass
+        [[ -z "$SECRETS_PASS" ]] && break
+        if ! fetch_stay_go; then
+            echo "[!] Could not download a stay-go release; type the passwords instead."
+            break
+        fi
+        if LUKS_PASS=$(decrypt_secret "$LUKS_PASS_ENC" 2>/dev/null) \
+            && USER_PASS=$(decrypt_secret "$USER_PASS_ENC" 2>/dev/null) \
+            && [[ -n "$LUKS_PASS" && -n "$USER_PASS" ]]; then
+            echo "[*] Disk and user passwords decrypted from the secrets."
+            return 0
+        fi
+        echo "[!] Wrong secrets password (or the release cannot decrypt). Try again."
+        SECRETS_PASS=""
+    done
+    read_secret_confirmed LUKS_PASS "LUKS Disk Encryption Passphrase"
+    read_secret_confirmed USER_PASS "System User/Root Password"
 }
 
 if [[ "$CURRENT_STEP" -eq 0 ]]; then
@@ -234,9 +306,7 @@ if [[ "$CURRENT_STEP" -eq 0 ]]; then
         exit 1
     fi
 
-    read_secret_confirmed LUKS_PASS "LUKS Disk Encryption Passphrase"
-    read_secret_confirmed USER_PASS "System User/Root Password"
-    read_secrets_pass
+    read_install_passwords
 
     # %q, not '...': a passphrase containing ' (or $, ", `) must round-trip
     # through 'source' verbatim instead of breaking or executing on resume.
@@ -248,9 +318,7 @@ else
         source "$VARS_FILE"
     else
         echo "[!] Variables file missing. Please re-enter credentials."
-        read_secret_confirmed LUKS_PASS "LUKS Disk Encryption Passphrase"
-        read_secret_confirmed USER_PASS "System User/Root Password"
-        read_secrets_pass
+        read_install_passwords
     fi
 fi
 # A vars file written by an older bootstrap has no SECRETS_PASS: no chroot pass.

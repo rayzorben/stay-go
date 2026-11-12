@@ -100,6 +100,13 @@ func decrypt(encoded, password string) (string, error) {
 	return string(pt), nil
 }
 
+// DecryptWithPassword decrypts one ciphertext with password, with no config
+// or _verify sentinel: the GCM tag alone rejects a wrong password. For
+// callers outside a config (bootstrap.sh's install passwords).
+func DecryptWithPassword(ciphertext, password string) (string, error) {
+	return decrypt(ciphertext, password)
+}
+
 func deriveKey(password string, salt []byte) []byte {
 	return argon2.IDKey([]byte(password), salt, kdfTime, kdfMem, kdfThreads, keyLen)
 }
