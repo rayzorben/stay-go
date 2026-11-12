@@ -7,6 +7,8 @@ secrets:
   sedanos:
     vpn_psk: !encrypted yNACsgCIhMJkTVBDXmnNvN7xecahIUDjNmobcnqR3MNHX66KkFK0lhDS6OM0wc2hTyFqAOBnu1R83h+P5qMiAo+xMnCgxA==
     vpn_password: !encrypted M71syGyf0rJz4jzLxqARl4ltVmUGpbeE+n+vDZ92PGxr9p2FjTR0SfIKClh/IYtKnkBSiPAVdCWu
+  wifi:
+    rjakbennett: !encrypted h+aIpma/vc5Ng1p8TNJt8U965OFI5oi+sJwwB7JJ7H5T85VXX07Fa+kg0HpjhZvUmUS15g==
 
 packages:
   - solaar
@@ -69,6 +71,36 @@ packages:
   - strongswan
 
 files:
+  # ── Home wifi ──
+  # A NetworkManager keyfile rather than `nmcli device wifi connect`: nmcli needs
+  # a running NetworkManager, which bootstrap's chroot run does not have, so the
+  # first boot would still come up offline. NM reads this at boot; on a running
+  # system the nm-reload-connections command below loads it.
+  - content: |
+      # Managed by stay-go.
+      [connection]
+      id=rjakbennett
+      uuid=c1045ee0-f638-465c-a722-4118bedb8958
+      type=wifi
+      autoconnect=true
+
+      [wifi]
+      mode=infrastructure
+      ssid=rjakbennett
+
+      [wifi-security]
+      key-mgmt=wpa-psk
+      psk=${secrets.wifi.rjakbennett}
+
+      [ipv4]
+      method=auto
+
+      [ipv6]
+      method=auto
+    target: /etc/NetworkManager/system-connections/rjakbennett.nmconnection
+    sudo: true
+    mode: "0600"
+
   - source: ${config_root}/files/config/solaar.yaml
     target: ~/.config/solaar/config.yaml
     symlink: true
@@ -343,6 +375,18 @@ commands:
     check: |
       grep -q '\[madvise\]' /sys/kernel/mm/transparent_hugepage/enabled \
         || { echo "THP is not madvise: $(cat /sys/kernel/mm/transparent_hugepage/enabled)"; exit 1; }
+    sudo: true
+
+  # NetworkManager does not watch its keyfiles; load the wifi profile above
+  # into the running daemon. A no-op in bootstrap's chroot (no NM running);
+  # the boot after it reads the file directly.
+  - name: nm-reload-connections
+    command: |
+      systemctl is-active -q NetworkManager || exit 0
+      nmcli connection reload
+    check: |
+      nmcli -t -f NAME connection show | grep -qx rjakbennett \
+        || { echo "NetworkManager has not loaded the rjakbennett profile"; exit 1; }
     sudo: true
 
   # keyd reads /etc/keyd/default.conf only at start; reload it after an edit.

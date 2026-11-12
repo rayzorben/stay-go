@@ -624,9 +624,11 @@ commands:
       git config --global --unset user.name
       git config --global --unset user.email
 
+  # --timeout: without it `tailscale up` waits forever when there is no
+  # network yet (or the control server rejects the key), hanging the run.
   - name: tailscale
     command: |
-      tailscale up --authkey=${secrets.tailscale_key} --operator=$USER
+      tailscale up --authkey=${secrets.tailscale_key} --operator=$USER --timeout=2m
       tailscale configure systray --enable-startup=systemd
       tailscale set --operator=$USER
     sudo: true

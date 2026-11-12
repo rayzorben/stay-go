@@ -130,5 +130,8 @@ commands:
     sudo: true
     depends:
       - packages: [dkms, linux-cachyos-headers, linux-cachyos-lts-headers]
+      # ~/code is Dropbox: on a fresh install the tree arrives only once
+      # Dropbox has synced, so skip until then instead of failing.
+      - folders: [~/code/thunderlight]
 
 backups: !include "./rayzorbot/backups.yaml"
