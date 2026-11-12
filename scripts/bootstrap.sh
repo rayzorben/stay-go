@@ -1001,7 +1001,12 @@ if [[ "$CURRENT_STEP" -lt 6 ]]; then
     else
         # Quoted heredoc: nothing here is expanded by this shell; the values
         # arrive as arguments. Same file-not-stdin rule as STEP 5 -- stdin
-        # carries only the password, read first, then is pinned to /dev/null.
+        # carries only the password, read first. Then, unlike STEP 5, stdin
+        # becomes the installer's terminal rather than /dev/null: stay-go only
+        # gives `commands` entries a PTY when its stdin is a terminal, and some
+        # need one (the DMS installer's TUI asks for the compositor). With
+        # /dev/null its output went into a capture buffer and its prompt could
+        # never be answered, so the run hung.
         cat > /mnt/root/stay-go-first-run.sh <<'FIRST_RUN'
 set -euo pipefail
 user=$1 host=$2 dropin=$3
@@ -1011,7 +1016,12 @@ pwfile=/run/stay-go-first-run.pass
 trap 'rm -f "$pwfile" "$dropin"' EXIT
 ( umask 077; cat > "$pwfile" )
 chown "$user:" "$pwfile"
-exec < /dev/null
+if { : < /dev/tty; } 2>/dev/null; then
+    exec < /dev/tty
+else
+    echo "[!] No terminal: interactive stay-go commands (DMS installer) will fail here."
+    exec < /dev/null
+fi
 
 echo "[*] Building stay-go..."
 runuser -u "$user" -- env -i HOME="$home" USER="$user" PATH=/usr/bin \

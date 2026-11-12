@@ -367,7 +367,9 @@ enabled system services (sddm included). It needs: a private UTS namespace
 with the target's hostname (default.yaml selects layers via `$(hostname)`,
 which in a plain chroot is the ISO's), the secrets password (prompted at
 STEP 0, blank skips the run) in a file on the chroot's tmpfs `/run` via
-`STAY_GO_SECRETS_PASSWORD_FILE`, a temporary NOPASSWD sudoers drop-in (removed
+`STAY_GO_SECRETS_PASSWORD_FILE`, stdin on the real terminal (`/dev/tty`, not
+`/dev/null`: interactive `commands` only get a PTY when stdin is a terminal,
+and the DMS installer's TUI hangs without one), a temporary NOPASSWD sudoers drop-in (removed
 and verified gone), and a plain copy of the ISO's `resolv.conf` (step 5's stub
 symlink points into an empty `/run`). Nodes that need a booted system (user
 services, `systemctl --user`, daemons, containers) fail there by design and
