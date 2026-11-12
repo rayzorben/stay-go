@@ -6,7 +6,11 @@
 #     list (profile.info_cache in "Local State"; Edge creates the directory
 #     itself the first time the profile is opened)
 #   - ~/.local/share/applications/microsoft-edge-<name>.desktop, which opens
-#     Edge with --profile-directory=NAME
+#     Edge with --profile-directory=NAME. Unquoted: names never contain
+#     spaces, and some launchers (Dropbox's sign-in xdg-open) pass the
+#     quotes through literally. No MimeType: these are menu entries, not
+#     URL handlers; while one claimed http/https before Zen became the
+#     default, Dropbox's first-run sign-in page went to it, mangled.
 #
 # Usage:
 #   edge-profiles.sh NAME...           create/rename profiles, write launchers
@@ -42,11 +46,10 @@ Type=Application
 Name=Edge ($1)
 GenericName=Web Browser
 Comment=Microsoft Edge, $1 profile
-Exec=$BIN "--profile-directory=$1" %U
+Exec=$BIN --profile-directory=$1 %U
 Icon=microsoft-edge
 Terminal=false
 Categories=Network;WebBrowser;
-MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;
 StartupNotify=true
 X-StayGo-Edge-Profile=$1
 EOF
